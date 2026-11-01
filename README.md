@@ -8,11 +8,11 @@ contribute to one shared branch without ever silently losing acknowledged work
 (see `docs/ARC_Research_and_Roadmap_2026.md`; "ARC" was the project's earlier
 working name).
 
-**Current state:** R1 local kernel (gate passed) plus R2 slice 2a: several
-private workspaces on one machine share one `main`, with compare-and-swap
-publication and file-level merging, stress-tested with 10 concurrent writers
-and killed processes. Tested on Linux, macOS and Windows in CI; see
-`docs/ROADMAP_STATUS.md`. **Not yet:** cross-machine sync, undo, same-file
+**Current state:** R1 local kernel (gate passed) plus R2 slices 2a and 2b:
+several private workspaces on one machine share one `main`, with
+compare-and-swap publication, file-level merging and workspace-scoped
+`undo`, stress-tested with 10 concurrent writers and killed processes.
+Tested on Linux, macOS and Windows in CI; see `docs/ROADMAP_STATUS.md`. **Not yet:** cross-machine sync, same-file
 conflict resolution, Git bridge. Trademark and package-name availability for
 `concurv` have not been checked.
 
@@ -34,6 +34,7 @@ $ echo unsaved > notes.txt
 $ concurv restore --snapshot <first-id-prefix>          # refused (exit 20); nothing touched
 $ concurv restore --snapshot <first-id-prefix> --force  # saves a backup snapshot, then restores
 $ concurv op log                 # every operation, including backup snapshots
+$ concurv undo                   # reverse this workspace's last save/update/restore
 $ concurv verify --full          # hash-checks every object
 $ concurv --json status          # machine-readable output
 ```

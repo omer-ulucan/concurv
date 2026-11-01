@@ -215,7 +215,7 @@ files can still break the program together. The intended workflow is
 | Slice | Content | Status |
 |---|---|---|
 | 2a | workspaces (`workspace add/list`), locks with bounded wait, temp sessions, lock-free save, `publish`, `update` with file-level merge, 2/5/10-writer stress tests incl. killed processes | **implemented** |
-| 2b | workspace-scoped `undo` (operation-level, never moves `main` backwards) | planned |
+| 2b | workspace-scoped `undo` (operation-level, never moves `main` backwards) | **implemented** (§10) |
 | 2c | stored conflict objects (instead of refusing), resolution workflow | planned |
 | 2d | minimum Git import/export (ADR 0002) | planned |
 
@@ -224,3 +224,44 @@ acknowledged changes, even during retries, forced termination and conflicting
 target head updates; reopening after a crash succeeds without manual object
 surgery. Slice 2a provides the tests for this gate. The stage is marked passed
 only when the remaining slices also pass their tests.
+
+## 10. Workspace-scoped undo (slice 2b)
+
+`concurv undo` reverses the most recent operation **of the current
+workspace** that is not itself an undo and has not been undone yet, and it
+reverses **exactly what that operation changed**:
+
+| Undone operation | What it changed | What undo does | Working-copy precondition |
+|---|---|---|---|
+| `save` | workspace head | head := head before the save; files untouched (the saved content shows up as an unsaved change again) | none (files are not touched) |
+| `update` (fast-forward or merge) | files and head | files and head := the head before the update | working copy equals the current head |
+| `restore` | files only | files := the backup snapshot if the restore was forced, else the head | working copy equals the restored snapshot |
+| `publish` | the shared branch | **refused** (invariant I8: others may build on it; make a new reverting change instead) | — |
+| `workspace-add`, `init` | registry / repository | **refused** | — |
+
+Rules:
+
+- **Scope.** Undo writes only the current workspace's view entry and working
+  files. It never changes another workspace's entry or any branch, so it
+  cannot revert shared history (I8, R2-I1, R2-I2).
+- **Multi-level.** Repeated undo walks further back. The undo operation records
+  the operation it reversed (`undoes`), and later undos skip both. Undo is not
+  itself undoable: to go forward again, `restore` the snapshot shown by
+  `op log` and save.
+- **State before.** Only the workspace's own operations change its entry, so
+  the entry "before" operation O is the entry in O's parent operation's view.
+  Undo also requires that the workspace head still equals the entry O left.
+  This is guaranteed by the rules above and checked anyway (`CONCURV_STALE_HEAD`).
+- **Safety.** Any file change goes through the restore protocol (RFC 0002
+  §3.4) with the precondition above. If the working copy holds anything else,
+  undo refuses with `CONCURV_DIRTY_WORKSPACE` and nothing changes. No undone
+  snapshot is ever deleted: every one stays reachable from the op log.
+- **The first checkout of a new workspace** (the `update` recorded by
+  `workspace add`) cannot be undone: there is no earlier head to return to.
+
+Operation format additions (RFC 0001 §3.4, pre-release within v1):
+`undoes: Option<OperationId>` (set on `undo` operations) and
+`checked_out: Option<SnapshotId>` (the snapshot an operation made the working
+copy equal to; set by restore, update, workspace-add checkout and file-changing
+undos). The latter is what lets undo check the precondition for `restore`
+without parsing descriptions.

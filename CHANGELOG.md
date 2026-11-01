@@ -7,7 +7,8 @@ version 1 is not frozen until the first release (see ADR 0003).
 
 R1 gate passed on 2026-11-01: the full suite is green on Linux, macOS and
 Windows in CI, with identical golden hashes on all three (`docs/ROADMAP_STATUS.md`).
-R2 slice 2a (private workspaces) is implemented; the R2 gate is not yet claimed.
+R2 slices 2a (private workspaces) and 2b (undo) are implemented; the R2 gate
+is not yet claimed.
 
 ### Changed (behaviour)
 - **`save` no longer moves `main`** (RFC 0004 §2). It advances only the
@@ -31,6 +32,14 @@ R2 slice 2a (private workspaces) is implemented; the R2 gate is not yet claimed.
   snapshot in the workspace. Same-file conflicts and ambiguous merge bases
   are refused with `CONCURV_CONFLICT` (exit 43); nothing is modified.
 - Stress tests: 2/5/10 concurrent writers; 12 rounds of killed processes.
+
+### Added (R2 slice 2b, RFC 0004 §10)
+- `concurv undo` reverses the most recent operation of the current workspace
+  (`save`, `update`, `restore`), exactly what it changed; repeat to go further
+  back. Never touches other workspaces or branches; `publish` is refused.
+  Undoing `restore --force` brings unsaved work back exactly.
+- Operation format (pre-release, within v1): `undoes` and `checked_out`
+  fields, also shown in `op log --json`.
 
 ### Fixed (found by the new stress tests before release)
 - Data integrity: the primary workspace's temp cleanup could delete other
@@ -83,5 +92,5 @@ R2 slice 2a (private workspaces) is implemented; the R2 gate is not yet claimed.
   every durable-write boundary, and restore-safety and CLI smoke tests.
 
 ### Known gaps
-- No ignore file, stat cache, GC, rename detection, multiple workspaces, undo,
-  merge, sync or Git bridge.
+- No ignore file, stat cache, GC, rename detection, same-file conflict
+  resolution (line-level merge), cross-machine sync or Git bridge.
