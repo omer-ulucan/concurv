@@ -6,7 +6,7 @@ preclude a safe R3.
 
 ## 1. Roles
 
-- **Client** — an concurv repository on a device (PC A, PC B, …).
+- **Client** — a concurv repository on a device (PC A, PC B, …).
 - **Relay (`concurvd`)** — a small self-hostable server that stores objects and is
   the **single authority** for *published* branch heads of a repository. It is
   a coordinator, not a P2P consensus participant. There is exactly one

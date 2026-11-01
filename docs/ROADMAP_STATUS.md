@@ -39,3 +39,12 @@ Tests compiled only on Unix and therefore **not run**: `unix_exec_bits_and_symli
 `unix_fifo_and_non_utf8_names_are_rejected`, `symlinked_directory_is_replaced_not_written_through`.
 
 Fuzzing: not configured. Benchmarks: none run; no performance numbers exist.
+
+## R1 known gaps (do not block the gate, tracked for follow-up)
+
+- No CLI command lists the operation log, so backup snapshot ids from
+  `restore --force` are only shown in that command's output. Planned:
+  `concurv op log`.
+- No ignore file; every `status`/`save` reads all files (no stat cache).
+- The project was renamed ARC → concurv on 2026-11-01 (ADR 0003). The evidence
+  above was re-run after the rename: same 59 tests, all passing.
