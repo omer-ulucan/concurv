@@ -168,7 +168,7 @@ mod tests {
         let (d, h) = setup();
         fs::write(d.path().join("op_head"), "zz\n").unwrap();
         assert_eq!(h.read().unwrap_err().code, ErrorCode::ObjectCorrupt);
-        fs::write(d.path().join("op_head"), format!("{}", id(1).to_hex())).unwrap();
+        fs::write(d.path().join("op_head"), id(1).to_hex()).unwrap();
         assert_eq!(h.read().unwrap_err().code, ErrorCode::ObjectCorrupt);
     }
 }
