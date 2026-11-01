@@ -306,6 +306,7 @@ fn sample_operation() -> Operation {
     workspaces.insert(
         ws,
         WorkspaceView {
+            name: "default".into(),
             branch: Some("main".into()),
             head: Some(SnapshotId::from_object_id(oid(3))),
         },

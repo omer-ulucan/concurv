@@ -1,45 +1,38 @@
 //! The repository's single mutable pointer (`.concurv/op_head`) and the
 //! exclusive writer lock that serializes its compare-and-swap (RFC 0002 §3.2, §4).
 
-use std::fs::{self, File, OpenOptions, TryLockError};
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use concurv_core::{ConcurvError, ErrorCode, ObjectId, OperationId, Result};
 use concurv_objects::Faults;
-use concurv_objects::fs::write_file_atomic;
+use concurv_objects::fs::{FileLock, write_file_atomic};
 
-/// An exclusive OS advisory lock on `.concurv/lock`. Released when dropped or
-/// when the process exits for any reason (so crashes never leave it stale).
+/// The repository lock: an exclusive OS advisory lock on the store's
+/// `.concurv/lock`, held only for the commit step (RFC 0004 §5). Released when
+/// dropped or when the process exits for any reason (so crashes never leave
+/// it stale).
 #[derive(Debug)]
 pub struct RepoLock {
-    _file: File,
+    _lock: FileLock,
     meta_dir: PathBuf,
 }
 
 impl RepoLock {
-    /// Try to take the lock without blocking.
+    /// Take the lock without waiting.
     pub fn acquire(meta_dir: &Path) -> Result<Self> {
-        let path = meta_dir.join("lock");
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&path)
-            .map_err(|e| ConcurvError::io(e, "open lock file", &path))?;
-        match file.try_lock() {
-            Ok(()) => Ok(Self {
-                _file: file,
-                meta_dir: meta_dir.to_path_buf(),
-            }),
-            Err(TryLockError::WouldBlock) => Err(ConcurvError::new(
-                ErrorCode::Locked,
-                "another concurv process is modifying this repository; retry when it finishes",
-            )
-            .with_path(&path)),
-            Err(TryLockError::Error(e)) => Err(ConcurvError::io(e, "lock", &path)),
-        }
+        Self::acquire_timeout(meta_dir, Duration::ZERO)
+    }
+
+    /// Take the lock, waiting up to `timeout` for another holder to finish.
+    pub fn acquire_timeout(meta_dir: &Path, timeout: Duration) -> Result<Self> {
+        let lock = FileLock::acquire(&meta_dir.join("lock"), timeout, "the repository lock")?;
+        Ok(Self {
+            _lock: lock,
+            meta_dir: meta_dir.to_path_buf(),
+        })
     }
 
     /// The `.concurv` directory this lock protects.

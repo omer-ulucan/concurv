@@ -1,18 +1,26 @@
-//! The concurv R1 local engine: repository lifecycle, working-copy scanning,
-//! `save`, `status`/`diff`, safe `restore`, history and `verify`.
+//! The concurv local engine: repository lifecycle, private workspaces,
+//! working-copy scanning, `save`, `status`/`diff`, safe `restore`,
+//! `publish`/`update` with file-level merge, history and `verify`.
 
+pub mod graph;
+pub mod integrate;
+pub mod merge;
 pub mod repo;
 pub mod restore;
 pub mod save;
 pub mod status;
 pub mod verify;
+pub mod workspaces;
 pub mod worktree;
 
-pub use repo::{DEFAULT_BRANCH, Repo, RepoOptions};
+pub use integrate::{PublishOutcome, UpdateKind, UpdateOutcome, publish, update};
+pub use merge::{ConflictKind, MergeConflict};
+pub use repo::{DEFAULT_BRANCH, DEFAULT_WORKSPACE, Repo, RepoOptions};
 pub use restore::{RestoreMarker, RestoreOptions, RestoreOutcome, restore};
 pub use save::{SaveOutcome, save};
 pub use status::{Change, ChangeKind, FileDiff, StatusReport, diff, status};
 pub use verify::{Problem, VerifyReport, verify};
+pub use workspaces::{AddOutcome, WorkspaceInfo};
 pub use worktree::{FileState, FlatTree};
 
 use concurv_core::{Result, SnapshotId};

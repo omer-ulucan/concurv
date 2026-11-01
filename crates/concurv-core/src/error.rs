@@ -36,6 +36,10 @@ pub enum ErrorCode {
     LimitExceeded,
     /// Another process holds the repository lock.
     Locked,
+    /// The branch contains work not integrated into this workspace (publish refused).
+    Diverged,
+    /// A merge found conflicting changes; nothing was modified.
+    Conflict,
     /// The op head changed between read and compare-and-swap.
     StaleHead,
     /// A requested id or name does not exist.
@@ -66,6 +70,8 @@ impl ErrorCode {
             Self::LimitExceeded => "CONCURV_LIMIT_EXCEEDED",
             Self::Locked => "CONCURV_LOCKED",
             Self::StaleHead => "CONCURV_STALE_HEAD",
+            Self::Diverged => "CONCURV_DIVERGED",
+            Self::Conflict => "CONCURV_CONFLICT",
             Self::NotFound => "CONCURV_NOT_FOUND",
             Self::AmbiguousId => "CONCURV_AMBIGUOUS_ID",
             Self::Io => "CONCURV_IO",
@@ -90,6 +96,8 @@ impl ErrorCode {
             Self::LimitExceeded => 33,
             Self::Locked => 40,
             Self::StaleHead => 41,
+            Self::Diverged => 42,
+            Self::Conflict => 43,
             Self::NotFound => 50,
             Self::AmbiguousId => 51,
         }
@@ -173,6 +181,8 @@ mod tests {
             ErrorCode::LimitExceeded,
             ErrorCode::Locked,
             ErrorCode::StaleHead,
+            ErrorCode::Diverged,
+            ErrorCode::Conflict,
             ErrorCode::NotFound,
             ErrorCode::AmbiguousId,
             ErrorCode::Io,

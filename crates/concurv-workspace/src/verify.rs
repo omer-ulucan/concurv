@@ -176,7 +176,7 @@ pub fn verify(repo: &Repo, full: bool) -> VerifyReport {
             Err(e) => r.problem("objects", &e),
         }
         let count = |d: &str| {
-            fs::read_dir(repo.meta_dir().join(d))
+            fs::read_dir(repo.store_dir().join(d))
                 .map(|rd| rd.count())
                 .unwrap_or(0)
         };

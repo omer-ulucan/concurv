@@ -503,7 +503,9 @@ impl Snapshot {
 /// A workspace's pointers within a view.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct WorkspaceView {
-    /// Branch this workspace advances on save.
+    /// Unique human name (RFC 0004 §4), validated by [`validate_workspace_name`].
+    pub name: String,
+    /// Branch this workspace publishes to.
     pub branch: Option<String>,
     /// Snapshot the working copy is based on.
     pub head: Option<SnapshotId>,
@@ -516,6 +518,26 @@ pub struct View {
     pub branches: BTreeMap<String, SnapshotId>,
     /// Workspace → pointers.
     pub workspaces: BTreeMap<WorkspaceId, WorkspaceView>,
+}
+
+/// Validate a workspace name: 1–64 characters of `[A-Za-z0-9._-]`, not
+/// starting with `.` or `-`.
+pub fn validate_workspace_name(name: &str) -> Result<()> {
+    let ok = !name.is_empty()
+        && name.len() <= 64
+        && !name.starts_with(['.', '-'])
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'));
+    if !ok {
+        return Err(ConcurvError::new(
+            ErrorCode::InvalidArgument,
+            format!(
+                "invalid workspace name {name:?}: use 1-64 characters of A-Z a-z 0-9 . _ -, not starting with . or -"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Validate a branch name.
@@ -589,8 +611,11 @@ impl Operation {
             w.id(&head.object_id());
         }
         w.count(self.view.workspaces.len(), MAX_TREE_ENTRIES, "workspaces")?;
+        check_unique_names(self.view.workspaces.values().map(|w| w.name.as_str()))?;
         for (id, ws) in &self.view.workspaces {
             w.rid(&id.random_id());
+            validate_workspace_name(&ws.name)?;
+            w.string(&ws.name)?;
             match &ws.branch {
                 Some(b) => {
                     w.u8(1);
@@ -654,14 +679,19 @@ impl Operation {
                 return Err(corrupt("workspaces are not strictly sorted"));
             }
             last_ws = Some(id);
+            let name = r.string()?;
+            validate_workspace_name(&name).map_err(|e| corrupt(e.message))?;
             let branch = if r.flag()? { Some(r.string()?) } else { None };
             let head = if r.flag()? {
                 Some(SnapshotId::from_object_id(r.id()?))
             } else {
                 None
             };
-            view.workspaces.insert(id, WorkspaceView { branch, head });
+            view.workspaces
+                .insert(id, WorkspaceView { name, branch, head });
         }
+        check_unique_names(view.workspaces.values().map(|w| w.name.as_str()))
+            .map_err(|e| corrupt(e.message))?;
         r.finish()?;
         Ok(Self {
             parents,
@@ -679,4 +709,17 @@ impl Operation {
 /// Convenience: typed id of a blob payload.
 pub fn blob_id(content: &[u8]) -> BlobId {
     BlobId::from_object_id(hash_object(ObjectKind::Blob, content))
+}
+
+fn check_unique_names<'a>(names: impl Iterator<Item = &'a str>) -> Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for n in names {
+        if !seen.insert(n) {
+            return Err(ConcurvError::new(
+                ErrorCode::InvalidArgument,
+                format!("workspace name {n:?} is used by more than one workspace"),
+            ));
+        }
+    }
+    Ok(())
 }

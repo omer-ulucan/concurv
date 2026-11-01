@@ -67,6 +67,17 @@ impl ObjectStore {
         &self.tmp
     }
 
+    /// A handle to the same store that writes its temporary files into
+    /// `tmp` (e.g. a [`crate::fs::TempSession`] directory) instead of the
+    /// shared `.concurv/tmp`. `tmp` must be on the same filesystem as the
+    /// store so renames into `objects/` stay atomic.
+    pub fn with_tmp(&self, tmp: &Path) -> Self {
+        Self {
+            tmp: tmp.to_path_buf(),
+            ..self.clone()
+        }
+    }
+
     /// Filesystem path of an object.
     pub fn path_for(&self, id: &ObjectId) -> PathBuf {
         let hex = id.to_hex();

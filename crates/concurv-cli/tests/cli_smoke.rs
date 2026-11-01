@@ -252,7 +252,8 @@ fn op_log_lists_operations_and_backups() {
     assert_eq!(kinds, ["restore", "save", "save", "init"]);
     // Restore does not move history: head after restore is still s2.
     assert_eq!(ops[0]["head"], s2.as_str());
-    assert_eq!(ops[1]["branches"]["main"], s2.as_str());
+    // R2: save moves only the workspace head; `main` moves on publish.
+    assert!(ops[1]["branches"]["main"].is_null());
     assert!(ops[3]["head"].is_null() && ops[3]["workspace"].is_null());
     assert_eq!(ops[0]["parents"][0], ops[1]["operation"]);
 
@@ -281,4 +282,86 @@ fn op_log_lists_operations_and_backups() {
     let before = fs::read(w.join(".concurv/op_head")).unwrap();
     cv_ok(w, &["op", "log"]);
     assert_eq!(fs::read(w.join(".concurv/op_head")).unwrap(), before);
+}
+
+/// R2 commands: workspace add/list, publish, update; diverged (42) and
+/// conflict (43) exit codes; JSON contract.
+#[test]
+fn workspaces_publish_and_update() {
+    let outer = tempfile::tempdir().unwrap();
+    let a = outer.path().join("a");
+    let b = outer.path().join("b");
+    fs::create_dir(&a).unwrap();
+    cv_ok(&a, &["init"]);
+    fs::write(a.join("shared.txt"), "base\n").unwrap();
+    cv_ok(&a, &["save", "-m", "base"]);
+    let (code, v) = cv_json(&a, &["publish"]);
+    assert_eq!((code, v["command"].as_str()), (0, Some("publish")));
+    assert!(v["data"]["from"].is_null() && v["data"]["published"] == true);
+
+    let (code, v) = cv_json(
+        &a,
+        &["workspace", "add", b.to_str().unwrap(), "--name", "agent-b"],
+    );
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["data"]["workspace"]["name"], "agent-b");
+    assert_eq!(fs::read_to_string(b.join("shared.txt")).unwrap(), "base\n");
+    let (_, v) = cv_json(&b, &["workspace", "list"]);
+    let list = v["data"]["workspaces"].as_array().unwrap();
+    assert_eq!(list.len(), 2);
+    assert!(
+        list.iter()
+            .any(|w| w["name"] == "agent-b" && w["current"] == true)
+    );
+    assert!(
+        list.iter()
+            .any(|w| w["name"] == "default" && w["primary"] == true)
+    );
+
+    // A publishes; B's publish diverges (42), update merges, publish succeeds.
+    fs::write(a.join("a.txt"), "a\n").unwrap();
+    cv_ok(&a, &["save", "-m", "a"]);
+    cv_ok(&a, &["publish"]);
+    fs::write(b.join("b.txt"), "b\n").unwrap();
+    cv_ok(&b, &["save", "-m", "b"]);
+    let (code, v) = cv_json(&b, &["publish"]);
+    assert_eq!(
+        (code, v["error"]["code"].as_str()),
+        (42, Some("CONCURV_DIVERGED"))
+    );
+    let (code, v) = cv_json(&b, &["update"]);
+    assert_eq!(
+        (code, v["data"]["result"].as_str()),
+        (0, Some("merged")),
+        "{v}"
+    );
+    assert_eq!(fs::read_to_string(b.join("a.txt")).unwrap(), "a\n");
+    assert_eq!(cv_json(&b, &["publish"]).0, 0);
+    let (_, v) = cv_json(&a, &["update"]);
+    assert_eq!(v["data"]["result"], "fast_forward");
+    let (_, v) = cv_json(&a, &["update"]);
+    assert_eq!(v["data"]["result"], "up_to_date");
+
+    // Same-file conflict: 43, nothing modified.
+    fs::write(a.join("shared.txt"), "from a\n").unwrap();
+    cv_ok(&a, &["save", "-m", "a2"]);
+    cv_ok(&a, &["publish"]);
+    fs::write(b.join("shared.txt"), "from b\n").unwrap();
+    cv_ok(&b, &["save", "-m", "b2"]);
+    let (code, v) = cv_json(&b, &["update"]);
+    assert_eq!(
+        (code, v["error"]["code"].as_str()),
+        (43, Some("CONCURV_CONFLICT"))
+    );
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("shared.txt")
+    );
+    assert_eq!(
+        fs::read_to_string(b.join("shared.txt")).unwrap(),
+        "from b\n"
+    );
+    assert_eq!(cv_json(&a, &["verify", "--full"]).0, 0);
 }
