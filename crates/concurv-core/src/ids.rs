@@ -32,10 +32,10 @@ fn hex_decode<const N: usize>(s: &str) -> Result<[u8; N]> {
         ));
     }
     let mut out = [0u8; N];
-    for (i, chunk) in bytes.chunks_exact(2).enumerate() {
-        let hi = hex_val(chunk[0])?;
-        let lo = hex_val(chunk[1])?;
-        out[i] = (hi << 4) | lo;
+    // The length check above guarantees there is no remainder.
+    let (pairs, _) = bytes.as_chunks::<2>();
+    for (i, [hi, lo]) in pairs.iter().enumerate() {
+        out[i] = (hex_val(*hi)? << 4) | hex_val(*lo)?;
     }
     Ok(out)
 }
