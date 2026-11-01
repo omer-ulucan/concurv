@@ -42,6 +42,8 @@ pub enum ErrorCode {
     Conflict,
     /// The op head changed between read and compare-and-swap.
     StaleHead,
+    /// An external tool (`git`) is missing or failed.
+    ExternalTool,
     /// A requested id or name does not exist.
     NotFound,
     /// An id prefix matches more than one object.
@@ -72,6 +74,7 @@ impl ErrorCode {
             Self::StaleHead => "CONCURV_STALE_HEAD",
             Self::Diverged => "CONCURV_DIVERGED",
             Self::Conflict => "CONCURV_CONFLICT",
+            Self::ExternalTool => "CONCURV_EXTERNAL_TOOL",
             Self::NotFound => "CONCURV_NOT_FOUND",
             Self::AmbiguousId => "CONCURV_AMBIGUOUS_ID",
             Self::Io => "CONCURV_IO",
@@ -98,6 +101,7 @@ impl ErrorCode {
             Self::StaleHead => 41,
             Self::Diverged => 42,
             Self::Conflict => 43,
+            Self::ExternalTool => 60,
             Self::NotFound => 50,
             Self::AmbiguousId => 51,
         }
@@ -183,6 +187,7 @@ mod tests {
             ErrorCode::StaleHead,
             ErrorCode::Diverged,
             ErrorCode::Conflict,
+            ErrorCode::ExternalTool,
             ErrorCode::NotFound,
             ErrorCode::AmbiguousId,
             ErrorCode::Io,

@@ -466,3 +466,66 @@ fn conflict_resolution_via_cli() {
     let (code, v) = cv_json(&a, &["verify", "--full"]);
     assert_eq!(code, 0, "{v}");
 }
+
+/// R2 slice 2d: `git export` / `git import` round trip through the CLI.
+#[test]
+fn git_export_and_import() {
+    let outer = tempfile::tempdir().unwrap();
+    let a = outer.path().join("a");
+    let mirror = outer.path().join("mirror.git");
+    fs::create_dir(&a).unwrap();
+    fs::create_dir(&mirror).unwrap();
+    let st = Command::new("git")
+        .args(["init", "-q", "--bare", "-b", "main"])
+        .arg(&mirror)
+        .status()
+        .unwrap();
+    assert!(st.success());
+    cv_ok(&a, &["init"]);
+    let (code, v) = cv_json(&a, &["git", "export", mirror.to_str().unwrap()]);
+    assert_eq!(
+        (code, v["error"]["code"].as_str()),
+        (50, Some("CONCURV_NOT_FOUND")),
+        "nothing published"
+    );
+    fs::write(a.join("hello.txt"), "hello\n").unwrap();
+    cv_ok(&a, &["save", "-m", "hello"]);
+    cv_ok(&a, &["publish"]);
+    let (code, v) = cv_json(&a, &["git", "export", mirror.to_str().unwrap()]);
+    assert_eq!(
+        (code, v["command"].as_str()),
+        (0, Some("git export")),
+        "{v}"
+    );
+    assert_eq!(
+        (
+            v["data"]["exported"].as_u64(),
+            v["data"]["updated"].as_bool()
+        ),
+        (Some(1), Some(true))
+    );
+    let tip = v["data"]["tip"].as_str().unwrap().to_owned();
+
+    let b = outer.path().join("b");
+    fs::create_dir(&b).unwrap();
+    cv_ok(&b, &["init"]);
+    let (code, v) = cv_json(&b, &["git", "import", mirror.to_str().unwrap()]);
+    assert_eq!(
+        (code, v["data"]["git_tip"].as_str()),
+        (0, Some(tip.as_str())),
+        "{v}"
+    );
+    assert_eq!(fs::read_to_string(b.join("hello.txt")).unwrap(), "hello\n");
+    let (code, v) = cv_json(&b, &["git", "import", mirror.to_str().unwrap()]);
+    assert_eq!(
+        (code, v["error"]["code"].as_str()),
+        (2, Some("CONCURV_INVALID_ARGUMENT")),
+        "not fresh"
+    );
+    let (code, _) = cv_json(
+        &b,
+        &["git", "export", outer.path().join("nope").to_str().unwrap()],
+    );
+    assert_eq!(code, 2, "not a Git repository");
+    assert_eq!(cv_json(&b, &["verify", "--full"]).0, 0);
+}

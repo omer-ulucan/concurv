@@ -17,6 +17,7 @@ concurv-cli ──► concurv-workspace ──► concurv-ops ──► concurv-
 | `concurv-refs` | `OpHead`, `RepoLock` | the only mutable pointer and its CAS; the repository (commit) lock |
 | `concurv-ops` | `OpLog` | commit an operation (re-verify referenced snapshots, write op, CAS); walk history; clean store temp debris |
 | `concurv-workspace` | `Repo`, `WorkspaceLock`, `StoreWriter`, `FlatTree`, modules `save`, `status`, `restore`, `integrate` (publish/update), `conflicts` (pending merges), `undo`, `merge`, `graph`, `workspaces`, `verify` | everything touching working copies, workspaces and branch publication |
+| `concurv-git` | `GitRepo`, `export`, `import`, `GitMap` | Git bridge (ADR 0002): drives `git fast-import` / `fast-export`; deterministic commits; snapshot↔commit cache |
 | `concurv-cli` | `concurv` binary | argument parsing, human and JSON output |
 
 ## Key decisions
@@ -62,5 +63,5 @@ concurv-cli ──► concurv-workspace ──► concurv-ops ──► concurv-
 ## Not yet implemented
 
 Line-level (within-file) merging, cross-machine
-sync, Git bridge, GC/packing, stat cache, ignore files, rename detection,
+sync, importing Git changes into existing history, GC/packing, stat cache, ignore files, rename detection,
 `workspace remove`. See `ROADMAP_STATUS.md`.

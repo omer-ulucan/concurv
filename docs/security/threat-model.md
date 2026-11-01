@@ -27,6 +27,7 @@ private metadata, published branch heads (R3).
 | T11 | **Transcript / secret leaks** | no transcript capture at all in R1; future provenance opt-in, local-only by default, preview before publish | R1: nothing captured; author string is the only identity stored (from `CONCURV_AUTHOR` or OS user name) |
 | T12 | **Arbitrary test code during validation** | R4: validation disabled unless policy enables it; explicit sandbox adapter; attestation records the environment | R4 design only; R1 executes no repository code |
 | T13 | **Resource exhaustion** (huge files, deep trees) | limits in RFC 0001 §5; streaming blob IO; recursion depth bounded by OS path length | R1 partially (no depth/total-size quota yet) |
+| T14 | **Untrusted Git repositories and the `git` tool** (hostile paths or entries in an imported Git history; a `git` from `PATH`; environment variables redirecting git) | import validates every path with the same rules as `save` (`..`, `.concurv`, invalid names refused) and refuses submodules and non-UTF-8 data, all-or-nothing; blobs are re-hashed into concurv objects; `GIT_DIR`, `GIT_WORK_TREE` and similar variables are scrubbed and every call uses `git -C <repo>`; export never moves a Git branch except by fast-forward CAS. concurv trusts the `git` binary found on `PATH` (same trust as running `git` yourself) | R2 slice 2d implemented + tested |
 
 ## Out of scope
 
