@@ -16,7 +16,7 @@ Status: **Accepted for R1** (format version 1). Changes to anything marked
 | Device | `DeviceId` = 16 random bytes | stable per repository clone | recorded in operations |
 | Branch | name (UTF-8) | mutable pointer inside an Operation's view | `main` only in R1 |
 | Local head | `View.workspaces[w].head` | mutable via operation | implemented |
-| Published head | authoritative CAS ref on an `concurvd` relay | — | **R3, not implemented** |
+| Published head | authoritative CAS ref on a `concurvd` relay | — | **R3, not implemented** |
 | Candidate / proposal | Snapshot produced by integration | immutable | **R4, not implemented** |
 | Validation attestation | object binding candidate hash + policy + env | immutable | **R4, not implemented** |
 
@@ -205,8 +205,9 @@ A header announcing a larger non-blob payload is rejected before allocation.
 - **R1-I3** `op_head` always names an existing, valid operation; mutations are
   serialized by an exclusive repository lock and `op_head` is updated with a
   compare-and-swap against the operation id read under that lock.
-- **R1-I4** `status`, `diff`, `log` and `verify` do not modify history or
-  working files (they may delete stale temporary files only under the lock).
+- **R1-I4** `status`, `diff`, `log` and `verify` never write to the repository or
+  the working copy, and take no lock. Only mutating commands (`save`, `restore`)
+  delete stale `.concurv/tmp` debris, and only while holding the lock.
 - **R1-I5** `restore` never discards working-copy data that differs from the
   head snapshot unless `--force` is given, and with `--force` the current
   working copy is first saved as a durable backup snapshot recorded in the
@@ -222,3 +223,31 @@ A header announcing a larger non-blob payload is rejected before allocation.
   authoritative; a local `remote/<name>/<branch>` mirror may be added to View.
 - New object kinds (conflict, attestation) get new kind bytes; old decoders
   reject them with `CONCURV_UNSUPPORTED_FORMAT` rather than misparse.
+
+## 8. Test vectors (normative for format version 1)
+
+An independent implementation must reproduce these ids exactly. They are
+pinned in `crates/concurv-objects/tests/objects.rs::golden_hash_vectors` and
+`crates/concurv-workspace/tests/engine.rs::deterministic_tree_ids_across_repositories`;
+a change to any of them means the format changed and needs a new version.
+
+| Input | Kind | Id |
+|---|---|---|
+| empty content | blob | `b7778e72e4763260833712ebc5ced9fe9b2bc8451b94f56ae6f7f5c74bed0413` |
+| `hello\n` (6 bytes) | blob | `313293e1ac59b3b5d6f89c8821db96909f7a208b6b9cd038d5439e229ae1d10a` |
+| `sample_tree()` in `objects.rs` (4 entries, fixed ids) | tree | `d3a356e496979b1c4b017344ae45283450c087aa0408bacc9b1af3feb1ca0515` |
+| `sample_snapshot()` in `objects.rs` | snapshot | `039d5b0538da9f766b073a2439d9e30c2d74dac84d501ee143528ad58da1896d` |
+| fixture working copy in `engine.rs` (6 files, nested dirs, Unicode name) | tree | `047aec882a9e5b6d02f539d60d303929c91666393a5ae47815c3acd9147b69c9` |
+
+Worked example for the `hello\n` blob: hash, in BLAKE3 derive-key mode with
+context `"concurv 2026-11 object v1"`, the 19 bytes
+
+```
+43 4e 56 31             magic "CNV1"
+01                      kind = blob
+00 00 00 00 00 00 00 06 payload_len = 6 (u64 big-endian)
+68 65 6c 6c 6f 0a       "hello\n"
+```
+
+These vectors were produced on Windows 11 (NTFS). Reproduction on Linux and
+macOS is an open R1 gate item (`docs/ROADMAP_STATUS.md`).
