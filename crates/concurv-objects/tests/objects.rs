@@ -166,7 +166,7 @@ fn tree_rejects_duplicates_and_bad_names() {
 #[test]
 fn decoder_rejects_unsorted_or_trailing_bytes() {
     let mut p = 2u32.to_be_bytes().to_vec();
-    for name in [b'b', b'a'] {
+    for name in *b"ba" {
         p.extend_from_slice(&[1, 0, 1, name]);
         p.extend_from_slice(&[0; 32]);
     }
