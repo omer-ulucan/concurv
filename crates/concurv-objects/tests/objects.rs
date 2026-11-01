@@ -319,6 +319,8 @@ fn sample_operation() -> Operation {
         kind: "save".into(),
         description: "save: msg".into(),
         backup: Some(SnapshotId::from_object_id(oid(4))),
+        undoes: Some(concurv_core::OperationId::from_object_id(oid(2))),
+        checked_out: Some(SnapshotId::from_object_id(oid(5))),
         view: View {
             branches,
             workspaces,

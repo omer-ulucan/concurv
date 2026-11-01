@@ -2,7 +2,7 @@
 
 This guide covers what the current build actually does: a single-machine VCS
 with several private workspaces sharing one branch (`main`). Cross-machine
-sync, undo and same-file conflict resolution do not exist yet (see
+sync and same-file conflict resolution do not exist yet (see
 `docs/ROADMAP_STATUS.md`).
 
 ## 1. Install
@@ -54,6 +54,7 @@ $ concurv save -m "Add parser"       # record a snapshot in this workspace
 $ concurv publish                    # make it the new `main`
 $ concurv log                        # history, newest first (-n 10 to limit)
 $ concurv op log                     # every operation, including backups
+$ concurv undo                       # reverse your last save/update/restore
 ```
 
 Details that matter:
@@ -170,7 +171,37 @@ Date:   2026-11-01 14:02:11 UTC
     (recover with `concurv restore --snapshot 9f8e7d6c… --force`)
 ```
 
-## 6. The operation log
+Simpler: right after a forced restore, `concurv undo` puts the unsaved work
+back exactly (next section).
+
+## 6. Undo
+
+`concurv undo` reverses the most recent operation **of the workspace you are
+in**, and exactly what that operation changed:
+
+| You last ran | `undo` does |
+|---|---|
+| `save` | moves your head back to before the save. Your files are **not** touched, so the saved changes show up in `status` as unsaved again |
+| `update` | puts your files and head back to before the update (the merge or fast-forward disappears from your workspace) |
+| `restore` | puts your files back to what they were before the restore. After `restore --force`, that means your unsaved work comes back |
+| `publish` | **refused** (exit 2). Others may already build on what you published; make a new change that reverts it instead |
+
+Run `undo` again to go further back: it skips operations that were already
+undone. Undo itself cannot be undone; to return to a state, find its snapshot
+in `concurv op log` and `restore` it.
+
+Undo is safe:
+
+- It only ever changes **your** workspace. Other workspaces' heads, their files
+  and `main` are never touched, even if they ran commands in between.
+- If undoing would overwrite files you changed after the operation (for
+  `update` and `restore`), it refuses with exit 20 and changes nothing. Save
+  or revert your edits first.
+- Nothing is deleted: undone snapshots stay in the operation log.
+
+The first checkout of a new workspace (from `workspace add`) cannot be undone.
+
+## 7. The operation log
 
 `concurv op log` lists every repository operation, newest first: `init`,
 `save` and `restore`. Each entry shows its time and description, the head
@@ -183,7 +214,7 @@ The operation log is separate from snapshot history (`concurv log`): a
 `restore` adds an operation but no snapshot. Every backup stays recorded there
 permanently. Nothing is ever garbage-collected in R1.
 
-## 7. Checking integrity
+## 8. Checking integrity
 
 ```console
 $ concurv verify          # everything reachable from history
@@ -193,7 +224,7 @@ $ concurv verify --full   # additionally every object file, including unreferenc
 `verify` never modifies anything. Exit 0 means intact, 30 means a corrupt object,
 and 31 means a missing object. Each problem lists the object id and reason.
 
-## 8. Troubleshooting and recovery
+## 9. Troubleshooting and recovery
 
 | Symptom | What it means | What to do |
 |---|---|---|
@@ -202,6 +233,8 @@ and 31 means a missing object. Each problem lists the object id and reason.
 | `error[CONCURV_LOCKED]` (exit 40) | Another concurv process held the repository or workspace lock for the whole 30 s wait | Retry. Commands normally wait for each other automatically. The lock is held by the OS and released automatically when that process exits, even if it crashed, so there's nothing to delete |
 | `error[CONCURV_DIVERGED]` (exit 42) on `publish` | Someone published to `main` after your last `update` | `concurv update`, test, `concurv publish` again. Nothing was changed |
 | `error[CONCURV_CONFLICT]` (exit 43) on `update` | Both sides changed the same file (paths are listed), or the histories have no single merge base | Nothing was modified. Workaround until conflict resolution lands: new workspace from `main`, re-apply your change there, save, publish (section 4) |
+| `error[CONCURV_INVALID_ARGUMENT]` (exit 2) on `undo` | Your most recent operation was a `publish` (or `workspace add`), which undo never reverts | Make a new change that reverts the published work, save and publish it |
+| `error[CONCURV_NOT_FOUND]` (exit 50) on `undo` | Nothing left to undo in this workspace | — |
 | `error[CONCURV_CONCURRENT_MODIFICATION]` (exit 21) | A file changed while concurv was reading or replacing it (e.g. an editor or build was writing) | Let the other program finish, then retry. Nothing was recorded or overwritten from the inconsistent read |
 | `error[CONCURV_UNSUPPORTED_FILE_TYPE]` (exit 23) | A FIFO, socket or device file, or (on Windows) a symlink or junction, is in the project | Move it out of the project directory. R1 cannot version it, and refuses rather than silently skipping it |
 | `error[CONCURV_INVALID_PATH]` (exit 22) on `save` | A file name is not valid UTF-8, or contains characters concurv forbids | Rename the file |
@@ -228,7 +261,7 @@ Copy the entire project directory while no `save` or `restore` is running.
 Objects are immutable and the head is a single small file, so a copy taken
 between commands is consistent.
 
-## 9. Scripting and agents
+## 10. Scripting and agents
 
 Add `--json` to any command for one machine-readable JSON document on stdout,
 with `concurv_json_version`, `ok`, `data` and, on failure, `error.code`. Branch
@@ -236,7 +269,7 @@ on the exit code or `error.code`, never on human text. The schema and the
 full error/exit-code table are in `docs/cli.md`. `-C <dir>` runs a command as
 if started in `<dir>`.
 
-## 10. Platform notes
+## 11. Platform notes
 
 | | Linux | macOS | Windows |
 |---|---|---|---|

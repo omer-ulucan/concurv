@@ -571,6 +571,11 @@ pub struct Operation {
     pub description: String,
     /// Backup snapshot of discarded working-copy state, if any.
     pub backup: Option<SnapshotId>,
+    /// For an `undo` operation: the operation it reverses (RFC 0004 §10).
+    pub undoes: Option<OperationId>,
+    /// Snapshot this operation made the working copy equal to (restore,
+    /// update, checkout, undo), if it changed working files (RFC 0004 §10).
+    pub checked_out: Option<SnapshotId>,
     /// Resulting view.
     pub view: View,
 }
@@ -601,6 +606,20 @@ impl Operation {
             Some(b) => {
                 w.u8(1);
                 w.id(&b.object_id());
+            }
+            None => w.u8(0),
+        }
+        match &self.undoes {
+            Some(u) => {
+                w.u8(1);
+                w.id(&u.object_id());
+            }
+            None => w.u8(0),
+        }
+        match &self.checked_out {
+            Some(s) => {
+                w.u8(1);
+                w.id(&s.object_id());
             }
             None => w.u8(0),
         }
@@ -655,6 +674,16 @@ impl Operation {
         } else {
             None
         };
+        let undoes = if r.flag()? {
+            Some(OperationId::from_object_id(r.id()?))
+        } else {
+            None
+        };
+        let checked_out = if r.flag()? {
+            Some(SnapshotId::from_object_id(r.id()?))
+        } else {
+            None
+        };
         let mut view = View::default();
         let nb = r.count(MAX_TREE_ENTRIES, "branches")?;
         let mut last: Option<String> = None;
@@ -701,6 +730,8 @@ impl Operation {
             kind,
             description,
             backup,
+            undoes,
+            checked_out,
             view,
         })
     }

@@ -13,6 +13,7 @@ Every command runs in the workspace containing the current directory (or `-C`).
 | `concurv update` | bring `main` into this workspace: fast-forward, or file-level merge into a new snapshot | working copy, workspace head |
 | `concurv workspace add <path> [--name N]` | create a workspace in a new or empty directory and check out `main` there | creates workspace |
 | `concurv workspace list` | all workspaces with head and path | no |
+| `concurv undo` | reverse this workspace's most recent operation (`save`, `update`, `restore`); repeat to go further back. Refuses `publish` | workspace head and/or working copy |
 | `concurv log [-n N]` | first-parent snapshot history of this workspace's head | no |
 | `concurv restore --snapshot <id> [--force]` | make working files equal to the snapshot; history unchanged | working copy (+ backup snapshot, operation) |
 | `concurv verify [--full]` | integrity check of reachable graph (`--full`: every object file) | no |
@@ -55,12 +56,13 @@ changes behaviour, not the JSON shape.)
 - `save`: `created`, `snapshot`, `operation`, `changes[]`
 - `publish`: `branch`, `from` (previous branch head or null), `to`, `published` (false if already there), `operation`
 - `update`: `branch`, `result` ∈ `up_to_date|fast_forward|merged`, `head`, `written`, `deleted`, `operation`
+- `undo`: `undone` (operation id), `undone_kind` ∈ `save|update|restore`, `undone_description`, `head` (workspace head after), `files_restored_to` (snapshot or null if files were untouched), `written`, `deleted`, `operation`
 - `workspace add`: `workspace` (as below), `written`
 - `workspace list`: `workspaces[]` (`id`, `name`, `branch`, `head`, `root` (null if unknown on this device), `primary`, `current`)
 - `log`: `snapshots[]` (`snapshot`, `parents[]`, `tree`, `change_id`, `author`, `timestamp_ms`, `message`)
 - `restore`: `target`, `backup`, `written`, `deleted`, `operation`
 - `verify`: `full`, `operations`, `snapshots`, `trees`, `blobs`, `unreachable`, `problems[]` (`code`, `subject`, `message`), `notes[]`
-- `op log`: `operations[]` (`operation`, `parents[]`, `kind` ∈ `init|save|restore|workspace-add|publish|update`, `description`, `timestamp_ms`, `device`, `workspace` (null for `init`), `backup` (null unless `restore --force` replaced unsaved work), `head` (the **current** workspace's head after the operation, or null), `branches` (object: name → snapshot id))
+- `op log`: `operations[]` (`operation`, `parents[]`, `kind` ∈ `init|save|restore|workspace-add|publish|update|undo`, `description`, `timestamp_ms`, `device`, `workspace` (null for `init`), `backup` (null unless `restore --force` replaced unsaved work), `undoes` (for `undo`: the reversed operation), `checked_out` (snapshot the working copy was set to, or null), `head` (the **current** workspace's head after the operation, or null), `branches` (object: name → snapshot id))
 
 ## Error codes and exit codes
 
@@ -68,11 +70,11 @@ changes behaviour, not the JSON shape.)
 |---|---|---|
 | 0 | — | success |
 | 1 | `CONCURV_IO`, `CONCURV_INTERNAL` | OS error / bug |
-| 2 | `CONCURV_INVALID_ARGUMENT` (and clap usage errors) | bad input (e.g. empty message, bad workspace name, publish without a saved snapshot) |
+| 2 | `CONCURV_INVALID_ARGUMENT` (and clap usage errors) | bad input (e.g. empty message, bad workspace name, publish without a saved snapshot, undo of a `publish`) |
 | 10 | `CONCURV_NOT_A_REPO` | no repository found, or a workspace whose repository is gone |
 | 11 | `CONCURV_ALREADY_INITIALIZED` | `init` on existing repo |
 | 12 | `CONCURV_UNSUPPORTED_FORMAT` | unknown object/repository format version |
-| 20 | `CONCURV_DIRTY_WORKSPACE` | restore/update would discard unsaved changes |
+| 20 | `CONCURV_DIRTY_WORKSPACE` | restore/update/undo would discard unsaved changes |
 | 21 | `CONCURV_CONCURRENT_MODIFICATION` | a file changed while concurv was reading/replacing it |
 | 22 | `CONCURV_INVALID_PATH` | name violates concurv or platform path rules; nested workspace |
 | 23 | `CONCURV_UNSUPPORTED_FILE_TYPE` | FIFO/socket/device, or link on Windows |
@@ -83,5 +85,5 @@ changes behaviour, not the JSON shape.)
 | 41 | `CONCURV_STALE_HEAD` | op head or workspace head moved during compare-and-swap |
 | 42 | `CONCURV_DIVERGED` | `publish` refused: the branch has work this workspace has not integrated (run `update`) |
 | 43 | `CONCURV_CONFLICT` | `update` refused: conflicting changes or ambiguous merge base; nothing modified |
-| 50 | `CONCURV_NOT_FOUND` | id/prefix not found or not a snapshot; workspace not registered |
+| 50 | `CONCURV_NOT_FOUND` | id/prefix not found or not a snapshot; workspace not registered; nothing to undo |
 | 51 | `CONCURV_AMBIGUOUS_ID` | prefix matches several objects |

@@ -261,6 +261,8 @@ impl Repo {
             kind: "init".into(),
             description: "initialize repository".into(),
             backup: None,
+            undoes: None,
+            checked_out: None,
             view: View {
                 branches: BTreeMap::new(),
                 workspaces,

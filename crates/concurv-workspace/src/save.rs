@@ -90,6 +90,8 @@ pub fn save(repo: &Repo, message: &str) -> Result<SaveOutcome> {
         kind: "save".into(),
         description: format!("save {snap}: {first_line}"),
         backup: None,
+        undoes: None,
+        checked_out: None,
         view,
     };
     let new_op_id = repo.oplog().commit(&lock, &op_id, &new_op)?;
