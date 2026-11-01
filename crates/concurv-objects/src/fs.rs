@@ -2,12 +2,13 @@
 //! (RFC 0002 §3, §6).
 
 use std::collections::HashMap;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use concurv_core::{ConcurvError, RandomId, Result};
+use concurv_core::{ConcurvError, ErrorCode, RandomId, Result};
 
 /// A named step in a durable write at which a failure can be injected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -304,6 +305,197 @@ pub fn write_file_atomic(tmp_dir: &Path, dest: &Path, bytes: &[u8], faults: &Fau
     t.write(bytes)?;
     t.sync()?;
     t.persist(dest)
+}
+
+// ---------------------------------------------------------------- locks
+
+/// An exclusive OS advisory lock on a file. Released when dropped, and by the
+/// OS when the process exits for any reason, so a crash never leaves a stale
+/// lock behind.
+#[derive(Debug)]
+pub struct FileLock {
+    _file: File,
+    path: PathBuf,
+}
+
+impl FileLock {
+    fn open(path: &Path) -> Result<File> {
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+            .map_err(|e| ConcurvError::io(e, "open lock file", path))
+    }
+
+    /// Take the lock if it is free; `Ok(None)` if another holder has it.
+    pub fn try_acquire(path: &Path) -> Result<Option<Self>> {
+        let file = Self::open(path)?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(Self {
+                _file: file,
+                path: path.to_path_buf(),
+            })),
+            Err(TryLockError::WouldBlock) => Ok(None),
+            Err(TryLockError::Error(e)) => Err(ConcurvError::io(e, "lock", path)),
+        }
+    }
+
+    /// Take the lock, waiting up to `timeout` with exponential backoff
+    /// (5 ms doubling to 200 ms). `what` names the lock in the error message.
+    pub fn acquire(path: &Path, timeout: Duration, what: &str) -> Result<Self> {
+        let start = Instant::now();
+        let mut delay = Duration::from_millis(5);
+        loop {
+            if let Some(l) = Self::try_acquire(path)? {
+                return Ok(l);
+            }
+            let waited = start.elapsed();
+            if waited >= timeout {
+                return Err(ConcurvError::new(
+                    ErrorCode::Locked,
+                    format!(
+                        "{what} is held by another concurv process (waited {} ms); retry when it finishes",
+                        waited.as_millis()
+                    ),
+                )
+                .with_path(path));
+            }
+            std::thread::sleep(delay.min(timeout - waited));
+            delay = (delay * 2).min(Duration::from_millis(200));
+        }
+    }
+
+    /// Path of the lock file.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+// --------------------------------------------------------- temp sessions
+
+/// A per-process temporary directory `tmp/s-<random>/`, guarded by the lock
+/// file `tmp/s-<random>.lock` for as long as the session lives. Recovery
+/// ([`clean_tmp_root`]) deletes a session only if it can take that lock,
+/// which proves the owner has exited, so lock-free writers never lose
+/// in-progress temp files.
+///
+/// Create sessions only while holding the lock that also serializes
+/// [`clean_tmp_root`] for the same `tmp` root (the repository lock for the
+/// store, the workspace lock for a workspace).
+#[derive(Debug)]
+pub struct TempSession {
+    dir: PathBuf,
+    lock: Option<FileLock>,
+    faults: Faults,
+}
+
+impl TempSession {
+    /// Create a new session under `tmp_root` (which must exist).
+    pub fn create(tmp_root: &Path, faults: &Faults) -> Result<Self> {
+        let name = format!("s-{}", RandomId::generate()?.to_hex());
+        let lock_path = tmp_root.join(format!("{name}.lock"));
+        let lock = FileLock::try_acquire(&lock_path)?.ok_or_else(|| {
+            ConcurvError::internal("freshly created temp-session lock is already held")
+        })?;
+        let dir = tmp_root.join(&name);
+        faults
+            .check(FaultPoint::DirCreate)
+            .map_err(|e| ConcurvError::io(e, "create temp session", &dir))?;
+        fs::create_dir(&dir).map_err(|e| ConcurvError::io(e, "create temp session", &dir))?;
+        Ok(Self {
+            dir,
+            lock: Some(lock),
+            faults: faults.clone(),
+        })
+    }
+
+    /// Directory for this session's temp files.
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+}
+
+impl Drop for TempSession {
+    fn drop(&mut self) {
+        if self.faults.triggered() {
+            // Leave crash-like debris; recovery must handle it.
+            return;
+        }
+        let _ = fs::remove_dir_all(&self.dir);
+        if let Some(lock) = self.lock.take() {
+            let p = lock.path().to_path_buf();
+            drop(lock);
+            let _ = fs::remove_file(p);
+        }
+    }
+}
+
+/// Remove `p` (file or directory tree); true if it is gone afterwards.
+///
+/// Best effort by design: debris removal is never needed for correctness
+/// (temp names are random and nothing references them), and on Windows an
+/// entry that its exiting owner is deleting at the same moment can be
+/// "delete pending" and refuse to open or delete. A failed removal is left
+/// for a later cleanup instead of failing the user's command.
+fn remove_debris(p: &Path) -> bool {
+    let r = match fs::symlink_metadata(p) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return true,
+        Err(_) => return false,
+        Ok(m) if m.is_dir() => fs::remove_dir_all(p),
+        Ok(_) => fs::remove_file(p),
+    };
+    match r {
+        Ok(()) => true,
+        Err(e) => e.kind() == io::ErrorKind::NotFound,
+    }
+}
+
+/// Remove debris from `tmp_root`: loose files, and session directories whose
+/// owner is gone (lock acquirable or missing). Live sessions are never
+/// touched. Removal is best effort (see [`remove_debris`]). The caller must
+/// hold the lock that serializes session creation for this root. Returns the
+/// number of entries removed.
+pub fn clean_tmp_root(tmp_root: &Path) -> Result<usize> {
+    let rd = match fs::read_dir(tmp_root) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(ConcurvError::io(e, "list", tmp_root)),
+    };
+    let mut names = Vec::new();
+    for entry in rd {
+        let entry = entry.map_err(|e| ConcurvError::io(e, "list", tmp_root))?;
+        names.push(entry.file_name().to_string_lossy().into_owned());
+    }
+    let mut removed = 0;
+    for name in &names {
+        let p = tmp_root.join(name);
+        if let Some(session) = name.strip_suffix(".lock") {
+            // A session lock: if it can be taken, the owner is gone. If it
+            // cannot even be opened (being deleted by its owner), skip it.
+            let Ok(Some(lock)) = FileLock::try_acquire(&p) else {
+                continue;
+            };
+            let dir_gone = remove_debris(&tmp_root.join(session));
+            drop(lock);
+            // Remove the lock file only once the directory is gone, so a
+            // half-cleaned session is still recognized next time.
+            if dir_gone && remove_debris(&p) {
+                removed += 1;
+            }
+        } else if name.starts_with("s-") {
+            // Session directory whose lock file is already gone: dead.
+            if !names.contains(&format!("{name}.lock")) && remove_debris(&p) {
+                removed += 1;
+            }
+        } else if remove_debris(&p) {
+            // Loose temp files are only created under the guarding lock,
+            // which the caller now holds, so they belong to a dead command.
+            removed += 1;
+        }
+    }
+    Ok(removed)
 }
 
 #[cfg(test)]

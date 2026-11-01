@@ -7,7 +7,8 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use concurv_core::{ConcurvError, ErrorCode, Result};
 use concurv_workspace::{
-    Change, Repo, RepoOptions, RestoreOptions, diff, log, op_log, restore, save, status, verify,
+    Change, Repo, RepoOptions, RestoreOptions, UpdateKind, WorkspaceInfo, diff, log, op_log,
+    publish, restore, save, status, update, verify, workspaces,
 };
 use serde_json::{Value, json};
 
@@ -39,7 +40,7 @@ enum Cmd {
     Status,
     /// Show content differences relative to the workspace head (read-only).
     Diff,
-    /// Durably record the working copy as a new snapshot.
+    /// Durably record the working copy as a snapshot in this workspace (does not publish).
     Save {
         /// Snapshot message.
         #[arg(short, long)]
@@ -66,11 +67,34 @@ enum Cmd {
         #[arg(long)]
         full: bool,
     },
-    /// Inspect the operation log (every init, save and restore).
+    /// Inspect the operation log (every repository operation).
     Op {
         #[command(subcommand)]
         cmd: OpCmd,
     },
+    /// Manage private workspaces that share this repository.
+    Workspace {
+        #[command(subcommand)]
+        cmd: WorkspaceCmd,
+    },
+    /// Move the shared branch (`main`) forward to this workspace's head (CAS).
+    Publish,
+    /// Bring the shared branch into this workspace (fast-forward or file-level merge).
+    Update,
+}
+
+#[derive(Subcommand)]
+enum WorkspaceCmd {
+    /// Create a new workspace in an empty or new directory and check out `main` there.
+    Add {
+        /// Directory for the new workspace.
+        path: PathBuf,
+        /// Workspace name (default: the directory name).
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// List all workspaces of this repository.
+    List,
 }
 
 #[derive(Subcommand)]
@@ -96,6 +120,14 @@ impl Cmd {
             Cmd::Op {
                 cmd: OpCmd::Log { .. },
             } => "op log",
+            Cmd::Workspace {
+                cmd: WorkspaceCmd::Add { .. },
+            } => "workspace add",
+            Cmd::Workspace {
+                cmd: WorkspaceCmd::List,
+            } => "workspace list",
+            Cmd::Publish => "publish",
+            Cmd::Update => "update",
         }
     }
 }
@@ -178,7 +210,7 @@ fn run(cli: Cli) -> Result<Output> {
                 json!({ "root": repo.root().display().to_string(), "branch": concurv_workspace::DEFAULT_BRANCH }),
                 format!(
                     "Initialized empty concurv repository in {}",
-                    repo.meta_dir().display()
+                    repo.store_dir().display()
                 ),
             )
         }
@@ -272,7 +304,129 @@ fn run(cli: Cli) -> Result<Output> {
             let repo = Repo::discover(&cwd, opts())?;
             cmd_op_log(&repo, limit)
         }
+        Cmd::Workspace {
+            cmd: WorkspaceCmd::Add { path, name },
+        } => {
+            let repo = Repo::discover(&cwd, opts())?;
+            let path = if path.is_absolute() {
+                path
+            } else {
+                cwd.join(path)
+            };
+            let o = workspaces::add(&repo, &path, name.as_deref())?;
+            let root = o.info.root.as_ref().map(|r| r.display().to_string());
+            let human = format!(
+                "Created workspace `{}` at {}{}",
+                o.info.name,
+                root.as_deref().unwrap_or("?"),
+                match o.info.head {
+                    Some(h) => format!(
+                        " (checked out {} {}, {} file(s))",
+                        o.info.branch.as_deref().unwrap_or("?"),
+                        &h.to_hex()[..12],
+                        o.written
+                    ),
+                    None => " (empty: nothing published yet)".into(),
+                }
+            );
+            ok(
+                json!({ "workspace": workspace_json(&o.info), "written": o.written }),
+                human,
+            )
+        }
+        Cmd::Workspace {
+            cmd: WorkspaceCmd::List,
+        } => {
+            let repo = Repo::discover(&cwd, opts())?;
+            let all = workspaces::list(&repo)?;
+            let mut human = String::new();
+            for w in &all {
+                human.push_str(&format!(
+                    "{} {:<16} head {:<12}  {}\n",
+                    if w.current { "*" } else { " " },
+                    w.name,
+                    w.head
+                        .map_or("(none)".to_owned(), |h| h.to_hex()[..12].to_owned()),
+                    w.root
+                        .as_ref()
+                        .map_or("(path unknown)".to_owned(), |r| r.display().to_string()),
+                ));
+            }
+            ok(
+                json!({ "workspaces": all.iter().map(workspace_json).collect::<Vec<_>>() }),
+                human,
+            )
+        }
+        Cmd::Publish => {
+            let repo = Repo::discover(&cwd, opts())?;
+            let o = publish(&repo)?;
+            let human = match o.operation {
+                Some(_) => format!(
+                    "Published {} to `{}` (was {}).",
+                    o.to,
+                    o.branch,
+                    o.from
+                        .map_or("empty".to_owned(), |f| f.to_hex()[..12].to_owned())
+                ),
+                None => format!("`{}` is already at {}; nothing to publish.", o.branch, o.to),
+            };
+            ok(
+                json!({
+                    "branch": o.branch,
+                    "from": o.from.map(|s| s.to_hex()),
+                    "to": o.to.to_hex(),
+                    "published": o.operation.is_some(),
+                    "operation": o.operation.map(|s| s.to_hex()),
+                }),
+                human,
+            )
+        }
+        Cmd::Update => {
+            let repo = Repo::discover(&cwd, opts())?;
+            let o = update(&repo)?;
+            let human = match o.kind {
+                UpdateKind::UpToDate => format!("Already up to date with `{}`.", o.branch),
+                UpdateKind::FastForward => format!(
+                    "Fast-forwarded to `{}` {} ({} written, {} deleted).",
+                    o.branch,
+                    o.head.map_or(String::new(), |h| h.to_hex()),
+                    o.written,
+                    o.deleted
+                ),
+                UpdateKind::Merged => format!(
+                    "Merged `{}` into this workspace as {} ({} written, {} deleted).\n\
+                     File-level merge only: build and test before `concurv publish`.",
+                    o.branch,
+                    o.head.map_or(String::new(), |h| h.to_hex()),
+                    o.written,
+                    o.deleted
+                ),
+            };
+            ok(
+                json!({
+                    "branch": o.branch,
+                    "result": o.kind.as_str(),
+                    "head": o.head.map(|h| h.to_hex()),
+                    "written": o.written,
+                    "deleted": o.deleted,
+                    "operation": o.operation.map(|s| s.to_hex()),
+                }),
+                human,
+            )
+        }
     }
+}
+
+fn workspace_json(w: &WorkspaceInfo) -> Value {
+    json!({
+        "id": w.id.to_hex(),
+        "name": w.name,
+        "branch": w.branch,
+        "head": w.head.map(|h| h.to_hex()),
+        "root": w.root.as_ref().map(|r| r.display().to_string()),
+        "primary": w.primary,
+        "current": w.current,
+    })
 }
 
 fn change_json(c: &Change) -> Value {

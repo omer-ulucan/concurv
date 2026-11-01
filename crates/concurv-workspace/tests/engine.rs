@@ -246,7 +246,14 @@ fn concurrent_writer_is_locked_out() {
     let (d, repo) = new_repo();
     fs::write(d.path().join("f"), b"1").unwrap();
     let _held = repo.lock().unwrap();
-    let other = Repo::open(d.path(), opts()).unwrap();
+    let other = Repo::open(
+        d.path(),
+        concurv_workspace::RepoOptions {
+            lock_timeout: Some(std::time::Duration::ZERO),
+            ..opts()
+        },
+    )
+    .unwrap();
     assert_eq!(save(&other, "x").unwrap_err().code, ErrorCode::Locked);
     assert!(other.head_snapshot().unwrap().is_none());
 }

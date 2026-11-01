@@ -31,9 +31,12 @@ durability-reducing options; simultaneous loss of every replica.
   device_id       32 hex chars
   workspace_id    32 hex chars (the workspace living at this root)
   op_head         64 hex chars + "\n" — the only mutable pointer
-  lock            lock file (OS advisory exclusive lock)
+  lock            repository lock (OS advisory; held only for commits, RFC 0004 §5)
+  ws.lock         lock of the primary workspace's files (RFC 0004 §5)
   objects/ab/cdef…  immutable objects; file name = hex id
-  tmp/            temporary files; contents are never meaningful
+  tmp/            store temp files and per-process temp sessions; never meaningful
+  ws-tmp/         the primary workspace's own temp files (restore materialization)
+  workspaces/     locator files: root path of each secondary workspace (not history)
   quarantine/     corrupt objects moved aside for diagnosis
   restore-in-progress   present only while a restore is materializing files
 ```
@@ -56,11 +59,16 @@ durability-reducing options; simultaneous loss of every replica.
 
 ### 3.2 Pointer update (`op_head`)
 
-Under the exclusive repository lock:
+Since R2, content objects (blobs, trees, snapshots) are written **before**
+taking the repository lock, in a per-process temp session (RFC 0004 §5). They
+are immutable and content-addressed, so concurrent writers cannot interfere,
+and they are durable (3.1) before anything can reference them. Then, under
+the exclusive repository lock:
 
 1. Read `op_head` → `expected`. Compute the new operation from the View stored
-   in `expected`.
-2. Write all objects (3.1), then the operation object (3.1).
+   in `expected` (the **current** view, so concurrent commits are preserved).
+2. Re-verify the snapshots the new View references, then write the operation
+   object (3.1).
 3. Re-read `op_head`; if it is not `expected` → `CONCURV_STALE_HEAD` (cannot happen
    while the lock is honoured; checked anyway as defence in depth).
 4. Write `tmp/op_head.<random>`, `fsync`, rename onto `op_head`, `fsync` `.concurv/`.
@@ -101,11 +109,14 @@ and its backup id; re-running `concurv restore --snapshot <target>` completes it
 
 ## 4. Locking
 
-Mutating commands take an OS advisory exclusive lock on `.concurv/lock`
-(`std::fs::File::try_lock`). The OS releases it when the process dies, so a
-crash cannot leave a stale lock. A second writer fails fast with
-`CONCURV_LOCKED`. Read-only commands do not take the lock; they read `op_head`
-once and then only immutable objects, so they observe a consistent state.
+Mutating commands take OS advisory exclusive locks (`std::fs::File::try_lock`),
+which the OS releases when the process dies, so a crash cannot leave a stale
+lock. Since R2 there are two (RFC 0004 §5): the **workspace lock**
+(`ws.lock`) for the whole command, and the **repository lock**
+(`.concurv/lock`) only for the commit step. Both are acquired with a bounded
+wait (default 30 s, exponential backoff), then `CONCURV_LOCKED`. Read-only
+commands take no lock; they read `op_head` once and then only immutable
+objects, so they observe a consistent state.
 
 ## 5. Platform guarantees and limits
 
@@ -142,7 +153,10 @@ This is deterministic fault injection of the *software* failure path; it is
 
 ## 7. Recovery, quarantine and retention
 
-- On every mutating open (under the lock), files in `tmp/` are deleted.
+- Whenever the repository lock is taken, debris in `tmp/` is removed: loose
+  files and temp sessions whose owner has exited. Live sessions of concurrent
+  writers are never touched. `ws-tmp/` is cleaned the same way under the
+  workspace lock. Cleanup is best effort (RFC 0004 §5).
 - `concurv verify --full` walks every operation reachable from `op_head`, every
   snapshot, tree and blob reachable from those operations, verifying hashes,
   kinds and graph closure. It additionally scans the whole object directory

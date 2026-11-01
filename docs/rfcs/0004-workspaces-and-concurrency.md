@@ -50,11 +50,11 @@ A **secondary workspace** created by `concurv workspace add <path>` has a
   store           absolute path of the primary .concurv directory, UTF-8, "\n"-terminated
   workspace_id    32 hex chars
   ws.lock         workspace lock (§5)
-  tmp/            workspace-local temp files (restore materialization)
+  ws-tmp/         workspace-local temp files (restore materialization)
   restore-in-progress   only while a restore/checkout is materializing files
 ```
 
-The primary `.concurv/` additionally has `ws.lock` for the default workspace
+The primary `.concurv/` additionally has `ws.lock` and `ws-tmp/` for the default workspace
 and `workspaces/<workspace_id>`, a locator file with the root path of each
 workspace. Locator files are **not history**: losing one only means
 `workspace list` cannot show that path. They live outside the op log because
@@ -123,8 +123,22 @@ the repository lock:
 Recovery (under the repository lock) deletes a session directory only if it
 can acquire that session's lock, which proves its owner is gone. Loose files
 directly in `tmp/` are only ever created under the repository lock (op-head
-and marker updates), so they are deleted unconditionally there. Workspace-local
-`tmp/` follows the same session rule.
+and locator updates), so they are deleted unconditionally there.
+
+**Every temp root is cleaned only under its own lock.** The store's `tmp/` is
+guarded by the repository lock; each workspace's `ws-tmp/` (session rule as
+above, plus the restore marker's atomic write) is guarded by that workspace's
+lock. The primary workspace's metadata lives in the same `.concurv/` as the
+store, which is why the workspace directory is named `ws-tmp/` and never
+`tmp/`. An earlier draft shared `tmp/` there; the 10-writer stress test showed
+that the primary workspace's cleanup then deleted other writers' in-flight
+temp files. On Windows that could leave `op_head` naming an object that
+vanished once its "delete pending" handle closed.
+
+Cleanup is **best effort**. Debris is never referenced, so a removal that fails
+(for example a lock file that its exiting owner is deleting at the same
+moment) is skipped and retried by a later cleanup, instead of failing the
+user's command.
 
 ## 6. Publish
 
@@ -200,7 +214,7 @@ files can still break the program together. The intended workflow is
 
 | Slice | Content | Status |
 |---|---|---|
-| 2a | workspaces (`workspace add/list`), locks with bounded wait, temp sessions, lock-free save, `publish`, `update` with file-level merge, 2/5/10-writer stress tests incl. killed processes | this RFC |
+| 2a | workspaces (`workspace add/list`), locks with bounded wait, temp sessions, lock-free save, `publish`, `update` with file-level merge, 2/5/10-writer stress tests incl. killed processes | **implemented** |
 | 2b | workspace-scoped `undo` (operation-level, never moves `main` backwards) | planned |
 | 2c | stored conflict objects (instead of refusing), resolution workflow | planned |
 | 2d | minimum Git import/export (ADR 0002) | planned |

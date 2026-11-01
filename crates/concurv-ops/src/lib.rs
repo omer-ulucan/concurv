@@ -1,8 +1,6 @@
 //! Operation journal: committing operations through the op-head CAS,
 //! walking operation history, and crash recovery of transient files.
 
-use std::fs;
-use std::io;
 use std::path::Path;
 
 use concurv_core::{ConcurvError, ErrorCode, OperationId, Result};
@@ -87,29 +85,10 @@ impl OpLog {
     }
 }
 
-/// Delete everything in `.concurv/tmp`. Must only be called while holding the
-/// repository lock: temp files are never referenced by committed state, so
-/// any that exist belong to an interrupted transaction.
+/// Remove debris of interrupted commands from the store's `.concurv/tmp`:
+/// loose temp files and temp sessions whose owning process has exited. Live
+/// sessions of concurrent writers are kept (RFC 0004 §5). Requires the
+/// repository lock, which also serializes temp-session creation.
 pub fn clean_tmp(_lock: &RepoLock, tmp_dir: &Path) -> Result<usize> {
-    let mut n = 0;
-    let rd = match fs::read_dir(tmp_dir) {
-        Ok(rd) => rd,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(0),
-        Err(e) => return Err(ConcurvError::io(e, "list", tmp_dir)),
-    };
-    for entry in rd {
-        let entry = entry.map_err(|e| ConcurvError::io(e, "list", tmp_dir))?;
-        let p = entry.path();
-        let ft = entry
-            .file_type()
-            .map_err(|e| ConcurvError::io(e, "inspect", &p))?;
-        let r = if ft.is_dir() {
-            fs::remove_dir_all(&p)
-        } else {
-            fs::remove_file(&p)
-        };
-        r.map_err(|e| ConcurvError::io(e, "remove stale temporary file", &p))?;
-        n += 1;
-    }
-    Ok(n)
+    concurv_objects::fs::clean_tmp_root(tmp_dir)
 }

@@ -7,6 +7,37 @@ version 1 is not frozen until the first release (see ADR 0003).
 
 R1 gate passed on 2026-11-01: the full suite is green on Linux, macOS and
 Windows in CI, with identical golden hashes on all three (`docs/ROADMAP_STATUS.md`).
+R2 slice 2a (private workspaces) is implemented; the R2 gate is not yet claimed.
+
+### Changed (behaviour)
+- **`save` no longer moves `main`** (RFC 0004 §2). It advances only the
+  current workspace's head; use `concurv publish` to move `main`.
+- Mutating commands **wait** up to 30 s for a busy lock instead of failing
+  immediately with `CONCURV_LOCKED`.
+- The repository lock is now held only for the commit step; scanning and
+  object writing run concurrently with other workspaces.
+
+### Changed (format, pre-release)
+- Operation views store a **name** for every workspace (RFC 0001 §3.4,
+  RFC 0004 §4). Repositories created by earlier builds of this branch are
+  not readable; none were distributed.
+
+### Added (R2 slice 2a, RFC 0004)
+- `concurv workspace add <path> [--name N]` and `concurv workspace list`:
+  private workspaces that share one store and one `main`.
+- `concurv publish`: compare-and-swap fast-forward of `main`;
+  `CONCURV_DIVERGED` (exit 42) if `main` has unintegrated work.
+- `concurv update`: fast-forward, or a file-level three-way merge into a new
+  snapshot in the workspace. Same-file conflicts and ambiguous merge bases
+  are refused with `CONCURV_CONFLICT` (exit 43); nothing is modified.
+- Stress tests: 2/5/10 concurrent writers; 12 rounds of killed processes.
+
+### Fixed (found by the new stress tests before release)
+- Data integrity: the primary workspace's temp cleanup could delete other
+  writers' in-flight temp files, which on Windows could leave `op_head`
+  pointing at a vanished operation object. Workspaces now use a separate
+  `ws-tmp/`, and each temp root is cleaned only under its own lock.
+- Cleanup races with an exiting writer no longer fail commands (best effort).
 
 ### Added
 - `concurv op log [-n N]` lists the operation log (init/save/restore), newest

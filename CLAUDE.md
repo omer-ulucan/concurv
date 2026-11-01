@@ -8,6 +8,7 @@ Execution rules: `prompts/START_WITH_CLAUDE_CODE.md`. Current stage and evidence
 Before changing storage, refs, restore or the CLI contract, read:
 - `docs/rfcs/0001-vcs-semantics.md` — byte format (normative; changing it needs a new format version)
 - `docs/rfcs/0002-durability-and-transactions.md` — write ordering, fsync, commit point
+- `docs/rfcs/0004-workspaces-and-concurrency.md` — workspaces, publish/update, lock levels, temp-root rule
 - `docs/security/threat-model.md`
 - `docs/adr/0003-project-rename-concurv.md` — identifier names are part of the format; do not change them casually
 - `docs/cli.md` — JSON schema, error codes, exit codes (stable contract)

@@ -1,25 +1,40 @@
-//! Repository discovery, initialization and opening.
+//! Repository discovery, initialization and opening, for the primary
+//! workspace and secondary workspaces that share its store (RFC 0004 §3).
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use concurv_core::{
     ConcurvError, DeviceId, ErrorCode, OperationId, RandomId, Result, SnapshotId, WorkspaceId,
 };
-use concurv_objects::fs::{create_dir_durable, rename_durable, sync_dir, write_file_atomic};
+use concurv_objects::fs::{
+    FileLock, TempSession, clean_tmp_root, create_dir_durable, rename_durable, sync_dir,
+    write_file_atomic,
+};
 use concurv_objects::{Faults, ObjectStore, Operation, View, WorkspaceView};
 use concurv_ops::OpLog;
 use concurv_refs::{OpHead, RepoLock};
 
 use crate::worktree::{FlatTree, flatten};
 
-/// Contents of `.concurv/format`.
+/// Contents of `.concurv/format` in the primary workspace (holds the store).
 pub const REPO_FORMAT: &str = "concurv-repo-format 1\n";
+/// Contents of `.concurv/format` in a secondary workspace.
+pub const WORKSPACE_FORMAT: &str = "concurv-workspace-format 1\n";
 /// Default branch created by `init`.
 pub const DEFAULT_BRANCH: &str = "main";
+/// Name of the workspace created by `init`.
+pub const DEFAULT_WORKSPACE: &str = "default";
+/// Workspace-local temp directory inside a workspace's `.concurv/`. Distinct
+/// from the store's `tmp/` even in the primary workspace, where both live in
+/// the same `.concurv/`: each temp root must be cleaned only under its own
+/// lock (store `tmp/`: repository lock; `ws-tmp/`: workspace lock).
+pub const WORKSPACE_TMP: &str = "ws-tmp";
+/// Default bounded wait for the repository and workspace locks.
+pub const DEFAULT_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Options controlling a repository handle (mostly for tests).
 #[derive(Clone, Debug, Default)]
@@ -30,19 +45,44 @@ pub struct RepoOptions {
     pub now_ms: Option<i64>,
     /// Author override; otherwise `CONCURV_AUTHOR`, then the OS user name.
     pub author: Option<String>,
+    /// How long to wait for a busy lock; `None` = [`DEFAULT_LOCK_TIMEOUT`].
+    pub lock_timeout: Option<Duration>,
 }
 
-/// An open repository with its single (R1) workspace at `root`.
+/// An open workspace and the repository (store + op log) it belongs to.
 #[derive(Debug)]
 pub struct Repo {
     root: PathBuf,
-    meta_dir: PathBuf,
+    ws_meta: PathBuf,
+    store_meta: PathBuf,
     store: ObjectStore,
     op_head: OpHead,
     oplog: OpLog,
     device_id: DeviceId,
     workspace_id: WorkspaceId,
+    primary: bool,
     opts: RepoOptions,
+}
+
+/// Exclusive lock on one workspace's files (RFC 0004 §5).
+#[derive(Debug)]
+pub struct WorkspaceLock {
+    _lock: FileLock,
+}
+
+/// A temp session in the store's `tmp/` plus a store handle writing there,
+/// for lock-free object writes.
+#[derive(Debug)]
+pub struct StoreWriter {
+    _session: TempSession,
+    store: ObjectStore,
+}
+
+impl StoreWriter {
+    /// Store handle whose temp files go to this writer's session.
+    pub fn store(&self) -> &ObjectStore {
+        &self.store
+    }
 }
 
 fn read_id_file(path: &Path) -> Result<RandomId> {
@@ -52,8 +92,13 @@ fn read_id_file(path: &Path) -> Result<RandomId> {
     })
 }
 
-/// Ensure `.concurv` under `root` is a real directory (not a symlink/junction).
-fn check_meta_dir(root: &Path) -> Result<Option<PathBuf>> {
+fn read_format(meta: &Path) -> Result<String> {
+    let p = meta.join("format");
+    fs::read_to_string(&p).map_err(|e| ConcurvError::io(e, "read", &p))
+}
+
+/// Ensure `<root>/.concurv` is a real directory (not a symlink/junction).
+pub(crate) fn check_meta_dir(root: &Path) -> Result<Option<PathBuf>> {
     let meta_dir = root.join(".concurv");
     match fs::symlink_metadata(&meta_dir) {
         Ok(m) if m.file_type().is_symlink() => Err(ConcurvError::new(
@@ -75,10 +120,23 @@ fn check_meta_dir(root: &Path) -> Result<Option<PathBuf>> {
     }
 }
 
+fn unsupported(format: &str, p: &Path) -> ConcurvError {
+    ConcurvError::new(
+        ErrorCode::UnsupportedFormat,
+        format!(
+            "repository format {:?} is not supported by this concurv build",
+            format.trim()
+        ),
+    )
+    .with_path(p.join("format"))
+}
+
 impl Repo {
-    /// Find the repository containing `start` (searching parent directories).
+    /// Find the workspace containing `start` (searching parent directories).
     pub fn discover(start: &Path, opts: RepoOptions) -> Result<Self> {
-        let start = fs::canonicalize(start).map_err(|e| ConcurvError::io(e, "resolve", start))?;
+        let start = fs::canonicalize(start)
+            .map(simplify)
+            .map_err(|e| ConcurvError::io(e, "resolve", start))?;
         let mut cur: Option<&Path> = Some(&start);
         while let Some(dir) = cur {
             if check_meta_dir(dir)?.is_some() {
@@ -89,51 +147,63 @@ impl Repo {
         Err(ConcurvError::new(
             ErrorCode::NotARepo,
             format!(
-                "`{}` is not inside an concurv repository (run `concurv init`)",
+                "`{}` is not inside a concurv repository (run `concurv init`)",
                 start.display()
             ),
         ))
     }
 
-    /// Open the repository whose workspace root is exactly `root`.
+    /// Open the workspace whose root is exactly `root` (primary or secondary).
     pub fn open(root: &Path, opts: RepoOptions) -> Result<Self> {
-        let Some(meta_dir) = check_meta_dir(root)? else {
+        let Some(ws_meta) = check_meta_dir(root)? else {
             return Err(ConcurvError::new(
                 ErrorCode::NotARepo,
                 format!("no repository at `{}`", root.display()),
             ));
         };
-        let fmt_path = meta_dir.join("format");
-        let format =
-            fs::read_to_string(&fmt_path).map_err(|e| ConcurvError::io(e, "read", &fmt_path))?;
-        if format != REPO_FORMAT {
-            return Err(ConcurvError::new(
-                ErrorCode::UnsupportedFormat,
-                format!(
-                    "repository format {:?} is not supported by this concurv build",
-                    format.trim()
-                ),
-            )
-            .with_path(&fmt_path));
-        }
-        let device_id = DeviceId::from_random(read_id_file(&meta_dir.join("device_id"))?);
-        let workspace_id = WorkspaceId::from_random(read_id_file(&meta_dir.join("workspace_id"))?);
-        let store = ObjectStore::new(&meta_dir, opts.faults.clone());
-        let op_head = OpHead::new(&meta_dir, opts.faults.clone());
+        let format = read_format(&ws_meta)?;
+        let (store_meta, primary) = if format == REPO_FORMAT {
+            (ws_meta.clone(), true)
+        } else if format == WORKSPACE_FORMAT {
+            let p = ws_meta.join("store");
+            let s = fs::read_to_string(&p).map_err(|e| ConcurvError::io(e, "read", &p))?;
+            let store_meta = PathBuf::from(s.trim_end_matches('\n'));
+            let real = fs::symlink_metadata(&store_meta).is_ok_and(|m| m.is_dir());
+            if !real || read_format(&store_meta).ok().as_deref() != Some(REPO_FORMAT) {
+                return Err(ConcurvError::new(
+                    ErrorCode::NotARepo,
+                    format!(
+                        "this workspace belongs to the repository at `{}`, which is missing or not a concurv repository",
+                        store_meta.display()
+                    ),
+                )
+                .with_path(&p));
+            }
+            (store_meta, false)
+        } else {
+            return Err(unsupported(&format, &ws_meta));
+        };
+        let device_id = DeviceId::from_random(read_id_file(&store_meta.join("device_id"))?);
+        let workspace_id = WorkspaceId::from_random(read_id_file(&ws_meta.join("workspace_id"))?);
+        let store = ObjectStore::new(&store_meta, opts.faults.clone());
+        let op_head = OpHead::new(&store_meta, opts.faults.clone());
         let oplog = OpLog::new(store.clone(), op_head.clone());
         Ok(Self {
             root: root.to_path_buf(),
-            meta_dir,
+            ws_meta,
+            store_meta,
             store,
             op_head,
             oplog,
             device_id,
             workspace_id,
+            primary,
             opts,
         })
     }
 
-    /// Create a new repository at `root` atomically (RFC 0002 §3.3).
+    /// Create a new repository at `root` atomically (RFC 0002 §3.3). `root`
+    /// becomes the primary workspace, named [`DEFAULT_WORKSPACE`].
     pub fn init(root: &Path, opts: RepoOptions) -> Result<Self> {
         let meta = fs::metadata(root).map_err(|e| ConcurvError::io(e, "inspect", root))?;
         if !meta.is_dir() {
@@ -145,10 +215,7 @@ impl Repo {
         if check_meta_dir(root)?.is_some() || root.join(".concurv").exists() {
             return Err(ConcurvError::new(
                 ErrorCode::AlreadyInitialized,
-                format!(
-                    "`{}` already contains an concurv repository",
-                    root.display()
-                ),
+                format!("`{}` already contains a concurv repository", root.display()),
             ));
         }
         let faults = &opts.faults;
@@ -181,6 +248,7 @@ impl Repo {
         workspaces.insert(
             workspace_id,
             WorkspaceView {
+                name: DEFAULT_WORKSPACE.to_owned(),
                 branch: Some(DEFAULT_BRANCH.to_owned()),
                 head: None,
             },
@@ -211,11 +279,20 @@ impl Repo {
     pub fn root(&self) -> &Path {
         &self.root
     }
-    /// `.concurv` directory.
-    pub fn meta_dir(&self) -> &Path {
-        &self.meta_dir
+    /// The store's `.concurv` directory (in the primary workspace).
+    pub fn store_dir(&self) -> &Path {
+        &self.store_meta
     }
-    /// Object store.
+    /// This workspace's `.concurv` directory (equals [`Self::store_dir`] for
+    /// the primary workspace).
+    pub fn workspace_meta_dir(&self) -> &Path {
+        &self.ws_meta
+    }
+    /// True for the workspace created by `init`.
+    pub fn is_primary(&self) -> bool {
+        self.primary
+    }
+    /// Object store (for reads; writers use [`Self::store_writer`]).
     pub fn store(&self) -> &ObjectStore {
         &self.store
     }
@@ -239,13 +316,57 @@ impl Repo {
     pub fn options(&self) -> &RepoOptions {
         &self.opts
     }
+    fn lock_timeout(&self) -> Duration {
+        self.opts.lock_timeout.unwrap_or(DEFAULT_LOCK_TIMEOUT)
+    }
 
-    /// Take the writer lock and remove debris from interrupted transactions.
+    // ------------------------------------------------------------------ locks
+
+    /// Take the repository lock (bounded wait) and remove debris of
+    /// interrupted commands from the store's `tmp/`. Hold it only for the
+    /// commit step.
     pub fn lock(&self) -> Result<RepoLock> {
-        let lock = RepoLock::acquire(&self.meta_dir)?;
+        let lock = RepoLock::acquire_timeout(&self.store_meta, self.lock_timeout())?;
         concurv_ops::clean_tmp(&lock, self.store.tmp_dir())?;
         Ok(lock)
     }
+
+    /// Take this workspace's lock (bounded wait) and remove debris from the
+    /// workspace's own `ws-tmp/` (never the store's `tmp/`).
+    pub fn workspace_lock(&self) -> Result<WorkspaceLock> {
+        let lock = FileLock::acquire(
+            &self.ws_meta.join("ws.lock"),
+            self.lock_timeout(),
+            "this workspace's lock",
+        )?;
+        let tmp = self.ws_meta.join(WORKSPACE_TMP);
+        create_dir_durable(&tmp, &self.opts.faults)?;
+        clean_tmp_root(&tmp)?;
+        Ok(WorkspaceLock { _lock: lock })
+    }
+
+    /// Start a temp session in the store for lock-free object writes. Briefly
+    /// takes the repository lock, which serializes session creation with
+    /// recovery (RFC 0004 §5).
+    pub fn store_writer(&self) -> Result<StoreWriter> {
+        let session = {
+            let _lock = self.lock()?;
+            TempSession::create(self.store.tmp_dir(), &self.opts.faults)?
+        };
+        let store = self.store.with_tmp(session.dir());
+        Ok(StoreWriter {
+            _session: session,
+            store,
+        })
+    }
+
+    /// Start a temp session in this workspace's `ws-tmp/` (same filesystem as
+    /// the working files) for materializing files. Requires the workspace lock.
+    pub(crate) fn workspace_session(&self, _lock: &WorkspaceLock) -> Result<TempSession> {
+        TempSession::create(&self.ws_meta.join(WORKSPACE_TMP), &self.opts.faults)
+    }
+
+    // ------------------------------------------------------------------ misc
 
     /// Current time per options.
     pub fn now_ms(&self) -> i64 {
@@ -277,14 +398,14 @@ impl Repo {
             .cloned()
             .ok_or_else(|| {
                 ConcurvError::new(
-                    ErrorCode::ObjectCorrupt,
-                    "current operation has no entry for this workspace",
+                    ErrorCode::NotFound,
+                    "this workspace is not registered in the repository (was it created by a different repository?)",
                 )
             })?;
         Ok((id, op, ws))
     }
 
-    /// The workspace head snapshot, if any save happened.
+    /// The workspace head snapshot, if any.
     pub fn head_snapshot(&self) -> Result<Option<SnapshotId>> {
         Ok(self.current()?.2.head)
     }
@@ -317,9 +438,14 @@ impl Repo {
         Ok(sid)
     }
 
-    /// Path of the interrupted-restore marker.
+    /// Path of this workspace's interrupted-restore marker.
     pub fn restore_marker(&self) -> PathBuf {
-        self.meta_dir.join("restore-in-progress")
+        self.ws_meta.join("restore-in-progress")
+    }
+
+    /// Locator file recording a secondary workspace's root path.
+    pub(crate) fn locator_path(&self, ws: &WorkspaceId) -> PathBuf {
+        self.store_meta.join("workspaces").join(ws.to_hex())
     }
 }
 
@@ -330,4 +456,19 @@ fn now_ms(opts: &RepoOptions) -> i64 {
             .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
             .unwrap_or(0)
     })
+}
+
+/// On Windows, `canonicalize` returns verbatim paths (`\\?\C:\...`). Strip
+/// the prefix for ordinary drive-letter paths so stored and printed paths
+/// look normal; UNC and other verbatim forms are kept as they are.
+pub(crate) fn simplify(p: PathBuf) -> PathBuf {
+    if cfg!(windows)
+        && let Some(s) = p.to_str()
+        && let Some(rest) = s.strip_prefix(r"\\?\")
+        && rest.as_bytes().get(1) == Some(&b':')
+        && rest.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+    {
+        return PathBuf::from(rest);
+    }
+    p
 }

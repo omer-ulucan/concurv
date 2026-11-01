@@ -1,8 +1,9 @@
-# concurv user guide (R1)
+# concurv user guide
 
-This guide covers what the current build actually does. The R1 kernel is a
-single-workspace, single-machine VCS. Sync, merge, undo and multiple
-workspaces do not exist yet (see `docs/ROADMAP_STATUS.md`).
+This guide covers what the current build actually does: a single-machine VCS
+with several private workspaces sharing one branch (`main`). Cross-machine
+sync, undo and same-file conflict resolution do not exist yet (see
+`docs/ROADMAP_STATUS.md`).
 
 ## 1. Install
 
@@ -31,9 +32,14 @@ guarantee.
 - **Snapshot:** an immutable, content-addressed record of every file at one
   moment, plus its parent, author, time and message. It's identified by a
   64-character hex id; any unique prefix of at least 8 characters works as input.
-- **Head:** the snapshot your working copy is based on. `save` advances it and
-  the branch `main`.
-- **Operation log:** every `init`, `save` and `restore` is recorded separately
+- **Workspace:** a directory with its own working copy and its own head. The
+  directory where you ran `init` is workspace `default`; `workspace add`
+  creates more. A command only ever changes the files of the workspace it runs in.
+- **Head:** the snapshot this workspace's working copy is based on. `save`
+  advances it. It is private to the workspace.
+- **`main`:** the shared branch. It moves only when you run `publish`, and only
+  forward.
+- **Operation log:** every operation of every workspace is recorded separately
   from snapshot history, including backups made by `restore --force`.
 
 All metadata lives in `.concurv/` at the project root. Never edit it by hand.
@@ -44,9 +50,10 @@ All metadata lives in `.concurv/` at the project root. Never edit it by hand.
 $ concurv init                       # once, in the project root
 $ concurv status                     # what changed since the head?
 $ concurv diff                       # line-level diff of text files
-$ concurv save -m "Add parser"       # record a snapshot
+$ concurv save -m "Add parser"       # record a snapshot in this workspace
+$ concurv publish                    # make it the new `main`
 $ concurv log                        # history, newest first (-n 10 to limit)
-$ concurv op log                     # every init/save/restore, including backups
+$ concurv op log                     # every operation, including backups
 ```
 
 Details that matter:
@@ -63,8 +70,64 @@ Details that matter:
   user name, falling back to `unknown`.
 - `diff` shows text diffs for UTF-8 files up to 8 MiB. Binary, larger and
   symlink changes get a one-line note instead.
+- `save` records your work durably **in your workspace only**. Nobody else
+  sees it until you `publish`.
 
-## 4. Going back to an earlier snapshot
+## 4. Working in parallel: workspaces, update and publish
+
+Give every person, agent or task its own workspace. Never let two of them share
+one directory.
+
+```console
+$ cd ~/code/project                      # the workspace created by `init`
+$ concurv workspace add ../project-agent-a
+$ concurv workspace add ../project-agent-b --name reviewer
+$ concurv workspace list
+```
+
+A new workspace must be a new or empty directory, and must not be inside
+another workspace (or contain one). It starts with a checkout of `main`.
+
+The cycle in each workspace:
+
+```console
+$ concurv save -m "Implement token refresh"   # private, durable
+$ concurv update                              # bring in what others published
+$ cargo test                                  # test the combined result here
+$ concurv publish                             # main := your head (compare-and-swap)
+```
+
+What `update` does:
+
+| Situation | Result |
+|---|---|
+| `main` has nothing new | `up_to_date`, nothing changes |
+| you have no unpublished work | fast-forward: your files and head move to `main` |
+| both sides have new work | **file-level merge**: if the two sides changed *different files*, a merge snapshot is created and checked out. Run your tests before publishing |
+| both sides changed the **same file** (or deleted/changed, or a file vs a directory) | refused with exit 43 `CONCURV_CONFLICT`, listing the paths; **nothing is modified** |
+
+`update` needs a clean working copy, so `save` first. It never publishes.
+
+What `publish` does: if `main` is an ancestor of your head, `main` moves to
+your head atomically. If someone else published first, it is refused with
+exit 42 `CONCURV_DIVERGED` and nothing changes. Then run `update`, test, and
+`publish` again. Agents can simply loop `update` → test → `publish` until
+publish succeeds.
+
+**A clean file-level merge is not proof the code works.** Two edits to
+different files can still break the build together. That is why the merge
+happens in your workspace, where you can test it, and not in `main`.
+
+**Same-file conflicts** cannot be resolved inside concurv yet (planned). The
+workaround: create a fresh workspace from `main` (`concurv workspace add`),
+re-apply your change to the conflicting files there, save and publish. Your
+old workspace's snapshots stay in history.
+
+Many workspaces can save, update and publish at the same time: commits are
+serialized internally, and nobody's acknowledged save is ever lost. This is
+tested with 2, 5 and 10 concurrent writers, and with processes killed mid-command.
+
+## 5. Going back to an earlier snapshot
 
 ```console
 $ concurv log                                    # find the snapshot id
@@ -107,7 +170,7 @@ Date:   2026-11-01 14:02:11 UTC
     (recover with `concurv restore --snapshot 9f8e7d6c… --force`)
 ```
 
-## 5. The operation log
+## 6. The operation log
 
 `concurv op log` lists every repository operation, newest first: `init`,
 `save` and `restore`. Each entry shows its time and description, the head
@@ -120,7 +183,7 @@ The operation log is separate from snapshot history (`concurv log`): a
 `restore` adds an operation but no snapshot. Every backup stays recorded there
 permanently. Nothing is ever garbage-collected in R1.
 
-## 6. Checking integrity
+## 7. Checking integrity
 
 ```console
 $ concurv verify          # everything reachable from history
@@ -130,13 +193,15 @@ $ concurv verify --full   # additionally every object file, including unreferenc
 `verify` never modifies anything. Exit 0 means intact, 30 means a corrupt object,
 and 31 means a missing object. Each problem lists the object id and reason.
 
-## 7. Troubleshooting and recovery
+## 8. Troubleshooting and recovery
 
 | Symptom | What it means | What to do |
 |---|---|---|
-| `error[CONCURV_DIRTY_WORKSPACE]` (exit 20) on `restore` | You have unsaved changes | `concurv save -m …` first, or use `--force` to keep a backup and overwrite |
-| `status` shows **WARNING: a restore … was interrupted** | A restore crashed or was killed midway; some files are from the old state and some from the new | Re-run the printed command: `concurv restore --snapshot <target> --force`. If a backup id is shown, your pre-restore work is safe in that snapshot |
-| `error[CONCURV_LOCKED]` (exit 40) | Another concurv process is saving or restoring | Wait and retry. The lock is held by the OS and released automatically when that process exits, even if it crashed, so there's nothing to delete |
+| `error[CONCURV_DIRTY_WORKSPACE]` (exit 20) on `restore` or `update` | You have unsaved changes | `concurv save -m …` first. For `restore` only: `--force` keeps a backup snapshot and overwrites |
+| `status` shows **WARNING: a restore … was interrupted** | A restore, `update` or `workspace add` checkout crashed or was killed midway; some files are from the old state and some from the new | Re-run the printed command: `concurv restore --snapshot <target> --force`. If a backup id is shown, your pre-restore work is safe in that snapshot |
+| `error[CONCURV_LOCKED]` (exit 40) | Another concurv process held the repository or workspace lock for the whole 30 s wait | Retry. Commands normally wait for each other automatically. The lock is held by the OS and released automatically when that process exits, even if it crashed, so there's nothing to delete |
+| `error[CONCURV_DIVERGED]` (exit 42) on `publish` | Someone published to `main` after your last `update` | `concurv update`, test, `concurv publish` again. Nothing was changed |
+| `error[CONCURV_CONFLICT]` (exit 43) on `update` | Both sides changed the same file (paths are listed), or the histories have no single merge base | Nothing was modified. Workaround until conflict resolution lands: new workspace from `main`, re-apply your change there, save, publish (section 4) |
 | `error[CONCURV_CONCURRENT_MODIFICATION]` (exit 21) | A file changed while concurv was reading or replacing it (e.g. an editor or build was writing) | Let the other program finish, then retry. Nothing was recorded or overwritten from the inconsistent read |
 | `error[CONCURV_UNSUPPORTED_FILE_TYPE]` (exit 23) | A FIFO, socket or device file, or (on Windows) a symlink or junction, is in the project | Move it out of the project directory. R1 cannot version it, and refuses rather than silently skipping it |
 | `error[CONCURV_INVALID_PATH]` (exit 22) on `save` | A file name is not valid UTF-8, or contains characters concurv forbids | Rename the file |
@@ -163,7 +228,7 @@ Copy the entire project directory while no `save` or `restore` is running.
 Objects are immutable and the head is a single small file, so a copy taken
 between commands is consistent.
 
-## 8. Scripting and agents
+## 9. Scripting and agents
 
 Add `--json` to any command for one machine-readable JSON document on stdout,
 with `concurv_json_version`, `ok`, `data` and, on failure, `error.code`. Branch
@@ -171,7 +236,7 @@ on the exit code or `error.code`, never on human text. The schema and the
 full error/exit-code table are in `docs/cli.md`. `-C <dir>` runs a command as
 if started in `<dir>`.
 
-## 9. Platform notes
+## 10. Platform notes
 
 | | Linux | macOS | Windows |
 |---|---|---|---|
