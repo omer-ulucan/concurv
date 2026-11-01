@@ -217,7 +217,7 @@ files can still break the program together. The intended workflow is
 | 2a | workspaces (`workspace add/list`), locks with bounded wait, temp sessions, lock-free save, `publish`, `update` with file-level merge, 2/5/10-writer stress tests incl. killed processes | **implemented** |
 | 2b | workspace-scoped `undo` (operation-level, never moves `main` backwards) | **implemented** (§10) |
 | 2c | stored conflict objects (instead of refusing), resolution workflow | **implemented** (§11) |
-| 2d | minimum Git import/export (ADR 0002) | planned |
+| 2d | minimum Git import/export (ADR 0002) | **implemented** (ADR 0002, crate `concurv-git`) |
 
 R2 gate (roadmap §9): 2, 5 and 10 simultaneous local writers preserve all
 acknowledged changes, even during retries, forced termination and conflicting

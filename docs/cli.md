@@ -18,6 +18,8 @@ Every command runs in the workspace containing the current directory (or `-C`).
 | `concurv restore --snapshot <id> [--force]` | make working files equal to the snapshot; history unchanged | working copy (+ backup snapshot, operation) |
 | `concurv verify [--full]` | integrity check of reachable graph (`--full`: every object file) | no |
 | `concurv op log [-n N]` | operation log of all workspaces, newest first, with backups | no |
+| `concurv git export <repo> [--branch B]` | write `main`'s history into a Git repository and move Git branch `B` (default `main`) by compare-and-swap. Requires `git` on PATH | the Git repository |
+| `concurv git import <repo> [--branch B]` | import Git branch `B` into this **fresh** repository, publish it as `main` and check it out | history, working copy |
 
 Global flags: `--json`, `-C <dir>`. Author comes from `CONCURV_AUTHOR`, else the OS
 user name (`USER`/`USERNAME`), else `unknown`.
@@ -56,13 +58,15 @@ changes behaviour, not the JSON shape.)
 - `save`: `created`, `snapshot`, `operation`, `changes[]`
 - `publish`: `branch`, `from` (previous branch head or null), `to`, `published` (false if already there), `operation`
 - `update`: `branch`, `result` ∈ `up_to_date|fast_forward|merged|conflicted|aborted`, `conflict` (pending-merge id or null), `conflicts[]` (`path`, `kind` ∈ `both_modified|both_added|delete_modify|file_directory`, `markers`, `side_files[]`), for `aborted` also `backup`, `head`, `written`, `deleted`, `operation`
+- `git export`: `branch`, `tip` (Git commit), `previous` (Git branch before, or null), `exported` (new commits), `reused` (already present), `updated`
+- `git import`: `branch`, `git_tip`, `tip` (snapshot now at `main`), `commits`, `written`
 - `undo`: `undone` (operation id), `undone_kind` ∈ `save|update|restore`, `undone_description`, `head` (workspace head after), `files_restored_to` (snapshot or null if files were untouched), `written`, `deleted`, `operation`
 - `workspace add`: `workspace` (as below), `written`
 - `workspace list`: `workspaces[]` (`id`, `name`, `branch`, `head`, `root` (null if unknown on this device), `primary`, `current`)
 - `log`: `snapshots[]` (`snapshot`, `parents[]`, `tree`, `change_id`, `author`, `timestamp_ms`, `message`)
 - `restore`: `target`, `backup`, `written`, `deleted`, `operation`
 - `verify`: `full`, `operations`, `conflicts`, `snapshots`, `trees`, `blobs`, `unreachable`, `problems[]` (`code`, `subject`, `message`), `notes[]`
-- `op log`: `operations[]` (`operation`, `parents[]`, `kind` ∈ `init|save|restore|workspace-add|publish|update|undo|merge-abort`, `description`, `timestamp_ms`, `device`, `workspace` (null for `init`), `backup` (null unless `restore --force` replaced unsaved work), `undoes` (for `undo`: the reversed operation), `checked_out` (snapshot the working copy was set to, or null), `head` (the **current** workspace's head after the operation, or null), `branches` (object: name → snapshot id))
+- `op log`: `operations[]` (`operation`, `parents[]`, `kind` ∈ `init|save|restore|workspace-add|publish|update|undo|merge-abort|git-import`, `description`, `timestamp_ms`, `device`, `workspace` (null for `init`), `backup` (null unless `restore --force` replaced unsaved work), `undoes` (for `undo`: the reversed operation), `checked_out` (snapshot the working copy was set to, or null), `head` (the **current** workspace's head after the operation, or null), `branches` (object: name → snapshot id))
 
 ## Error codes and exit codes
 
@@ -77,13 +81,14 @@ changes behaviour, not the JSON shape.)
 | 20 | `CONCURV_DIRTY_WORKSPACE` | restore/update/undo would discard unsaved changes |
 | 21 | `CONCURV_CONCURRENT_MODIFICATION` | a file changed while concurv was reading/replacing it |
 | 22 | `CONCURV_INVALID_PATH` | name violates concurv or platform path rules; nested workspace |
-| 23 | `CONCURV_UNSUPPORTED_FILE_TYPE` | FIFO/socket/device, or link on Windows |
+| 23 | `CONCURV_UNSUPPORTED_FILE_TYPE` | FIFO/socket/device, or link on Windows; `git import` of something concurv cannot represent (submodule, `.concurv` path, non-UTF-8 message) |
 | 30 | `CONCURV_OBJECT_CORRUPT`, `CONCURV_WRONG_OBJECT_KIND` | integrity failure |
 | 31 | `CONCURV_OBJECT_MISSING` | referenced object absent |
 | 33 | `CONCURV_LIMIT_EXCEEDED` | input exceeds a hard limit |
 | 40 | `CONCURV_LOCKED` | a repository or workspace lock stayed busy for the whole wait |
 | 41 | `CONCURV_STALE_HEAD` | op head or workspace head moved during compare-and-swap |
-| 42 | `CONCURV_DIVERGED` | `publish` refused: the branch has work this workspace has not integrated (run `update`) |
+| 42 | `CONCURV_DIVERGED` | `publish` refused: the branch has work this workspace has not integrated (run `update`); `git export` refused: the Git branch has commits outside `main`'s history |
 | 43 | `CONCURV_CONFLICT` | `update` refused: conflicting changes (without `--allow-conflicts`), file/directory conflict, ambiguous merge base, or a merge already pending; `save` refused: unresolved conflicts. Nothing modified |
 | 50 | `CONCURV_NOT_FOUND` | id/prefix not found or not a snapshot; workspace not registered; nothing to undo |
 | 51 | `CONCURV_AMBIGUOUS_ID` | prefix matches several objects |
+| 60 | `CONCURV_EXTERNAL_TOOL` | `git` is not installed or a git command failed |

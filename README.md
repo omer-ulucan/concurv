@@ -8,13 +8,13 @@ contribute to one shared branch without ever silently losing acknowledged work
 (see `docs/ARC_Research_and_Roadmap_2026.md`; "ARC" was the project's earlier
 working name).
 
-**Current state:** R1 local kernel (gate passed) plus R2 slices 2a–2c:
-several private workspaces on one machine share one `main`, with
+**Current state:** R1 local kernel (gate passed) plus all of R2 (slices
+2a–2d): several private workspaces on one machine share one `main`, with
 compare-and-swap publication, file-level merging, recorded conflicts that
-you resolve and save, and workspace-scoped `undo`, stress-tested with 10
-concurrent writers and killed processes. Tested on Linux, macOS and Windows
+you resolve and save, workspace-scoped `undo`, and Git export/import,
+stress-tested with 10 concurrent writers and killed processes. Tested on Linux, macOS and Windows
 in CI; see `docs/ROADMAP_STATUS.md`. **Not yet:** cross-machine sync,
-line-level (within-file) merging, Git bridge. Trademark and package-name availability for
+line-level (within-file) merging. Trademark and package-name availability for
 `concurv` have not been checked.
 
 ## Quick start
@@ -48,6 +48,14 @@ $ cd ../my-project-agent && echo work > agent.txt
 $ concurv save -m "agent work"
 $ concurv update                 # merge what others published (file-level)
 $ concurv publish                # exit 42 if main moved again: update and retry
+```
+
+Share with Git / GitHub (needs `git` on PATH):
+
+```console
+$ git init --bare ../my-project-mirror.git
+$ concurv git export ../my-project-mirror.git   # main's history as Git commits
+$ concurv git import ../some-git-repo          # (in a fresh repo) start from a Git branch
 ```
 
 `restore` never rewrites history. It only changes working files, and
@@ -98,7 +106,7 @@ Workspace layout: `crates/concurv-{core,objects,refs,ops,workspace,cli}`
 | `docs/rfcs/0003-sync-protocol.md` | future multi-device sync (design only) |
 | `docs/rfcs/0004-workspaces-and-concurrency.md` | workspaces, save vs publish, update and file-level merge, locks and concurrency |
 | `docs/adr/0001-storage-format.md` | why a native BLAKE3 store with one mutable pointer |
-| `docs/adr/0002-git-interop.md` | future Git bridge boundary |
+| `docs/adr/0002-git-interop.md` | the Git bridge: how export/import work, what is and isn't preserved |
 | `docs/adr/0003-project-rename-concurv.md` | the ARC → concurv rename and every identifier it changed |
 | `docs/security/threat-model.md` | threats and mitigation status |
 | `docs/benchmarks/comparison-plan.md` | competitor reproduction plan (no results yet) |

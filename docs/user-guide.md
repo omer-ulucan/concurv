@@ -265,7 +265,51 @@ $ concurv verify --full   # additionally every object file, including unreferenc
 `verify` never modifies anything. Exit 0 means intact, 30 means a corrupt object,
 and 31 means a missing object. Each problem lists the object id and reason.
 
-## 9. Troubleshooting and recovery
+## 9. Working with Git and GitHub
+
+concurv can write its history into a Git repository, and start from an
+existing Git branch. Both require `git` on your `PATH`.
+
+**Export** `main` to Git, for example to push it to GitHub:
+
+```console
+$ git init --bare ../project-mirror.git            # once
+$ concurv git export ../project-mirror.git          # writes main as Git commits
+$ git -C ../project-mirror.git push git@github.com:you/project.git main
+```
+
+- Only **published** history (`main` and everything before it, merges
+  included) is exported. Unpublished saves in workspaces are not.
+- Exporting again only adds new commits. The same snapshot always becomes the
+  same Git commit, so repeated exports are safe.
+- `--branch B` exports to Git branch `B` instead of `main`.
+- If the Git branch has commits that concurv doesn't know (someone committed
+  in Git directly), export **refuses** with exit 42 and changes nothing in Git.
+  Export to a different branch, or bring those changes into concurv by hand.
+
+**Import** a Git branch to start a new concurv repository:
+
+```console
+$ mkdir project && cd project && concurv init
+$ concurv git import ../existing-git-repo          # --branch B for another branch
+```
+
+The whole history of the branch is imported, `main` is set to its head, and
+it is checked out. This only works in a **fresh** repository: nothing
+published, nothing saved.
+
+Import is all-or-nothing. It refuses (exit 23, listing everything) when the
+branch contains something concurv cannot represent: submodules, paths named
+`.concurv`, file names that aren't valid UTF-8, or non-UTF-8 commit messages.
+
+What survives a round trip: file contents, executable bits, symlinks,
+directory structure, merges, authors and messages. Not preserved: separate
+committer identities, timezones and sub-second times. Native Git commit ids
+change after passing through concurv (concurv adds a `Concurv-Change-Id`
+trailer). Tags, notes and signatures are not imported. Full details:
+`docs/adr/0002-git-interop.md`.
+
+## 10. Troubleshooting and recovery
 
 | Symptom | What it means | What to do |
 |---|---|---|
@@ -277,6 +321,9 @@ and 31 means a missing object. Each problem lists the object id and reason.
 | `error[CONCURV_CONFLICT]` (exit 43) on `save` | A merge is pending and some conflicts are unresolved (listed: markers remain or side files still exist) | Finish resolving, delete the `*.concurv-conflict` / `*.concurv-theirs` files, save again. Or `concurv update --abort` |
 | `error[CONCURV_INVALID_ARGUMENT]` (exit 2) on `undo` | Your most recent operation was a `publish` (or `workspace add`), which undo never reverts | Make a new change that reverts the published work, save and publish it |
 | `error[CONCURV_NOT_FOUND]` (exit 50) on `undo` | Nothing left to undo in this workspace | — |
+| `error[CONCURV_EXTERNAL_TOOL]` (exit 60) on `git export` / `git import` | `git` is not installed, or a git command failed (its message is shown) | Install Git and make sure `git --version` works in the same terminal |
+| `error[CONCURV_DIVERGED]` (exit 42) on `git export` | The Git branch has commits that aren't in concurv's `main` | Nothing changed in Git. Export to another branch (`--branch`), or bring those changes into concurv by hand |
+| `error[CONCURV_UNSUPPORTED_FILE_TYPE]` (exit 23) on `git import` | The Git history contains something concurv cannot represent (listed) | Nothing was imported. Remove submodules / rename the paths in Git first |
 | `error[CONCURV_CONCURRENT_MODIFICATION]` (exit 21) | A file changed while concurv was reading or replacing it (e.g. an editor or build was writing) | Let the other program finish, then retry. Nothing was recorded or overwritten from the inconsistent read |
 | `error[CONCURV_UNSUPPORTED_FILE_TYPE]` (exit 23) | A FIFO, socket or device file, or (on Windows) a symlink or junction, is in the project | Move it out of the project directory. R1 cannot version it, and refuses rather than silently skipping it |
 | `error[CONCURV_INVALID_PATH]` (exit 22) on `save` | A file name is not valid UTF-8, or contains characters concurv forbids | Rename the file |
@@ -303,7 +350,7 @@ Copy the entire project directory while no `save` or `restore` is running.
 Objects are immutable and the head is a single small file, so a copy taken
 between commands is consistent.
 
-## 10. Scripting and agents
+## 11. Scripting and agents
 
 Add `--json` to any command for one machine-readable JSON document on stdout,
 with `concurv_json_version`, `ok`, `data` and, on failure, `error.code`. Branch
@@ -311,7 +358,7 @@ on the exit code or `error.code`, never on human text. The schema and the
 full error/exit-code table are in `docs/cli.md`. `-C <dir>` runs a command as
 if started in `<dir>`.
 
-## 11. Platform notes
+## 12. Platform notes
 
 | | Linux | macOS | Windows |
 |---|---|---|---|

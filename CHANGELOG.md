@@ -7,8 +7,8 @@ version 1 is not frozen until the first release (see ADR 0003).
 
 R1 gate passed on 2026-11-01: the full suite is green on Linux, macOS and
 Windows in CI, with identical golden hashes on all three (`docs/ROADMAP_STATUS.md`).
-R2 slices 2a (private workspaces), 2b (undo) and 2c (conflict resolution) are
-implemented; the R2 gate is not yet claimed.
+R2 slices 2a (private workspaces), 2b (undo), 2c (conflict resolution) and 2d
+(Git bridge) are implemented.
 
 ### Changed (behaviour)
 - **`save` no longer moves `main`** (RFC 0004 §2). It advances only the
@@ -32,6 +32,16 @@ implemented; the R2 gate is not yet claimed.
   snapshot in the workspace. Same-file conflicts and ambiguous merge bases
   are refused with `CONCURV_CONFLICT` (exit 43); nothing is modified.
 - Stress tests: 2/5/10 concurrent writers; 12 rounds of killed processes.
+
+### Added (R2 slice 2d, ADR 0002)
+- `concurv git export <repo> [--branch B]` writes `main`'s history (merges
+  included) into a Git repository via `git fast-import` and moves the Git
+  branch by compare-and-swap; refuses (exit 42) if the Git branch has
+  commits outside that history. Deterministic and incremental.
+- `concurv git import <repo> [--branch B]` imports a Git branch into a fresh
+  repository, publishes it as `main` and checks it out; refuses submodules,
+  `.concurv` paths and non-UTF-8 data with a full list (exit 23).
+- New crate `concurv-git`; new error code `CONCURV_EXTERNAL_TOOL` (exit 60).
 
 ### Added (R2 slice 2c, RFC 0004 §11)
 - `concurv update --allow-conflicts` records a pending merge instead of
@@ -104,4 +114,5 @@ implemented; the R2 gate is not yet claimed.
 
 ### Known gaps
 - No ignore file, stat cache, GC, rename detection, line-level (within-file)
-  merging, cross-machine sync or Git bridge.
+  merging, cross-machine sync, importing Git changes into existing history,
+  or Git tags.
