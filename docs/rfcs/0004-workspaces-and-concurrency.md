@@ -216,7 +216,7 @@ files can still break the program together. The intended workflow is
 |---|---|---|
 | 2a | workspaces (`workspace add/list`), locks with bounded wait, temp sessions, lock-free save, `publish`, `update` with file-level merge, 2/5/10-writer stress tests incl. killed processes | **implemented** |
 | 2b | workspace-scoped `undo` (operation-level, never moves `main` backwards) | **implemented** (§10) |
-| 2c | stored conflict objects (instead of refusing), resolution workflow | planned |
+| 2c | stored conflict objects (instead of refusing), resolution workflow | **implemented** (§11) |
 | 2d | minimum Git import/export (ADR 0002) | planned |
 
 R2 gate (roadmap §9): 2, 5 and 10 simultaneous local writers preserve all
@@ -265,3 +265,49 @@ Operation format additions (RFC 0001 §3.4, pre-release within v1):
 copy equal to; set by restore, update, workspace-add checkout and file-changing
 undos). The latter is what lets undo check the precondition for `restore`
 without parsing descriptions.
+
+## 11. Recorded conflicts and resolution (slice 2c)
+
+`concurv update` still **refuses** conflicts by default (exit 43, nothing
+modified), so scripts written against slice 2a keep working.
+`concurv update --allow-conflicts` instead starts a **pending merge**:
+
+1. The clean part of the file-level merge (§7) is applied as usual.
+2. Each conflicted path `P` is written for resolution:
+
+   | Conflict | `P` in the working copy | Side files |
+   |---|---|---|
+   | both sides changed a text file (UTF-8, no NUL, ≤ 8 MiB on all sides) | whole-file markers: `<<<<<<< ours …`, ours, `\|\|\|\|\|\|\| base …`, base, `=======`, theirs, `>>>>>>> theirs …` | `P.concurv-conflict` |
+   | binary / symlink / too large, both changed or both added | ours, unchanged | `P.concurv-conflict`, `P.concurv-theirs` (theirs' bytes) |
+   | deleted on one side, changed on the other | ours (absent if ours deleted it) | `P.concurv-conflict`, plus `P.concurv-theirs` if theirs has it |
+   | file on one side, directory on the other | — | **still refused**, nothing modified |
+
+   `P.concurv-conflict` is a plain-text explanation: what each side did and
+   how to resolve. A side-file name that is already in use refuses the merge.
+3. The resulting working tree is stored as a snapshot (the *worktree*), and an
+   immutable **conflict object** (object kind 5) records `ours` (the workspace
+   head), `theirs` (the branch head), the merge base, the worktree snapshot,
+   and per path the conflict kind, whether markers were written, and the side
+   files. The workspace view entry gains `merge: Some(conflict id)`. The
+   workspace head does **not** move.
+4. The working copy is checked out to the worktree snapshot (RFC 0002 §3.4),
+   and the `update` operation records it as `checked_out`.
+
+A path is **resolved** when none of its side files exists and, if markers were
+written, no line of `P` starts with `<<<<<<< ours`, `||||||| base` or
+`>>>>>>> theirs`. (`=======` alone is not treated as a marker because it is
+common in ordinary text.)
+
+While a merge is pending:
+
+| Command | Behaviour |
+|---|---|
+| `status` | reports the merge and each conflicted path as resolved / unresolved (with what remains) |
+| `save` | refused with `CONCURV_CONFLICT` while anything is unresolved. Once resolved, records a snapshot with parents `[ours, theirs]`, **even if the content equals ours**, clears `merge`, and moves the head. The next `publish` is a fast-forward |
+| `update` | refused (a merge is already in progress) |
+| `update --abort` | checks out `ours`, clears `merge` (operation kind `merge-abort`). If the working copy differs from the worktree snapshot (partial edits), a backup snapshot is taken first, as with `restore --force` |
+| `undo` | right after the conflicted update, with files unchanged: returns to `ours` and clears `merge`. After the merge-completing save: the head returns to `ours` and the merge is pending again, with the already-resolved files. `merge-abort` cannot be undone |
+
+Limits: markers cover the **whole file**. Hunk-level, line-by-line merging is
+R4. Side files and markers never reach a snapshot, because `save` refuses
+until they are gone.

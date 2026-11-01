@@ -8,12 +8,13 @@ contribute to one shared branch without ever silently losing acknowledged work
 (see `docs/ARC_Research_and_Roadmap_2026.md`; "ARC" was the project's earlier
 working name).
 
-**Current state:** R1 local kernel (gate passed) plus R2 slices 2a and 2b:
+**Current state:** R1 local kernel (gate passed) plus R2 slices 2a–2c:
 several private workspaces on one machine share one `main`, with
-compare-and-swap publication, file-level merging and workspace-scoped
-`undo`, stress-tested with 10 concurrent writers and killed processes.
-Tested on Linux, macOS and Windows in CI; see `docs/ROADMAP_STATUS.md`. **Not yet:** cross-machine sync, same-file
-conflict resolution, Git bridge. Trademark and package-name availability for
+compare-and-swap publication, file-level merging, recorded conflicts that
+you resolve and save, and workspace-scoped `undo`, stress-tested with 10
+concurrent writers and killed processes. Tested on Linux, macOS and Windows
+in CI; see `docs/ROADMAP_STATUS.md`. **Not yet:** cross-machine sync,
+line-level (within-file) merging, Git bridge. Trademark and package-name availability for
 `concurv` have not been checked.
 
 ## Quick start
@@ -66,7 +67,8 @@ Full walkthrough and recovery procedures: **`docs/user-guide.md`**.
 - Concurrent commands in different workspaces never overwrite each other's
   acknowledged work; `main` moves only forward, by compare-and-swap.
 - `update` merges whole files only. Two changes to the same file are refused
-  (nothing modified), never merged automatically.
+  (nothing modified) or, with `--allow-conflicts`, written into the working
+  copy for you to resolve; they are never merged automatically.
 - Not implemented yet: ignore files, rename detection, garbage collection
   or a stat cache (every `status` reads all files).
 - Don't keep repositories in cloud-synced folders (OneDrive, Dropbox).

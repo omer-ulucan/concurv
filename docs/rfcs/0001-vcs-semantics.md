@@ -11,6 +11,7 @@ Status: **Accepted for R1** (format version 1). Changes to anything marked
 | Tree | `TreeId` = content hash | immutable | implemented |
 | Snapshot | `SnapshotId` = content hash | immutable | implemented |
 | Operation | `OperationId` = content hash | immutable | implemented |
+| Conflict | `ConflictId` = content hash | immutable | pending merge, R2 slice 2c (RFC 0004 §11) |
 | Change | `ChangeId` = 16 random bytes | logical identity | recorded in every snapshot, not yet used for rewriting |
 | Workspace | `WorkspaceId` = 16 random bytes | mutable files on disk | many per repository since R2 (RFC 0004) |
 | Device | `DeviceId` = 16 random bytes | stable per repository clone | recorded in operations |
@@ -77,7 +78,7 @@ All integers are **big-endian**. Every object is:
 ```
 offset  size  field
 0       4     magic  = "CNV1" (0x43 0x4e 0x56 0x31)
-4       1     kind   : 1 = blob, 2 = tree, 3 = snapshot, 4 = operation
+4       1     kind   : 1 = blob, 2 = tree, 3 = snapshot, 4 = operation, 5 = conflict (since R2 slice 2c)
 5       8     payload_len : u64
 13      N     payload (exactly payload_len bytes)
 ```
@@ -148,6 +149,21 @@ u32 workspace_count; repeat:                          (sorted by id bytes, uniqu
   String name   (since R2: unique, 1–64 chars of [A-Za-z0-9._-]; RFC 0004 §4)
   u8   has_branch; if 1: String branch
   u8   has_head;   if 1: Id snapshot
+  u8   has_merge;  if 1: Id conflict   (since R2 slice 2c: pending merge, RFC 0004 §11)
+```
+
+### 3.5 Conflict payload (since R2 slice 2c)
+
+```
+Id     ours          (workspace head the merge starts from)
+Id     theirs        (branch head being merged)
+u8     has_base; if 1: Id base
+Id     worktree      (snapshot of the working copy written for resolution)
+u32    entry_count;  repeat (sorted by path, unique):
+  String path        (validated, `/`-separated, non-empty)
+  u8     kind        (1 = both_modified, 2 = both_added, 3 = delete_modify, 4 = file_directory)
+  u8     markers     (0/1: text markers were written into path)
+  u32    side_count (≤ 16); repeat: String side_file_path
 ```
 
 ## 4. Paths and file kinds (normative)

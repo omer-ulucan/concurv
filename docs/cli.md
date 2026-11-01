@@ -10,7 +10,7 @@ Every command runs in the workspace containing the current directory (or `-C`).
 | `concurv diff` | unified text diffs; binary/large/symlink changes are summarized | no |
 | `concurv save -m <msg>` | durably snapshot the working copy and advance **this workspace's head**. Does not publish | workspace history |
 | `concurv publish` | CAS fast-forward of the workspace's branch (`main`) to the workspace head | shared branch |
-| `concurv update` | bring `main` into this workspace: fast-forward, or file-level merge into a new snapshot | working copy, workspace head |
+| `concurv update [--allow-conflicts \| --abort]` | bring `main` into this workspace: fast-forward, or file-level merge into a new snapshot. `--allow-conflicts`: write conflicts into the working copy and start a pending merge; `--abort`: give a pending merge up | working copy, workspace head |
 | `concurv workspace add <path> [--name N]` | create a workspace in a new or empty directory and check out `main` there | creates workspace |
 | `concurv workspace list` | all workspaces with head and path | no |
 | `concurv undo` | reverse this workspace's most recent operation (`save`, `update`, `restore`); repeat to go further back. Refuses `publish` | workspace head and/or working copy |
@@ -49,20 +49,20 @@ changes behaviour, not the JSON shape.)
 `data` per command (`command` is the space-separated command name, e.g. `"workspace add"`):
 
 - `init`: `root`, `branch`
-- `status`: `branch`, `head` (hex or null), `clean`, `changes[]`
+- `status`: `branch`, `head` (hex or null), `clean`, `changes[]`, `merge` (null, or `{conflict, theirs, conflicts[]: {path, kind, resolved, markers_remaining, remaining_side_files[]}}`)
   (`path`, `kind` ∈ `added|deleted|modified|type_changed`, `old_blob`, `new_blob`),
   `interrupted_restore` (null or `{target, backup}`)
 - `diff`: `files[]` (`path`, `kind`, `unified` or null, `note` or null)
 - `save`: `created`, `snapshot`, `operation`, `changes[]`
 - `publish`: `branch`, `from` (previous branch head or null), `to`, `published` (false if already there), `operation`
-- `update`: `branch`, `result` ∈ `up_to_date|fast_forward|merged`, `head`, `written`, `deleted`, `operation`
+- `update`: `branch`, `result` ∈ `up_to_date|fast_forward|merged|conflicted|aborted`, `conflict` (pending-merge id or null), `conflicts[]` (`path`, `kind` ∈ `both_modified|both_added|delete_modify|file_directory`, `markers`, `side_files[]`), for `aborted` also `backup`, `head`, `written`, `deleted`, `operation`
 - `undo`: `undone` (operation id), `undone_kind` ∈ `save|update|restore`, `undone_description`, `head` (workspace head after), `files_restored_to` (snapshot or null if files were untouched), `written`, `deleted`, `operation`
 - `workspace add`: `workspace` (as below), `written`
 - `workspace list`: `workspaces[]` (`id`, `name`, `branch`, `head`, `root` (null if unknown on this device), `primary`, `current`)
 - `log`: `snapshots[]` (`snapshot`, `parents[]`, `tree`, `change_id`, `author`, `timestamp_ms`, `message`)
 - `restore`: `target`, `backup`, `written`, `deleted`, `operation`
-- `verify`: `full`, `operations`, `snapshots`, `trees`, `blobs`, `unreachable`, `problems[]` (`code`, `subject`, `message`), `notes[]`
-- `op log`: `operations[]` (`operation`, `parents[]`, `kind` ∈ `init|save|restore|workspace-add|publish|update|undo`, `description`, `timestamp_ms`, `device`, `workspace` (null for `init`), `backup` (null unless `restore --force` replaced unsaved work), `undoes` (for `undo`: the reversed operation), `checked_out` (snapshot the working copy was set to, or null), `head` (the **current** workspace's head after the operation, or null), `branches` (object: name → snapshot id))
+- `verify`: `full`, `operations`, `conflicts`, `snapshots`, `trees`, `blobs`, `unreachable`, `problems[]` (`code`, `subject`, `message`), `notes[]`
+- `op log`: `operations[]` (`operation`, `parents[]`, `kind` ∈ `init|save|restore|workspace-add|publish|update|undo|merge-abort`, `description`, `timestamp_ms`, `device`, `workspace` (null for `init`), `backup` (null unless `restore --force` replaced unsaved work), `undoes` (for `undo`: the reversed operation), `checked_out` (snapshot the working copy was set to, or null), `head` (the **current** workspace's head after the operation, or null), `branches` (object: name → snapshot id))
 
 ## Error codes and exit codes
 
@@ -84,6 +84,6 @@ changes behaviour, not the JSON shape.)
 | 40 | `CONCURV_LOCKED` | a repository or workspace lock stayed busy for the whole wait |
 | 41 | `CONCURV_STALE_HEAD` | op head or workspace head moved during compare-and-swap |
 | 42 | `CONCURV_DIVERGED` | `publish` refused: the branch has work this workspace has not integrated (run `update`) |
-| 43 | `CONCURV_CONFLICT` | `update` refused: conflicting changes or ambiguous merge base; nothing modified |
+| 43 | `CONCURV_CONFLICT` | `update` refused: conflicting changes (without `--allow-conflicts`), file/directory conflict, ambiguous merge base, or a merge already pending; `save` refused: unresolved conflicts. Nothing modified |
 | 50 | `CONCURV_NOT_FOUND` | id/prefix not found or not a snapshot; workspace not registered; nothing to undo |
 | 51 | `CONCURV_AMBIGUOUS_ID` | prefix matches several objects |

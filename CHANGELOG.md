@@ -7,8 +7,8 @@ version 1 is not frozen until the first release (see ADR 0003).
 
 R1 gate passed on 2026-11-01: the full suite is green on Linux, macOS and
 Windows in CI, with identical golden hashes on all three (`docs/ROADMAP_STATUS.md`).
-R2 slices 2a (private workspaces) and 2b (undo) are implemented; the R2 gate
-is not yet claimed.
+R2 slices 2a (private workspaces), 2b (undo) and 2c (conflict resolution) are
+implemented; the R2 gate is not yet claimed.
 
 ### Changed (behaviour)
 - **`save` no longer moves `main`** (RFC 0004 §2). It advances only the
@@ -32,6 +32,17 @@ is not yet claimed.
   snapshot in the workspace. Same-file conflicts and ambiguous merge bases
   are refused with `CONCURV_CONFLICT` (exit 43); nothing is modified.
 - Stress tests: 2/5/10 concurrent writers; 12 rounds of killed processes.
+
+### Added (R2 slice 2c, RFC 0004 §11)
+- `concurv update --allow-conflicts` records a pending merge instead of
+  refusing: clean changes are applied, conflicting text files get whole-file
+  ours/base/theirs markers, binary and delete/modify conflicts keep ours with
+  theirs in `<path>.concurv-theirs`, and every conflict gets a
+  `<path>.concurv-conflict` note. `save` completes the merge once nothing
+  remains (both parents); `update --abort` gives it up (edits backed up).
+  `status` shows each conflict as resolved/unresolved; `undo` works.
+- Format (pre-release, within v1): conflict object kind 5; workspace view
+  entries can reference a pending merge.
 
 ### Added (R2 slice 2b, RFC 0004 §10)
 - `concurv undo` reverses the most recent operation of the current workspace
@@ -92,5 +103,5 @@ is not yet claimed.
   every durable-write boundary, and restore-safety and CLI smoke tests.
 
 ### Known gaps
-- No ignore file, stat cache, GC, rename detection, same-file conflict
-  resolution (line-level merge), cross-machine sync or Git bridge.
+- No ignore file, stat cache, GC, rename detection, line-level (within-file)
+  merging, cross-machine sync or Git bridge.
