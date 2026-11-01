@@ -25,3 +25,10 @@ desktop.ini
 /fuzz/target/
 /fuzz/corpus/
 /fuzz/artifacts/
+
+# Local instruction bundles (not part of the repository)
+/v2/
+/CLAUDE.md
+/prompts/
+/docs/ARC_Research_and_Roadmap_2026.md
+/docs/audits/

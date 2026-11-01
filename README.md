@@ -5,7 +5,7 @@
 **concurv** stands for *concurrent, agent-native version control*: a local-first
 VCS in Rust. The goal is for humans and AI agents on different machines to
 contribute to one shared branch without ever silently losing acknowledged work
-(see `docs/ARC_Research_and_Roadmap_2026.md`; "ARC" was the project's earlier
+(see `docs/ROADMAP_REVISED.md`; "ARC" was the project's earlier
 working name).
 
 **Current state:** R1 (local kernel) and R2 (workspaces and concurrency) gates passed. R2 covers
@@ -111,4 +111,3 @@ Workspace layout: `crates/concurv-{core,objects,refs,ops,workspace,cli}`
 | `docs/security/threat-model.md` | threats and mitigation status |
 | `docs/benchmarks/comparison-plan.md` | competitor reproduction plan (no results yet) |
 | `CHANGELOG.md` | changes since the start of the project |
-| `CLAUDE.md` | rules for AI coding sessions working on this repo |

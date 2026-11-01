@@ -4,7 +4,6 @@ description = "Git import/export bridge for concurv (uses the git CLI's fast-imp
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
 publish.workspace = true
 
 [dependencies]

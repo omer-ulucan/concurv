@@ -2,14 +2,17 @@
 
 Legend: `not started` · `in progress` · `gate passed` · `blocked`.
 A stage is `gate passed` only with the evidence listed next to it.
-Last updated: 2026-11-01.
+The plan itself (stages, gates, backlog, acceptance tests) lives in
+**`docs/ROADMAP_REVISED.md`**. Last updated: 2026-11-01 (V2 audit at `53a33ae`).
 
 | Stage | Status | Evidence / blockers |
 |---|---|---|
 | R0 — RFC & competitive reproduction | **in progress** | Done: RFC 0001–0003, ADR 0001–0003, threat model, comparison plan with exact expected behaviour for S1–S10. **Open gate items:** competitor harness (`bench/scenarios/`) not built; **no** Git/jj/but/gitta/Fossil/Pijul scenario reproduced. |
 | R1 — Native local VCS kernel | **gate passed** (2026-11-01) | CI run [41350688459](https://github.com/omer-ulucan/concurv/actions/runs/41350688459) on `main` @ `9b8ed23`: all gate checks pass on Linux, macOS and Windows. See evidence below. |
+| R1.5 — Daily VCS usability & safety | **in progress** | Inserted by the V2 audit. P0: ignore engine, ignored-file safety, `check-ignore`, `status` baseline + safe stat cache, diff correctness, macOS case test. See R1.5 progress below |
 | R2 — Private workspaces + concurrency | **gate passed** (2026-11-01) | CI run [41359891403](https://github.com/omer-ulucan/concurv/actions/runs/41359891403) on `main` @ `0689e96`: all four slices (RFC 0004, ADR 0002) green on Linux, macOS and Windows; 2/5/10 concurrent writers and killed-process tests pass. Git tags not supported (scoped). See "R2 evidence" below. |
-| R3 — Two-PC authenticated sync | not started | design only: RFC 0003 |
+| R2.5 — Local merge & branch semantics | not started | Inserted by the V2 audit: hunk-level merge (needed before R3 reconciliation), branch-model ADR. Depends on R1.5 |
+| R3 — Two-PC authenticated sync | not started | design only: RFC 0003 (draft, must be revised first); depends on R2.5 merge |
 | R4 — Verified integration | not started | — |
 | R5 — Agent-aware coordination | not started | — |
 | R6 — Developer beta + Git ecosystem | not started | design only: ADR 0002 |
@@ -59,7 +62,8 @@ What the gate does **not** prove (still true, by design of the tests):
 
 ## Next
 
-R2 is complete (below). R3 (two-PC authenticated sync, RFC 0003) is next. Open R0 work (competitor
+R2 is complete (below). Per the V2 audit, R1.5 then R2.5 come next, before R3
+(see `docs/ROADMAP_REVISED.md`). Open R0 work (competitor
 reproduction harness) continues in parallel and does not block R3.
 
 ## R2 evidence (gate passed 2026-11-01)
@@ -102,3 +106,15 @@ Also found and fixed during R2, before merge:
 
 What the R2 gate does **not** prove: line-level merging (R4), behaviour across
 machines (R3), and power-loss durability beyond the R1 notes above.
+
+## R1.5 progress (gate not passed)
+
+Backlog ids refer to `docs/ROADMAP_REVISED.md` §3.
+
+| Item | State | Evidence |
+|---|---|---|
+| P0-1…P0-5 ignore engine, local exclude, tracked-stays-tracked, ignored-file safety, `check-ignore` | in progress | — |
+| P0-6 `status` benchmark baseline | not started | — |
+| P0-7 safe stat cache | not started (blocked on P0-6 measurement) | — |
+| P0-8 diff "no newline"/CRLF tests | not started | — |
+| P0-9 macOS case-collision test | not started | — |
