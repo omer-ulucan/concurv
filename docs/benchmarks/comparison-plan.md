@@ -26,8 +26,8 @@ OS + version, filesystem, CPU, RAM, tool versions (`git --version`,
 | S6 | Offline reconnect | A and B save offline, reconnect in both orders | all snapshots present on relay; one published head; divergence visible, not overwritten | R3 |
 | S7 | Long transcript overhead | agent session of 10k events | ARC stores no transcript by default; metadata growth bounded | R5 |
 | S8 | Interrupted save (crash during snapshot) | kill/fail at each write boundary | previous acknowledged head intact; no ref to missing object; re-save succeeds | **R1 — implemented as deterministic fault-injection tests** (`crates/arc-workspace/tests/fault_injection.rs`) |
-| S9 | Restore over dirty working copy | modify file, restore older snapshot | refused without `--force`; with `--force` a backup snapshot is recorded | **R1 — implemented** (`crates/arc-cli/tests/cli_smoke.rs`, `restore_safety.rs`) |
-| S10 | Snapshot misses data with unchanged mtime/size (cf. jj #10509) | rewrite a file with same size within mtime granularity | change detected (ARC hashes content; no stat cache in R1) | **R1 — implemented** (`status_detects_same_size_same_mtime_change`) |
+| S9 | Restore over dirty working copy | modify file, restore older snapshot | refused without `--force`; with `--force` a backup snapshot is recorded | **R1 — implemented** (`crates/arc-cli/tests/cli_smoke.rs`, `crates/arc-workspace/tests/restore_safety.rs`) |
+| S10 | Snapshot misses data with unchanged mtime/size (cf. jj #10509) | rewrite a file with same size within mtime granularity | change detected (ARC hashes content; no stat cache in R1) | **R1 — implemented** (`crates/arc-workspace/tests/engine.rs::status_detects_same_size_same_mtime_change`) |
 
 ## Competitor capability labels (literature, not reproduced)
 

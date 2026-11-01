@@ -150,8 +150,10 @@ u32 workspace_count; repeat:                          (sorted by id bytes, uniqu
 ## 4. Paths and file kinds (normative)
 
 A tree entry name must be: non-empty, ≤ 255 bytes, valid UTF-8, not `.` or
-`..`, and contain no `/`, `\`, or NUL. The name `.arc` is rejected at **every**
-level, so ARC metadata can never be versioned or materialized.
+`..`, and contain no `/`, `\`, or NUL. The name `.arc` (compared
+ASCII-case-insensitively) is rejected at **every** level, so ARC metadata can
+never be materialized. The scanner skips directories named `.arc` at any level
+(and `.arc-init-*` staging directories at the root) instead of versioning them.
 
 Snapshot rules (`arc save`):
 
@@ -171,8 +173,13 @@ Restore rules: ARC never writes through a symlink or outside the workspace
 root; every parent directory is checked with `symlink_metadata` before writing.
 On Windows and macOS, restore refuses trees whose sibling names collide under
 case folding, and on Windows it refuses names that are reserved (`CON`, `NUL`,
-`COM1`…, with any extension), contain `<>:"|?*` or control characters, or end
-in a dot or space. These refusals happen **before** any file is modified.
+`COM1`…, with any extension), contain `<>:"|?*` or control characters, end
+in a dot or space, or look like an NTFS 8.3 alias of the metadata directory
+(`ARC~1`, `ARC~2`, …). These refusals happen **before** any file is modified.
+
+Known limits: Unicode normalization is not applied (macOS HFS+ NFD rewriting
+of names is untested); on Windows a restored `executable` entry is written as
+a plain file and the next save keeps the kind recorded in the workspace head.
 
 Rename detection is not part of the model in R1: a rename is a delete plus an
 add.
