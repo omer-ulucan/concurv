@@ -28,10 +28,20 @@ dependencies = [
 [[package]]
 name = "arc-ops"
 version = "0.1.0"
+dependencies = [
+ "arc-core",
+ "arc-objects",
+ "arc-refs",
+]
 
 [[package]]
 name = "arc-refs"
 version = "0.1.0"
+dependencies = [
+ "arc-core",
+ "arc-objects",
+ "tempfile",
+]
 
 [[package]]
 name = "arc-workspace"
