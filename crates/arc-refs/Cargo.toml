@@ -1,10 +1,18 @@
 [package]
 name = "arc-refs"
+description = "ARC op-head pointer, compare-and-swap and repository lock"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+
+[dependencies]
+arc-core.workspace = true
+arc-objects.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true
