@@ -1,6 +1,7 @@
-# ARC — notes for Claude Code sessions
+# concurv — notes for Claude Code sessions
 
-ARC is a Rust, local-first VCS. Product spec: `docs/ARC_Research_and_Roadmap_2026.md`.
+concurv is a Rust, local-first VCS. Product spec: `docs/ARC_Research_and_Roadmap_2026.md`.
+The product spec and `prompts/START_WITH_CLAUDE_CODE.md` predate the rename: "ARC"/`arc` there means concurv.
 Execution rules: `prompts/START_WITH_CLAUDE_CODE.md`. Current stage and evidence:
 `docs/ROADMAP_STATUS.md` — read it first.
 
@@ -11,7 +12,7 @@ Before changing storage, refs, restore or the CLI contract, read:
 - `docs/cli.md` — JSON schema, error codes, exit codes (stable contract)
 
 Hard rules:
-- Never lose acknowledged data. `.arc/op_head` is the only mutable pointer and must only
+- Never lose acknowledged data. `.concurv/op_head` is the only mutable pointer and must only
   ever name durable, verified objects. Objects are immutable; never rewrite or delete them
   (no GC exists yet).
 - `restore` must never overwrite dirty working files without `--force` + backup snapshot.

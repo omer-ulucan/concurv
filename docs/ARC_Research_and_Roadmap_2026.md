@@ -4,6 +4,7 @@
 **Date:** 2026-11-01  
 **Status:** Proposal / RFC v0.1 — not implemented  
 **Working name:** `arc` (availability, trademarks and CLI naming not checked)
+**Renamed:** the project is now **concurv** (decided 2026-11-01). "ARC"/`arc` in this document refers to concurv; `arcd` is now `concurvd`. The original text is kept unchanged below.
 
 ## 0. Executive decision
 

@@ -10,11 +10,11 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [workspace.dependencies]
-arc-core = { path = "crates/arc-core" }
-arc-objects = { path = "crates/arc-objects" }
-arc-refs = { path = "crates/arc-refs" }
-arc-ops = { path = "crates/arc-ops" }
-arc-workspace = { path = "crates/arc-workspace" }
+concurv-core = { path = "crates/concurv-core" }
+concurv-objects = { path = "crates/concurv-objects" }
+concurv-refs = { path = "crates/concurv-refs" }
+concurv-ops = { path = "crates/concurv-ops" }
+concurv-workspace = { path = "crates/concurv-workspace" }
 blake3 = "1.8"
 clap = { version = "4.6", features = ["derive"] }
 getrandom = "0.4"

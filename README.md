@@ -1,37 +1,37 @@
-# ARC (working name)
+# concurv
 
-A local-first version control system in Rust, designed to grow into
+concurv — concurrent, agent-native version control. A local-first VCS in Rust, designed to grow into
 agent-aware multi-device collaboration (see
 `docs/ARC_Research_and_Roadmap_2026.md`). **Current state: R1 local kernel.**
 There is no sync, merge, undo, multi-workspace or Git bridge yet.
-The name `arc` is provisional; naming and trademark availability have not been checked.
+Trademark and package-name availability for `concurv` have not been checked.
 
 ## What works today
 
 ```console
-$ arc init
+$ concurv init
 $ echo hello > notes.txt
-$ arc status                 # read-only; content-hash based
-$ arc save -m "first"        # durable snapshot (fsync + atomic op-head swap)
+$ concurv status                 # read-only; content-hash based
+$ concurv save -m "first"        # durable snapshot (fsync + atomic op-head swap)
 $ echo changed > notes.txt
-$ arc diff                   # unified diff vs head
-$ arc save -m "second"
-$ arc log
+$ concurv diff                   # unified diff vs head
+$ concurv save -m "second"
+$ concurv log
 $ echo unsaved > notes.txt
-$ arc restore --snapshot <first-id-prefix>          # refused: exit 20, nothing touched
-$ arc restore --snapshot <first-id-prefix> --force  # backup snapshot first, then restore
-$ arc verify --full          # hash-checks every object
-$ arc --json status          # versioned machine-readable output
+$ concurv restore --snapshot <first-id-prefix>          # refused: exit 20, nothing touched
+$ concurv restore --snapshot <first-id-prefix> --force  # backup snapshot first, then restore
+$ concurv verify --full          # hash-checks every object
+$ concurv --json status          # versioned machine-readable output
 ```
 
-`restore` never moves history: it rewrites working files only; `arc save`
+`restore` never moves history: it rewrites working files only; `concurv save`
 records the restored state as a new forward snapshot. CLI contract, JSON schema
 and exit codes: `docs/cli.md`.
 
 ## Build and test
 
 ```
-cargo build --release        # binary: target/release/arc
+cargo build --release        # binary: target/release/concurv
 cargo test --workspace --all-targets
 ```
 

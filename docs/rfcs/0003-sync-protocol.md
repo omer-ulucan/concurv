@@ -6,8 +6,8 @@ preclude a safe R3.
 
 ## 1. Roles
 
-- **Client** — an ARC repository on a device (PC A, PC B, …).
-- **Relay (`arcd`)** — a small self-hostable server that stores objects and is
+- **Client** — an concurv repository on a device (PC A, PC B, …).
+- **Relay (`concurvd`)** — a small self-hostable server that stores objects and is
   the **single authority** for *published* branch heads of a repository. It is
   a coordinator, not a P2P consensus participant. There is exactly one
   authoritative relay per published branch.
@@ -30,8 +30,8 @@ is executed or trusted without verification.
 1. **Transport + authentication** — TLS (rustls). Device authenticates with a
    per-device key or scoped token; the relay maps it to a repository and a set
    of scopes (`read`, `write-objects`, `publish:<branch>`).
-2. **Hello** — both sides send `{protocol: "arc-sync", versions: [1], object_format: 1, capabilities: [...]}`;
-   the highest common version is used; no common version → `ARC_PROTOCOL_MISMATCH`.
+2. **Hello** — both sides send `{protocol: "concurv-sync", versions: [1], object_format: 1, capabilities: [...]}`;
+   the highest common version is used; no common version → `CONCURV_PROTOCOL_MISMATCH`.
 3. **Head advertisement** — relay sends published heads `{branch → (snapshot_id, publish_seq)}`.
 4. **Negotiation** — client sends wants/haves in bounded batches (ids only);
    relay answers with the missing-set. Commit-graph walking stops at common
@@ -51,7 +51,7 @@ is executed or trusted without verification.
    policy (R4: attestation bound to `proposed_head` + policy hash); then
    compares `expected_head` with the current head. Equal → durably write the
    new head, increment `publish_seq`, acknowledge. Different →
-   `ARC_STALE_HEAD{observed_head, publish_seq}` and nothing changes.
+   `CONCURV_STALE_HEAD{observed_head, publish_seq}` and nothing changes.
 
 ## 4. Idempotency and replay
 
@@ -84,5 +84,5 @@ metadata (they are local-only unless explicitly published).
 
 - HTTP/2 vs QUIC transport; long-poll vs WebSocket for `--watch`.
 - Pack format for bulk transfer (must not change object ids).
-- Relay storage durability (SQLite WAL vs file store reusing `arc-objects`).
+- Relay storage durability (SQLite WAL vs file store reusing `concurv-objects`).
 - Key rotation and device revocation flows.
