@@ -29,3 +29,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-targets
 cargo build --release
 ```
+
+CI (`.github/workflows/ci.yml`) runs these on Linux, macOS and Windows with the latest
+stable Rust, plus `cargo check` on the MSRV (1.89). Two traps seen in practice:
+- Clippy on Windows never compiles `#[cfg(unix)]` code. Before pushing, also run
+  `cargo +stable clippy --workspace --all-targets --target x86_64-unknown-linux-gnu -- -D warnings`
+  (needs `rustup target add x86_64-unknown-linux-gnu`; works from Windows without a linker).
+- New stable releases add Clippy lints; a red CI with no code change usually means that.
+Commit messages: no AI attribution lines (no Co-Authored-By/"Generated with").

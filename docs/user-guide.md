@@ -175,8 +175,9 @@ if started in `<dir>`.
 
 | | Linux | macOS | Windows |
 |---|---|---|---|
-| Tested on this build | not yet | not yet | yes (Windows 11, NTFS) |
+| Tested (CI on every push) | yes (x86_64) | yes (Apple Silicon, APFS) | yes (NTFS) |
 | Executable bit | recorded | recorded | not available; a file keeps the kind recorded in the head |
 | Symlinks | versioned as links, never followed | same | rejected (symlinks and junctions) |
 | Directory fsync after rename | yes | yes | not available; relies on NTFS journaling |
+| Non-UTF-8 file names | rejected by `save` | cannot exist (APFS refuses them) | rejected (unpaired surrogates) |
 | Unsafe-name checks on restore | none needed | case collisions | reserved names, `<>:"\|?*`, trailing dot/space, case collisions, `CONCUR~n` |
