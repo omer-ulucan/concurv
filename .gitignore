@@ -1,3 +1,27 @@
-/target
+# Build output
+/target/
+
+# Editors and IDEs
+.idea/
+.vscode/
 *.swp
+*.swo
+*~
+
+# OS files
 .DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and scratch files
+*.log
+*.tmp
+*.orig
+*.rej
+*.bak
+
+# Rust tooling
+**/*.rs.bk
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
