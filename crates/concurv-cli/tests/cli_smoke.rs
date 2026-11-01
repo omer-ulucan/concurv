@@ -226,3 +226,59 @@ fn errors_have_stable_codes() {
     let o = cv(d.path(), &["sync"]);
     assert_eq!(o.status.code(), Some(2));
 }
+
+/// A backup made by `restore --force` can be found again through `op log`
+/// even if the id printed by `restore` was lost.
+#[test]
+fn op_log_lists_operations_and_backups() {
+    let d = tempfile::tempdir().unwrap();
+    let w = d.path();
+    cv_ok(w, &["init"]);
+    fs::write(w.join("f.txt"), "v1\n").unwrap();
+    let (_, v) = cv_json(w, &["save", "-m", "one"]);
+    let s1 = v["data"]["snapshot"].as_str().unwrap().to_owned();
+    fs::write(w.join("f.txt"), "v2\n").unwrap();
+    let (_, v) = cv_json(w, &["save", "-m", "two"]);
+    let s2 = v["data"]["snapshot"].as_str().unwrap().to_owned();
+    fs::write(w.join("f.txt"), "unsaved work\n").unwrap();
+    let (code, _) = cv_json(w, &["restore", "--snapshot", &s1, "--force"]);
+    assert_eq!(code, 0);
+
+    let (code, v) = cv_json(w, &["op", "log"]);
+    assert_eq!(code, 0);
+    assert_eq!(v["command"], "op log");
+    let ops = v["data"]["operations"].as_array().unwrap();
+    let kinds: Vec<_> = ops.iter().map(|o| o["kind"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["restore", "save", "save", "init"]);
+    // Restore does not move history: head after restore is still s2.
+    assert_eq!(ops[0]["head"], s2.as_str());
+    assert_eq!(ops[1]["branches"]["main"], s2.as_str());
+    assert!(ops[3]["head"].is_null() && ops[3]["workspace"].is_null());
+    assert_eq!(ops[0]["parents"][0], ops[1]["operation"]);
+
+    // The backup listed in the op log recovers the unsaved work.
+    let backup = ops[0]["backup"].as_str().unwrap().to_owned();
+    assert!(ops[1..].iter().all(|o| o["backup"].is_null()));
+    cv_ok(w, &["restore", "--snapshot", &backup, "--force"]);
+    assert_eq!(
+        fs::read_to_string(w.join("f.txt")).unwrap(),
+        "unsaved work\n"
+    );
+
+    // Limits, and human output mentions the backup and how to recover it.
+    let (_, v) = cv_json(w, &["op", "log", "-n", "2"]);
+    assert_eq!(v["data"]["operations"].as_array().unwrap().len(), 2);
+    let (_, v) = cv_json(w, &["op", "log", "-n", "0"]);
+    assert!(v["data"]["operations"].as_array().unwrap().is_empty());
+    let human = cv_ok(w, &["op", "log"]);
+    assert!(
+        human.contains(&format!("backup of discarded working copy: {backup}")),
+        "{human}"
+    );
+    assert!(human.contains("(init)") && human.contains("initialize repository"));
+
+    // op log is read-only.
+    let before = fs::read(w.join(".concurv/op_head")).unwrap();
+    cv_ok(w, &["op", "log"]);
+    assert_eq!(fs::read(w.join(".concurv/op_head")).unwrap(), before);
+}

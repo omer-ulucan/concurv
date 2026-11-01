@@ -7,7 +7,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use concurv_core::{ConcurvError, ErrorCode, Result};
 use concurv_workspace::{
-    Change, Repo, RepoOptions, RestoreOptions, diff, log, restore, save, status, verify,
+    Change, Repo, RepoOptions, RestoreOptions, diff, log, op_log, restore, save, status, verify,
 };
 use serde_json::{Value, json};
 
@@ -66,6 +66,21 @@ enum Cmd {
         #[arg(long)]
         full: bool,
     },
+    /// Inspect the operation log (every init, save and restore).
+    Op {
+        #[command(subcommand)]
+        cmd: OpCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum OpCmd {
+    /// List operations, newest first, including backups made by `restore --force`.
+    Log {
+        /// Maximum number of operations.
+        #[arg(short = 'n', long, default_value_t = 50)]
+        limit: usize,
+    },
 }
 
 impl Cmd {
@@ -78,6 +93,9 @@ impl Cmd {
             Cmd::Log { .. } => "log",
             Cmd::Restore { .. } => "restore",
             Cmd::Verify { .. } => "verify",
+            Cmd::Op {
+                cmd: OpCmd::Log { .. },
+            } => "op log",
         }
     }
 }
@@ -248,6 +266,12 @@ fn run(cli: Cli) -> Result<Output> {
             let repo = Repo::discover(&cwd, opts())?;
             cmd_verify(&repo, full)
         }
+        Cmd::Op {
+            cmd: OpCmd::Log { limit },
+        } => {
+            let repo = Repo::discover(&cwd, opts())?;
+            cmd_op_log(&repo, limit)
+        }
     }
 }
 
@@ -324,6 +348,46 @@ fn cmd_diff(repo: &Repo) -> Result<Output> {
         }));
     }
     ok(json!({ "files": arr }), human)
+}
+
+fn cmd_op_log(repo: &Repo, limit: usize) -> Result<Output> {
+    let ops = op_log(repo, limit)?;
+    let ws = repo.workspace_id();
+    let mut human = String::new();
+    let mut arr = Vec::new();
+    for (id, op) in &ops {
+        let head = op.view.workspaces.get(&ws).and_then(|w| w.head);
+        human.push_str(&format!(
+            "operation {id} ({})\nDate:   {}\n    {}\n",
+            op.kind,
+            format_time(op.timestamp_ms),
+            op.description
+        ));
+        if let Some(h) = head {
+            human.push_str(&format!("    head after: {h}\n"));
+        }
+        if let Some(b) = op.backup {
+            human.push_str(&format!(
+                "    backup of discarded working copy: {b}\n    (recover with `concurv restore --snapshot {b} --force`)\n"
+            ));
+        }
+        human.push('\n');
+        arr.push(json!({
+            "operation": id.to_hex(),
+            "parents": op.parents.iter().map(|p| p.to_hex()).collect::<Vec<_>>(),
+            "kind": op.kind,
+            "description": op.description,
+            "timestamp_ms": op.timestamp_ms,
+            "device": op.device_id.to_hex(),
+            "workspace": op.workspace_id.map(|w| w.to_hex()),
+            "backup": op.backup.map(|b| b.to_hex()),
+            "head": head.map(|h| h.to_hex()),
+            "branches": op.view.branches.iter()
+                .map(|(name, s)| (name.clone(), Value::String(s.to_hex())))
+                .collect::<serde_json::Map<_, _>>(),
+        }));
+    }
+    ok(json!({ "operations": arr }), human)
 }
 
 fn cmd_verify(repo: &Repo, full: bool) -> Result<Output> {
