@@ -114,6 +114,8 @@ pub fn restore(repo: &Repo, target: SnapshotId, opts: RestoreOptions) -> Result<
             set_head: false,
             kind: "restore",
             description: format!("restore working copy to {target}"),
+            expected: None,
+            undoes: None,
         },
     )
 }
@@ -128,6 +130,10 @@ pub(crate) struct Checkout {
     pub kind: &'static str,
     /// Operation description recorded.
     pub description: String,
+    /// Snapshot the working copy must currently equal (default: the head).
+    pub expected: Option<SnapshotId>,
+    /// For an `undo`: the operation being reversed.
+    pub undoes: Option<OperationId>,
 }
 
 /// Materialize `target` in this workspace (RFC 0002 §3.4), then commit one
@@ -166,7 +172,13 @@ pub(crate) fn checkout(
     // 2. Refuse to discard unsaved work unless forced; forced → backup first.
     let head_files = repo.head_files(ws.head.as_ref())?;
     let working = scan(repo.root(), ScanMode::HashOnly, &head_files)?;
-    let dirty = diff_flat(&head_files, &working);
+    // Unsaved work is measured against what the working copy is expected to
+    // hold: normally the head; for undoing a restore, the restored snapshot.
+    let expected_files = match how.expected {
+        Some(e) => repo.snapshot_files(&e)?,
+        None => head_files.clone(),
+    };
+    let dirty = diff_flat(&expected_files, &working);
     let mut backup = None;
     // A working copy that already equals the target loses nothing, even if it
     // differs from the head (e.g. resuming an interrupted checkout).
@@ -230,6 +242,8 @@ pub(crate) fn checkout(
         kind: how.kind.into(),
         description: how.description,
         backup,
+        undoes: how.undoes,
+        checked_out: Some(target),
         view,
     };
     let operation = repo.oplog().commit(&lock, &op_id, &new_op)?;

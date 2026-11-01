@@ -18,7 +18,7 @@ use std::thread;
 use common::*;
 use concurv_core::{ErrorCode, SnapshotId};
 use concurv_workspace::graph::ancestors;
-use concurv_workspace::{Repo, publish, save, update, verify, workspaces};
+use concurv_workspace::{Repo, publish, save, undo, update, verify, workspaces};
 
 const ROUNDS: usize = 3;
 
@@ -60,6 +60,15 @@ fn run_writers(n: usize) {
                 };
                 barrier.wait();
                 for round in 0..ROUNDS {
+                    // Scratch save immediately undone, concurrently with the
+                    // other writers: undo must revert only this workspace.
+                    let scratch = p.join(format!("scratch-{i}.tmp"));
+                    fs::write(&scratch, b"discard me").unwrap();
+                    let before = repo.head_snapshot().unwrap();
+                    save(&repo, "scratch").unwrap();
+                    let u = undo(&repo).unwrap();
+                    assert_eq!(u.head, before, "writer {i}: undo restored the wrong head");
+                    fs::remove_file(&scratch).unwrap();
                     // Each writer owns its files, so merges are conflict-free.
                     let dir = p.join(format!("writer-{i}"));
                     fs::create_dir_all(&dir).unwrap();
@@ -133,7 +142,11 @@ fn run_writers(n: usize) {
     assert_eq!(ids.len(), ops.len());
     // Every acknowledged operation of each writer is present exactly once.
     let saves = ops.iter().filter(|(_, o)| o.kind == "save").count();
-    assert_eq!(saves, 1 + n * ROUNDS, "n={n}");
+    assert_eq!(saves, 1 + 2 * n * ROUNDS, "n={n}");
+    let undos = ops.iter().filter(|(_, o)| o.kind == "undo").count();
+    assert_eq!(undos, n * ROUNDS, "n={n}");
+    // No scratch file ever reached main.
+    assert!(files.keys().all(|p| !p.to_string().starts_with("scratch-")));
     let retries: usize = logs.iter().map(|l| l.diverged_retries).sum();
     eprintln!(
         "n={n}: {} ops, {retries} diverged-publish retries",

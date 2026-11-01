@@ -241,6 +241,8 @@ pub fn add(repo: &Repo, path: &Path, name: Option<&str>) -> Result<AddOutcome> {
             kind: "workspace-add".into(),
             description: format!("add workspace {name}"),
             backup: None,
+            undoes: None,
+            checked_out: None,
             view,
         };
         repo.oplog().commit(&lock, &op_id, &new_op)?;
@@ -266,6 +268,8 @@ pub fn add(repo: &Repo, path: &Path, name: Option<&str>) -> Result<AddOutcome> {
                 set_head: true,
                 kind: "update",
                 description: format!("check out {b} {m} into new workspace {name}"),
+                expected: None,
+                undoes: None,
             },
         )?;
         written = out.written;

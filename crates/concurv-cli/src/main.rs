@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 use concurv_core::{ConcurvError, ErrorCode, Result};
 use concurv_workspace::{
     Change, Repo, RepoOptions, RestoreOptions, UpdateKind, WorkspaceInfo, diff, log, op_log,
-    publish, restore, save, status, update, verify, workspaces,
+    publish, restore, save, status, undo, update, verify, workspaces,
 };
 use serde_json::{Value, json};
 
@@ -79,6 +79,8 @@ enum Cmd {
     },
     /// Move the shared branch (`main`) forward to this workspace's head (CAS).
     Publish,
+    /// Reverse the most recent operation of this workspace (never shared state).
+    Undo,
     /// Bring the shared branch into this workspace (fast-forward or file-level merge).
     Update,
 }
@@ -128,6 +130,7 @@ impl Cmd {
             } => "workspace list",
             Cmd::Publish => "publish",
             Cmd::Update => "update",
+            Cmd::Undo => "undo",
         }
     }
 }
@@ -381,6 +384,41 @@ fn run(cli: Cli) -> Result<Output> {
                 human,
             )
         }
+        Cmd::Undo => {
+            let repo = Repo::discover(&cwd, opts())?;
+            let o = undo(&repo)?;
+            let mut human = format!(
+                "Undid `{}` {} ({}).\nWorkspace head is now {}.",
+                o.undone_kind,
+                &o.undone.to_hex()[..12],
+                o.undone_description,
+                o.head.map_or("(none)".to_owned(), |h| h.to_hex())
+            );
+            match o.files_restored_to {
+                Some(s) => human.push_str(&format!(
+                    "\nWorking files restored to {} ({} written, {} deleted).",
+                    &s.to_hex()[..12],
+                    o.written,
+                    o.deleted
+                )),
+                None => human.push_str(
+                    "\nWorking files unchanged: the undone save's content is now an unsaved change.",
+                ),
+            }
+            ok(
+                json!({
+                    "undone": o.undone.to_hex(),
+                    "undone_kind": o.undone_kind,
+                    "undone_description": o.undone_description,
+                    "head": o.head.map(|h| h.to_hex()),
+                    "files_restored_to": o.files_restored_to.map(|s| s.to_hex()),
+                    "written": o.written,
+                    "deleted": o.deleted,
+                    "operation": o.operation.to_hex(),
+                }),
+                human,
+            )
+        }
         Cmd::Update => {
             let repo = Repo::discover(&cwd, opts())?;
             let o = update(&repo)?;
@@ -535,6 +573,8 @@ fn cmd_op_log(repo: &Repo, limit: usize) -> Result<Output> {
             "device": op.device_id.to_hex(),
             "workspace": op.workspace_id.map(|w| w.to_hex()),
             "backup": op.backup.map(|b| b.to_hex()),
+            "undoes": op.undoes.map(|u| u.to_hex()),
+            "checked_out": op.checked_out.map(|s| s.to_hex()),
             "head": head.map(|h| h.to_hex()),
             "branches": op.view.branches.iter()
                 .map(|(name, s)| (name.clone(), Value::String(s.to_hex())))

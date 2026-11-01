@@ -73,6 +73,8 @@ pub fn publish(repo: &Repo) -> Result<PublishOutcome> {
         kind: "publish".into(),
         description: format!("publish {head} to {branch}"),
         backup: None,
+        undoes: None,
+        checked_out: None,
         view,
     };
     let operation = repo.oplog().commit(&lock, &op_id, &new_op)?;
@@ -206,6 +208,8 @@ pub fn update(repo: &Repo) -> Result<UpdateOutcome> {
             set_head: true,
             kind: "update",
             description,
+            expected: None,
+            undoes: None,
         },
     )?;
     Ok(UpdateOutcome {

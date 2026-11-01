@@ -365,3 +365,40 @@ fn workspaces_publish_and_update() {
     );
     assert_eq!(cv_json(&a, &["verify", "--full"]).0, 0);
 }
+
+/// R2 slice 2b: `undo` JSON contract and exit codes.
+#[test]
+fn undo_command() {
+    let d = tempfile::tempdir().unwrap();
+    let w = d.path();
+    cv_ok(w, &["init"]);
+    let (code, v) = cv_json(w, &["undo"]);
+    assert_eq!(
+        (code, v["error"]["code"].as_str()),
+        (50, Some("CONCURV_NOT_FOUND"))
+    );
+    fs::write(w.join("f"), "1\n").unwrap();
+    let (_, v) = cv_json(w, &["save", "-m", "one"]);
+    let s1 = v["data"]["snapshot"].as_str().unwrap().to_owned();
+    fs::write(w.join("f"), "2\n").unwrap();
+    cv_ok(w, &["save", "-m", "two"]);
+    let (code, v) = cv_json(w, &["undo"]);
+    assert_eq!((code, v["command"].as_str()), (0, Some("undo")));
+    assert_eq!(v["data"]["undone_kind"], "save");
+    assert_eq!(v["data"]["head"], s1.as_str());
+    assert!(v["data"]["files_restored_to"].is_null());
+    assert_eq!(fs::read_to_string(w.join("f")).unwrap(), "2\n");
+    let (_, v) = cv_json(w, &["op", "log", "-n", "1"]);
+    let op = &v["data"]["operations"][0];
+    assert_eq!(op["kind"], "undo");
+    assert!(op["undoes"].is_string());
+
+    cv_ok(w, &["save", "-m", "two again"]);
+    cv_ok(w, &["publish"]);
+    let (code, v) = cv_json(w, &["undo"]);
+    assert_eq!(
+        (code, v["error"]["code"].as_str()),
+        (2, Some("CONCURV_INVALID_ARGUMENT"))
+    );
+    assert_eq!(cv_json(w, &["verify", "--full"]).0, 0);
+}
