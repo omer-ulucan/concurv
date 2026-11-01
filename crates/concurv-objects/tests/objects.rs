@@ -309,6 +309,7 @@ fn sample_operation() -> Operation {
             name: "default".into(),
             branch: Some("main".into()),
             head: Some(SnapshotId::from_object_id(oid(3))),
+            merge: Some(concurv_core::ConflictId::from_object_id(oid(6))),
         },
     );
     Operation {
@@ -518,4 +519,57 @@ proptest! {
             prop_assert_eq!(o.encode().unwrap(), bytes);
         }
     }
+}
+
+#[test]
+fn conflict_objects_roundtrip_and_reject_bad_input() {
+    use concurv_core::RepoPath;
+    use concurv_objects::{Conflict, ConflictEntry, ConflictKind};
+    let (_d, s) = store();
+    let snap = |b| SnapshotId::from_object_id(oid(b));
+    let c = Conflict {
+        ours: snap(1),
+        theirs: snap(2),
+        base: Some(snap(3)),
+        worktree: snap(4),
+        entries: vec![
+            ConflictEntry {
+                path: RepoPath::parse("a.txt").unwrap(),
+                kind: ConflictKind::BothModified,
+                markers: true,
+                side_files: vec![RepoPath::parse("a.txt.concurv-conflict").unwrap()],
+            },
+            ConflictEntry {
+                path: RepoPath::parse("img/b.png").unwrap(),
+                kind: ConflictKind::DeleteModify,
+                markers: false,
+                side_files: vec![
+                    RepoPath::parse("img/b.png.concurv-conflict").unwrap(),
+                    RepoPath::parse("img/b.png.concurv-theirs").unwrap(),
+                ],
+            },
+        ],
+    };
+    let id = s.write_conflict(&c).unwrap();
+    assert_eq!(s.read_conflict(&id).unwrap(), c);
+    // Unsorted entries are refused by the encoder.
+    let mut bad = c.clone();
+    bad.entries.reverse();
+    assert!(bad.encode().is_err());
+    // Traversal in a conflict path is refused by the decoder.
+    let mut bytes = c.encode().unwrap();
+    let needle = b"a.txt";
+    let at = bytes.windows(5).position(|w| w == needle).unwrap();
+    bytes[at..at + 5].copy_from_slice(b"../xx");
+    assert_eq!(
+        Conflict::decode(&bytes).unwrap_err().code,
+        ErrorCode::ObjectCorrupt
+    );
+    // Typed loads refuse the wrong kind.
+    let wrong =
+        concurv_core::ConflictId::from_object_id(s.write_blob_bytes(b"x").unwrap().object_id());
+    assert_eq!(
+        s.read_conflict(&wrong).unwrap_err().code,
+        ErrorCode::WrongObjectKind
+    );
 }

@@ -4,9 +4,10 @@
 use std::fs::File;
 use std::io::Read;
 
-use concurv_core::{ConcurvError, RepoPath, Result, SnapshotId};
+use concurv_core::{ConcurvError, ConflictId, RepoPath, Result, SnapshotId};
 use concurv_objects::EntryKind;
 
+use crate::conflicts::{ConflictStatus, conflict_status};
 use crate::repo::Repo;
 use crate::restore::{RestoreMarker, read_marker};
 use crate::worktree::{FileState, FlatTree, ScanMode, scan};
@@ -87,6 +88,18 @@ pub fn diff_flat(old: &FlatTree, new: &FlatTree) -> Vec<Change> {
     out
 }
 
+/// A pending merge as seen by `status`.#[derive(Debug)]pub struct MergeStatus {    /// The conflict object.    pub id: ConflictId,    /// Branch head being merged.    pub theirs: SnapshotId,    /// State of every conflicted path.    pub conflicts: Vec<ConflictStatus>,}
+/// A pending merge as seen by `status`.
+#[derive(Debug)]
+pub struct MergeStatus {
+    /// The conflict object.
+    pub id: ConflictId,
+    /// Branch head being merged.
+    pub theirs: SnapshotId,
+    /// State of every conflicted path.
+    pub conflicts: Vec<ConflictStatus>,
+}
+
 /// Result of `status`.
 #[derive(Debug)]
 pub struct StatusReport {
@@ -98,6 +111,8 @@ pub struct StatusReport {
     pub changes: Vec<Change>,
     /// Present if a restore was interrupted.
     pub interrupted_restore: Option<RestoreMarker>,
+    /// Present while a merge with conflicts is pending (RFC 0004 §11).
+    pub merge: Option<MergeStatus>,
 }
 
 /// Compute status without writing anything.
@@ -110,6 +125,18 @@ pub fn status(repo: &Repo) -> Result<StatusReport> {
         head: ws.head,
         changes: diff_flat(&head_files, &working),
         interrupted_restore: read_marker(repo)?,
+        merge: match ws.merge {
+            Some(id) => {
+                let conflict = repo.store().read_conflict(&id)?;
+                let conflicts = conflict_status(repo, &conflict)?;
+                Some(MergeStatus {
+                    id,
+                    theirs: conflict.theirs,
+                    conflicts,
+                })
+            }
+            None => None,
+        },
     })
 }
 

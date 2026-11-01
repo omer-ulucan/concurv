@@ -231,6 +231,7 @@ pub fn add(repo: &Repo, path: &Path, name: Option<&str>) -> Result<AddOutcome> {
                 name: name.clone(),
                 branch: branch.clone(),
                 head: None,
+                merge: None,
             },
         );
         let new_op = Operation {
@@ -270,6 +271,7 @@ pub fn add(repo: &Repo, path: &Path, name: Option<&str>) -> Result<AddOutcome> {
                 description: format!("check out {b} {m} into new workspace {name}"),
                 expected: None,
                 undoes: None,
+                set_merge: None,
             },
         )?;
         written = out.written;

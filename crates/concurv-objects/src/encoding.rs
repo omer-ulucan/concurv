@@ -3,10 +3,11 @@
 
 use std::collections::BTreeMap;
 
+use concurv_core::RepoPath;
 use concurv_core::path::MAX_NAME_LEN;
 use concurv_core::{
-    BlobId, ChangeId, ConcurvError, DeviceId, ErrorCode, OBJECT_ID_LEN, ObjectId, OperationId,
-    RANDOM_ID_LEN, RandomId, Result, SnapshotId, TreeId, WorkspaceId, validate_name,
+    BlobId, ChangeId, ConcurvError, ConflictId, DeviceId, ErrorCode, OBJECT_ID_LEN, ObjectId,
+    OperationId, RANDOM_ID_LEN, RandomId, Result, SnapshotId, TreeId, WorkspaceId, validate_name,
 };
 
 /// Object magic for format version 1.
@@ -36,6 +37,8 @@ pub enum ObjectKind {
     Snapshot = 3,
     /// Repository mutation record.
     Operation = 4,
+    /// Pending merge with unresolved conflicts (RFC 0004 §11).
+    Conflict = 5,
 }
 
 impl ObjectKind {
@@ -46,6 +49,7 @@ impl ObjectKind {
             2 => Ok(Self::Tree),
             3 => Ok(Self::Snapshot),
             4 => Ok(Self::Operation),
+            5 => Ok(Self::Conflict),
             other => Err(ConcurvError::new(
                 ErrorCode::UnsupportedFormat,
                 format!("unknown object kind {other}"),
@@ -60,6 +64,7 @@ impl ObjectKind {
             Self::Tree => "tree",
             Self::Snapshot => "snapshot",
             Self::Operation => "operation",
+            Self::Conflict => "conflict",
         }
     }
 }
@@ -509,6 +514,8 @@ pub struct WorkspaceView {
     pub branch: Option<String>,
     /// Snapshot the working copy is based on.
     pub head: Option<SnapshotId>,
+    /// Pending merge with unresolved conflicts, if any (RFC 0004 §11).
+    pub merge: Option<ConflictId>,
 }
 
 /// Complete mutable repository state as of one operation.
@@ -649,6 +656,13 @@ impl Operation {
                 }
                 None => w.u8(0),
             }
+            match &ws.merge {
+                Some(m) => {
+                    w.u8(1);
+                    w.id(&m.object_id());
+                }
+                None => w.u8(0),
+            }
         }
         Ok(w.0)
     }
@@ -716,8 +730,20 @@ impl Operation {
             } else {
                 None
             };
-            view.workspaces
-                .insert(id, WorkspaceView { name, branch, head });
+            let merge = if r.flag()? {
+                Some(ConflictId::from_object_id(r.id()?))
+            } else {
+                None
+            };
+            view.workspaces.insert(
+                id,
+                WorkspaceView {
+                    name,
+                    branch,
+                    head,
+                    merge,
+                },
+            );
         }
         check_unique_names(view.workspaces.values().map(|w| w.name.as_str()))
             .map_err(|e| corrupt(e.message))?;
@@ -753,4 +779,173 @@ fn check_unique_names<'a>(names: impl Iterator<Item = &'a str>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Conflict (pending merge, RFC 0004 §11)
+
+/// Why a path could not be merged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
+pub enum ConflictKind {
+    /// Changed differently on both sides.
+    BothModified = 1,
+    /// Added on both sides with different content.
+    BothAdded = 2,
+    /// Deleted on one side, changed on the other.
+    DeleteModify = 3,
+    /// A file on one side is a directory on the other.
+    FileDirectory = 4,
+}
+
+impl ConflictKind {
+    /// Stable lowercase name used in JSON.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::BothModified => "both_modified",
+            Self::BothAdded => "both_added",
+            Self::DeleteModify => "delete_modify",
+            Self::FileDirectory => "file_directory",
+        }
+    }
+}
+
+impl std::fmt::Display for ConflictKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::BothModified => "changed on both sides",
+            Self::BothAdded => "added on both sides with different content",
+            Self::DeleteModify => "deleted on one side, changed on the other",
+            Self::FileDirectory => "a file on one side, a directory on the other",
+        })
+    }
+}
+
+impl ConflictKind {
+    fn from_byte(b: u8) -> Result<Self> {
+        match b {
+            1 => Ok(Self::BothModified),
+            2 => Ok(Self::BothAdded),
+            3 => Ok(Self::DeleteModify),
+            4 => Ok(Self::FileDirectory),
+            other => Err(corrupt(format!("unknown conflict kind {other}"))),
+        }
+    }
+}
+
+/// One conflicted path of a pending merge.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConflictEntry {
+    /// Conflicted path.
+    pub path: RepoPath,
+    /// Why it conflicts.
+    pub kind: ConflictKind,
+    /// True if `path` was written with text conflict markers.
+    pub markers: bool,
+    /// Side files written next to `path` (explanation, the other version).
+    /// The conflict is resolved once none of them exists.
+    pub side_files: Vec<RepoPath>,
+}
+
+/// A pending merge with unresolved conflicts (RFC 0004 §11).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Conflict {
+    /// The workspace head being merged into ("ours").
+    pub ours: SnapshotId,
+    /// The branch head being merged ("theirs").
+    pub theirs: SnapshotId,
+    /// Merge base, if the histories share one.
+    pub base: Option<SnapshotId>,
+    /// Snapshot of the working copy as materialized for resolution.
+    pub worktree: SnapshotId,
+    /// Conflicted paths, sorted, unique.
+    pub entries: Vec<ConflictEntry>,
+}
+
+fn path_str(w: &mut Writer, p: &RepoPath) -> Result<()> {
+    w.string(&p.to_string())
+}
+
+fn read_path(r: &mut Reader<'_>) -> Result<RepoPath> {
+    let s = r.string()?;
+    let p = RepoPath::parse(&s).map_err(|e| corrupt(e.message))?;
+    if p.is_root() {
+        return Err(corrupt("empty conflict path"));
+    }
+    Ok(p)
+}
+
+impl Conflict {
+    /// Canonical payload bytes.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let mut w = Writer(Vec::new());
+        w.id(&self.ours.object_id());
+        w.id(&self.theirs.object_id());
+        match &self.base {
+            Some(b) => {
+                w.u8(1);
+                w.id(&b.object_id());
+            }
+            None => w.u8(0),
+        }
+        w.id(&self.worktree.object_id());
+        if self.entries.windows(2).any(|p| p[0].path >= p[1].path) {
+            return Err(ConcurvError::internal(
+                "conflict entries must be sorted and unique",
+            ));
+        }
+        w.count(self.entries.len(), MAX_TREE_ENTRIES, "conflict entries")?;
+        for e in &self.entries {
+            path_str(&mut w, &e.path)?;
+            w.u8(e.kind as u8);
+            w.u8(u8::from(e.markers));
+            w.count(e.side_files.len(), 16, "side files")?;
+            for s in &e.side_files {
+                path_str(&mut w, s)?;
+            }
+        }
+        Ok(w.0)
+    }
+
+    /// Strictly decode a payload.
+    pub fn decode(payload: &[u8]) -> Result<Self> {
+        let mut r = Reader::new(payload);
+        let ours = SnapshotId::from_object_id(r.id()?);
+        let theirs = SnapshotId::from_object_id(r.id()?);
+        let base = if r.flag()? {
+            Some(SnapshotId::from_object_id(r.id()?))
+        } else {
+            None
+        };
+        let worktree = SnapshotId::from_object_id(r.id()?);
+        let n = r.count(MAX_TREE_ENTRIES, "conflict entries")?;
+        let mut entries: Vec<ConflictEntry> = Vec::with_capacity((n as usize).min(4096));
+        for _ in 0..n {
+            let path = read_path(&mut r)?;
+            if entries.last().is_some_and(|l| l.path >= path) {
+                return Err(corrupt("conflict entries are not strictly sorted"));
+            }
+            let kind = ConflictKind::from_byte(r.u8()?)?;
+            let markers = r.flag()?;
+            let m = r.count(16, "side files")?;
+            let mut side_files = Vec::with_capacity(m as usize);
+            for _ in 0..m {
+                side_files.push(read_path(&mut r)?);
+            }
+            entries.push(ConflictEntry {
+                path,
+                kind,
+                markers,
+                side_files,
+            });
+        }
+        r.finish()?;
+        Ok(Self {
+            ours,
+            theirs,
+            base,
+            worktree,
+            entries,
+        })
+    }
 }

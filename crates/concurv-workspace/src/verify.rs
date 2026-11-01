@@ -3,7 +3,9 @@
 use std::collections::HashSet;
 use std::fs;
 
-use concurv_core::{BlobId, ConcurvError, ErrorCode, ObjectId, OperationId, SnapshotId, TreeId};
+use concurv_core::{
+    BlobId, ConcurvError, ConflictId, ErrorCode, ObjectId, OperationId, SnapshotId, TreeId,
+};
 use concurv_objects::{EntryKind, ObjectKind};
 
 use crate::repo::Repo;
@@ -24,6 +26,8 @@ pub struct Problem {
 pub struct VerifyReport {
     /// Operations verified.
     pub operations: usize,
+    /// Conflict objects (pending merges) verified.
+    pub conflicts: usize,
     /// Snapshots verified.
     pub snapshots: usize,
     /// Trees verified.
@@ -71,6 +75,7 @@ pub fn verify(repo: &Repo, full: bool) -> VerifyReport {
     // Operations (all parents, not just first).
     let mut ops: Vec<OperationId> = vec![head];
     let mut snaps: Vec<SnapshotId> = Vec::new();
+    let mut conflicts: Vec<ConflictId> = Vec::new();
     while let Some(id) = ops.pop() {
         if !seen.insert(id.object_id()) {
             continue;
@@ -82,6 +87,23 @@ pub fn verify(repo: &Repo, full: bool) -> VerifyReport {
                 snaps.extend(op.view.branches.values().copied());
                 snaps.extend(op.view.workspaces.values().filter_map(|w| w.head));
                 snaps.extend(op.backup);
+                snaps.extend(op.checked_out);
+                conflicts.extend(op.view.workspaces.values().filter_map(|w| w.merge));
+            }
+            Err(e) => r.problem(id, &e),
+        }
+    }
+
+    // Conflict objects of pending merges, and the snapshots they name.
+    while let Some(id) = conflicts.pop() {
+        if !seen.insert(id.object_id()) {
+            continue;
+        }
+        match store.read_conflict(&id) {
+            Ok(c) => {
+                r.conflicts += 1;
+                snaps.extend([c.ours, c.theirs, c.worktree]);
+                snaps.extend(c.base);
             }
             Err(e) => r.problem(id, &e),
         }

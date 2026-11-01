@@ -402,3 +402,67 @@ fn undo_command() {
     );
     assert_eq!(cv_json(w, &["verify", "--full"]).0, 0);
 }
+
+/// R2 slice 2c: `update --allow-conflicts`, `status` merge state, resolution
+/// by `save`, and `update --abort`.
+#[test]
+fn conflict_resolution_via_cli() {
+    let outer = tempfile::tempdir().unwrap();
+    let a = outer.path().join("a");
+    let b = outer.path().join("b");
+    fs::create_dir(&a).unwrap();
+    cv_ok(&a, &["init"]);
+    fs::write(a.join("f.txt"), "base\n").unwrap();
+    cv_ok(&a, &["save", "-m", "base"]);
+    cv_ok(&a, &["publish"]);
+    cv_ok(&a, &["workspace", "add", b.to_str().unwrap()]);
+    fs::write(a.join("f.txt"), "a\n").unwrap();
+    cv_ok(&a, &["save", "-m", "a"]);
+    cv_ok(&a, &["publish"]);
+    fs::write(b.join("f.txt"), "b\n").unwrap();
+    cv_ok(&b, &["save", "-m", "b"]);
+
+    let (code, v) = cv_json(&b, &["update", "--allow-conflicts"]);
+    assert_eq!(
+        (code, v["data"]["result"].as_str()),
+        (0, Some("conflicted")),
+        "{v}"
+    );
+    assert_eq!(v["data"]["conflicts"][0]["path"], "f.txt");
+    assert_eq!(v["data"]["conflicts"][0]["markers"], true);
+    let (_, v) = cv_json(&b, &["status"]);
+    assert_eq!(v["data"]["merge"]["conflicts"][0]["resolved"], false);
+    let (code, v) = cv_json(&b, &["save", "-m", "early"]);
+    assert_eq!(
+        (code, v["error"]["code"].as_str()),
+        (43, Some("CONCURV_CONFLICT"))
+    );
+
+    // Abort, then redo the merge and resolve it.
+    let (code, v) = cv_json(&b, &["update", "--abort"]);
+    assert_eq!(
+        (code, v["data"]["result"].as_str()),
+        (0, Some("aborted")),
+        "{v}"
+    );
+    assert_eq!(fs::read_to_string(b.join("f.txt")).unwrap(), "b\n");
+    let (_, v) = cv_json(&b, &["status"]);
+    assert!(v["data"]["merge"].is_null());
+    assert_eq!(
+        cv_json(&b, &["update", "--abort", "--allow-conflicts"]).0,
+        2
+    );
+
+    cv_ok(&b, &["update", "--allow-conflicts"]);
+    fs::write(b.join("f.txt"), "a and b\n").unwrap();
+    fs::remove_file(b.join("f.txt.concurv-conflict")).unwrap();
+    let human = cv_ok(&b, &["status"]);
+    assert!(human.contains("All conflicts resolved"), "{human}");
+    let (code, v) = cv_json(&b, &["save", "-m", "merge"]);
+    assert_eq!((code, v["data"]["created"].as_bool()), (0, Some(true)));
+    assert_eq!(cv_json(&b, &["publish"]).0, 0);
+    cv_ok(&a, &["update"]);
+    assert_eq!(fs::read_to_string(a.join("f.txt")).unwrap(), "a and b\n");
+    let (code, v) = cv_json(&a, &["verify", "--full"]);
+    assert_eq!(code, 0, "{v}");
+}

@@ -2,7 +2,7 @@
 
 This guide covers what the current build actually does: a single-machine VCS
 with several private workspaces sharing one branch (`main`). Cross-machine
-sync and same-file conflict resolution do not exist yet (see
+sync and line-level (within-file) merging do not exist yet (see
 `docs/ROADMAP_STATUS.md`).
 
 ## 1. Install
@@ -105,7 +105,8 @@ What `update` does:
 | `main` has nothing new | `up_to_date`, nothing changes |
 | you have no unpublished work | fast-forward: your files and head move to `main` |
 | both sides have new work | **file-level merge**: if the two sides changed *different files*, a merge snapshot is created and checked out. Run your tests before publishing |
-| both sides changed the **same file** (or deleted/changed, or a file vs a directory) | refused with exit 43 `CONCURV_CONFLICT`, listing the paths; **nothing is modified** |
+| both sides changed the **same file** (or one deleted what the other changed) | refused with exit 43 `CONCURV_CONFLICT`, listing the paths; **nothing is modified**. Use `update --allow-conflicts` to resolve them (below) |
+| a file on one side is a directory on the other | always refused, nothing modified |
 
 `update` needs a clean working copy, so `save` first. It never publishes.
 
@@ -119,10 +120,50 @@ publish succeeds.
 different files can still break the build together. That is why the merge
 happens in your workspace, where you can test it, and not in `main`.
 
-**Same-file conflicts** cannot be resolved inside concurv yet (planned). The
-workaround: create a fresh workspace from `main` (`concurv workspace add`),
-re-apply your change to the conflicting files there, save and publish. Your
-old workspace's snapshots stay in history.
+### Resolving conflicts
+
+```console
+$ concurv update --allow-conflicts      # writes the conflicts into your files
+$ concurv status                         # lists each conflict: resolved or not
+  ... edit files, delete the side files ...
+$ concurv save -m "Merge main"           # completes the merge (both parents)
+$ concurv publish
+```
+
+With `--allow-conflicts`, every change that merges cleanly is applied, and
+each conflicted file `P` is written for you to resolve:
+
+- **Text files** changed on both sides contain conflict markers around the
+  *whole file*:
+  ```
+  <<<<<<< ours (workspace b, snapshot 1a2b…)
+  your version
+  ||||||| base (snapshot 9f8e…)
+  the common ancestor
+  =======
+  their version
+  >>>>>>> theirs (main, snapshot 4c5d…)
+  ```
+  Edit `P` to the right result and remove the marker lines.
+- **Binary files, symlinks, and delete/modify conflicts** keep your version at
+  `P` (or no file, if you deleted it). Their version is in
+  `P.concurv-theirs`. Keep, replace or delete `P` as needed.
+- Every conflicted path also gets **`P.concurv-conflict`**, a short note
+  explaining what each side did. **Delete it once `P` is resolved**, together
+  with any `P.concurv-theirs`.
+
+`save` refuses (exit 43) until every side file is gone and no marker lines
+remain, so a half-resolved merge can never be recorded or published. Your
+workspace head does not move until that save.
+
+Changed your mind? `concurv update --abort` puts your files back to your head
+and ends the merge. If you had already edited files, they are kept in a backup
+snapshot first. Right after `update --allow-conflicts` (before editing),
+`concurv undo` does the same.
+
+Markers always cover the whole file: concurv does not merge line by line
+yet. For large files, a diff tool on `P` (ours), `P.concurv-theirs` or the
+marker sections helps.
 
 Many workspaces can save, update and publish at the same time: commits are
 serialized internally, and nobody's acknowledged save is ever lost. This is
@@ -232,7 +273,8 @@ and 31 means a missing object. Each problem lists the object id and reason.
 | `status` shows **WARNING: a restore … was interrupted** | A restore, `update` or `workspace add` checkout crashed or was killed midway; some files are from the old state and some from the new | Re-run the printed command: `concurv restore --snapshot <target> --force`. If a backup id is shown, your pre-restore work is safe in that snapshot |
 | `error[CONCURV_LOCKED]` (exit 40) | Another concurv process held the repository or workspace lock for the whole 30 s wait | Retry. Commands normally wait for each other automatically. The lock is held by the OS and released automatically when that process exits, even if it crashed, so there's nothing to delete |
 | `error[CONCURV_DIVERGED]` (exit 42) on `publish` | Someone published to `main` after your last `update` | `concurv update`, test, `concurv publish` again. Nothing was changed |
-| `error[CONCURV_CONFLICT]` (exit 43) on `update` | Both sides changed the same file (paths are listed), or the histories have no single merge base | Nothing was modified. Workaround until conflict resolution lands: new workspace from `main`, re-apply your change there, save, publish (section 4) |
+| `error[CONCURV_CONFLICT]` (exit 43) on `update` | Both sides changed the same file (paths are listed), a file is a directory on the other side, the histories have no single merge base, or a merge is already pending | Nothing was modified. Same-file conflicts: `concurv update --allow-conflicts` and resolve (section 4). A pending merge: finish it with `save` or `update --abort` |
+| `error[CONCURV_CONFLICT]` (exit 43) on `save` | A merge is pending and some conflicts are unresolved (listed: markers remain or side files still exist) | Finish resolving, delete the `*.concurv-conflict` / `*.concurv-theirs` files, save again. Or `concurv update --abort` |
 | `error[CONCURV_INVALID_ARGUMENT]` (exit 2) on `undo` | Your most recent operation was a `publish` (or `workspace add`), which undo never reverts | Make a new change that reverts the published work, save and publish it |
 | `error[CONCURV_NOT_FOUND]` (exit 50) on `undo` | Nothing left to undo in this workspace | — |
 | `error[CONCURV_CONCURRENT_MODIFICATION]` (exit 21) | A file changed while concurv was reading or replacing it (e.g. an editor or build was writing) | Let the other program finish, then retry. Nothing was recorded or overwritten from the inconsistent read |
