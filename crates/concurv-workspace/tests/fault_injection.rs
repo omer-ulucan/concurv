@@ -54,12 +54,17 @@ fn assert_invariants(
     repo
 }
 
+/// Upper bound on hits of one fault point during one fixture save; guards
+/// against an endless loop if a fault point stopped being reachable.
+const MAX_HITS: u64 = 500;
+
+/// For every fault point and mode, fail its 1st, 2nd, 3rd … hit on a fresh
+/// fixture until a run completes without reaching the fault. The number of
+/// hits is not a constant: random device/workspace/change ids decide which
+/// `objects/xx/` fan-out directories already exist, so it is discovered per
+/// run instead of being recorded once (which made the test flaky).
 #[test]
 fn save_survives_failure_at_every_boundary() {
-    // Count how often each point is hit by a successful save of the fixture.
-    let (d, _a, _) = fixture();
-    let rec = Faults::recording();
-    save(&Repo::open(d.path(), opts_with(rec.clone())).unwrap(), "B").unwrap();
     let mut cases = 0;
     for point in ALL_FAULT_POINTS {
         let modes: &[FaultMode] = if point == FaultPoint::TmpWrite {
@@ -68,14 +73,31 @@ fn save_survives_failure_at_every_boundary() {
             &[FaultMode::Error]
         };
         for &mode in modes {
-            for nth in 1..=rec.hits(point) {
+            for nth in 1.. {
+                assert!(
+                    nth < MAX_HITS,
+                    "{point:?} {mode:?}: fault never stopped firing"
+                );
                 let ctx = format!("{point:?}#{nth} {mode:?}");
                 let (d, a, b) = fixture();
-                let faulty =
-                    Repo::open(d.path(), opts_with(Faults::fail_at(point, nth, mode))).unwrap();
+                let faults = Faults::fail_at(point, nth, mode);
+                let faulty = Repo::open(d.path(), opts_with(faults.clone())).unwrap();
                 let r = save(&faulty, "B");
-                assert!(r.is_err(), "{ctx}: fault did not surface");
                 drop(faulty);
+                if !faults.triggered() {
+                    // Fewer than `nth` hits in this run: every boundary of
+                    // this point has been covered. The save must have
+                    // succeeded completely.
+                    let s = r.unwrap_or_else(|e| panic!("{ctx}: failed without a fault: {e}"));
+                    assert!(s.snapshot.is_some(), "{ctx}");
+                    assert_invariants(d.path(), a, &b, &ctx);
+                    assert!(
+                        nth > 1 || point == FaultPoint::DirCreate,
+                        "{ctx}: point never reached"
+                    );
+                    break;
+                }
+                assert!(r.is_err(), "{ctx}: fault fired but save reported success");
                 let repo = assert_invariants(d.path(), a, &b, &ctx);
                 // Recovery: the next save succeeds and records B exactly.
                 let s = save(&repo, "B again").unwrap();
@@ -118,22 +140,26 @@ fn torn_object_file_after_rename_is_detected_and_healed() {
     assert_eq!(e.code, concurv_core::ErrorCode::ObjectCorrupt);
 }
 
+/// Same discovery approach as the save test: fail each hit of each point
+/// until a run no longer reaches the fault.
 #[test]
 fn init_survives_failure_at_every_boundary() {
-    let d = tempfile::tempdir().unwrap();
-    let rec = Faults::recording();
-    Repo::init(d.path(), opts_with(rec.clone())).unwrap();
     let mut cases = 0;
     for point in ALL_FAULT_POINTS {
-        for nth in 1..=rec.hits(point) {
+        for nth in 1.. {
+            assert!(nth < MAX_HITS, "init {point:?}: fault never stopped firing");
             let ctx = format!("init {point:?}#{nth}");
             let d = tempfile::tempdir().unwrap();
             fs::write(d.path().join("user.txt"), b"user data").unwrap();
-            let r = Repo::init(
-                d.path(),
-                opts_with(Faults::fail_at(point, nth, FaultMode::Error)),
-            );
-            assert!(r.is_err(), "{ctx}");
+            let faults = Faults::fail_at(point, nth, FaultMode::Error);
+            let r = Repo::init(d.path(), opts_with(faults.clone()));
+            if !faults.triggered() {
+                let repo = r.unwrap_or_else(|e| panic!("{ctx}: failed without a fault: {e}"));
+                assert!(verify(&repo, true).ok(), "{ctx}");
+                assert!(nth > 1, "{ctx}: point never reached by init");
+                break;
+            }
+            assert!(r.is_err(), "{ctx}: fault fired but init reported success");
             // Either no repository, or (failure after the final rename) a complete one.
             match Repo::open(d.path(), opts()) {
                 Ok(repo) => assert!(verify(&repo, true).ok(), "{ctx}"),
