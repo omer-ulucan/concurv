@@ -2,6 +2,7 @@
 //! working-copy scanning, `save`, `status`/`diff`, safe `restore`,
 //! `publish`/`update` with file-level merge, history and `verify`.
 
+pub mod conflicts;
 pub mod graph;
 pub mod integrate;
 pub mod merge;
@@ -14,12 +15,15 @@ pub mod verify;
 pub mod workspaces;
 pub mod worktree;
 
-pub use integrate::{PublishOutcome, UpdateKind, UpdateOutcome, publish, update};
-pub use merge::{ConflictKind, MergeConflict};
+pub use conflicts::{ConflictStatus, abort_merge, conflict_status, pending_merge};
+pub use integrate::{
+    PublishOutcome, UpdateKind, UpdateOptions, UpdateOutcome, publish, update, update_with,
+};
+pub use merge::{ConflictKind, MergeConflict, PartialMerge};
 pub use repo::{DEFAULT_BRANCH, DEFAULT_WORKSPACE, Repo, RepoOptions};
 pub use restore::{RestoreMarker, RestoreOptions, RestoreOutcome, restore};
 pub use save::{SaveOutcome, save};
-pub use status::{Change, ChangeKind, FileDiff, StatusReport, diff, status};
+pub use status::{Change, ChangeKind, FileDiff, MergeStatus, StatusReport, diff, status};
 pub use undo::{UndoOutcome, undo};
 pub use verify::{Problem, VerifyReport, verify};
 pub use workspaces::{AddOutcome, WorkspaceInfo};

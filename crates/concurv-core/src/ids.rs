@@ -145,6 +145,10 @@ typed_object_id!(
     /// Id of an operation object.
     OperationId
 );
+typed_object_id!(
+    /// Id of a conflict object (a pending merge, RFC 0004 §11).
+    ConflictId
+);
 
 /// A 16-byte random logical id.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

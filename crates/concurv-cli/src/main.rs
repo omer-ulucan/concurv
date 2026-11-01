@@ -7,8 +7,9 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use concurv_core::{ConcurvError, ErrorCode, Result};
 use concurv_workspace::{
-    Change, Repo, RepoOptions, RestoreOptions, UpdateKind, WorkspaceInfo, diff, log, op_log,
-    publish, restore, save, status, undo, update, verify, workspaces,
+    Change, Repo, RepoOptions, RestoreOptions, UpdateKind, UpdateOptions, WorkspaceInfo,
+    abort_merge, diff, log, op_log, publish, restore, save, status, undo, update_with, verify,
+    workspaces,
 };
 use serde_json::{Value, json};
 
@@ -82,7 +83,16 @@ enum Cmd {
     /// Reverse the most recent operation of this workspace (never shared state).
     Undo,
     /// Bring the shared branch into this workspace (fast-forward or file-level merge).
-    Update,
+    Update {
+        /// Write conflicts into the working copy and record a pending merge
+        /// instead of refusing (resolve, then `concurv save`).
+        #[arg(long)]
+        allow_conflicts: bool,
+        /// Give up a pending merge: restore the working copy to the head
+        /// (edits are kept in a backup snapshot).
+        #[arg(long)]
+        abort: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -129,7 +139,7 @@ impl Cmd {
                 cmd: WorkspaceCmd::List,
             } => "workspace list",
             Cmd::Publish => "publish",
-            Cmd::Update => "update",
+            Cmd::Update { .. } => "update",
             Cmd::Undo => "undo",
         }
     }
@@ -419,9 +429,45 @@ fn run(cli: Cli) -> Result<Output> {
                 human,
             )
         }
-        Cmd::Update => {
+        Cmd::Update {
+            allow_conflicts,
+            abort: true,
+        } => {
+            if allow_conflicts {
+                return Err(ConcurvError::new(
+                    ErrorCode::InvalidArgument,
+                    "--abort and --allow-conflicts cannot be combined",
+                ));
+            }
             let repo = Repo::discover(&cwd, opts())?;
-            let o = update(&repo)?;
+            let o = abort_merge(&repo)?;
+            let mut human = format!(
+                "Merge aborted: working copy restored to {} ({} written, {} deleted).",
+                o.target, o.written, o.deleted
+            );
+            if let Some(b) = o.backup {
+                human.push_str(&format!(
+                    "\nEdits made during the merge were saved as backup snapshot {b}."
+                ));
+            }
+            ok(
+                json!({
+                    "result": "aborted",
+                    "head": o.target.to_hex(),
+                    "backup": o.backup.map(|b| b.to_hex()),
+                    "written": o.written,
+                    "deleted": o.deleted,
+                    "operation": o.operation.to_hex(),
+                }),
+                human,
+            )
+        }
+        Cmd::Update {
+            allow_conflicts,
+            abort: false,
+        } => {
+            let repo = Repo::discover(&cwd, opts())?;
+            let o = update_with(&repo, UpdateOptions { allow_conflicts })?;
             let human = match o.kind {
                 UpdateKind::UpToDate => format!("Already up to date with `{}`.", o.branch),
                 UpdateKind::FastForward => format!(
@@ -439,7 +485,43 @@ fn run(cli: Cli) -> Result<Output> {
                     o.written,
                     o.deleted
                 ),
+                UpdateKind::Conflicted => {
+                    let mut s = format!(
+                        "Merge of `{}` has conflicts; they are written into the working copy:\n",
+                        o.branch
+                    );
+                    for e in o.conflict.iter().flat_map(|(_, es)| es) {
+                        s.push_str(&format!(
+                            "  {:<14} {}{}\n",
+                            e.kind.as_str(),
+                            e.path,
+                            if e.markers {
+                                "  (conflict markers)"
+                            } else {
+                                ""
+                            }
+                        ));
+                    }
+                    s.push_str(
+                        "Resolve each one (see its `.concurv-conflict` file), delete the side files, \
+                         then `concurv save -m ...`. Or give up with `concurv update --abort`.",
+                    );
+                    s
+                }
             };
+            let conflicts: Vec<Value> = o
+                .conflict
+                .iter()
+                .flat_map(|(_, es)| es)
+                .map(|e| {
+                    json!({
+                        "path": e.path.to_string(),
+                        "kind": e.kind.as_str(),
+                        "markers": e.markers,
+                        "side_files": e.side_files.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                    })
+                })
+                .collect();
             ok(
                 json!({
                     "branch": o.branch,
@@ -448,6 +530,8 @@ fn run(cli: Cli) -> Result<Output> {
                     "written": o.written,
                     "deleted": o.deleted,
                     "operation": o.operation.map(|s| s.to_hex()),
+                    "conflict": o.conflict.as_ref().map(|(id, _)| id.to_hex()),
+                    "conflicts": conflicts,
                 }),
                 human,
             )
@@ -496,6 +580,37 @@ fn cmd_status(repo: &Repo) -> Result<Output> {
             ));
         }
     }
+    if let Some(m) = &st.merge {
+        let open = m.conflicts.iter().filter(|c| !c.resolved()).count();
+        human.push_str(&format!(
+            "MERGE IN PROGRESS with {} ({} of {} conflict(s) unresolved):\n",
+            &m.theirs.to_hex()[..12],
+            open,
+            m.conflicts.len()
+        ));
+        for c in &m.conflicts {
+            let state = if c.resolved() {
+                "resolved".to_owned()
+            } else {
+                let mut why = Vec::new();
+                if c.markers_remaining {
+                    why.push("markers".to_owned());
+                }
+                why.extend(c.remaining_side_files.iter().map(|s| s.to_string()));
+                format!("unresolved: {}", why.join(", "))
+            };
+            human.push_str(&format!(
+                "  {:<14} {}  [{state}]\n",
+                c.kind.as_str(),
+                c.path
+            ));
+        }
+        human.push_str(if open == 0 {
+            "All conflicts resolved: `concurv save -m ...` completes the merge.\n"
+        } else {
+            "Resolve them, then `concurv save -m ...`; or `concurv update --abort`.\n"
+        });
+    }
     if st.changes.is_empty() {
         human.push_str("Working copy clean.\n");
     } else {
@@ -504,6 +619,19 @@ fn cmd_status(repo: &Repo) -> Result<Output> {
             human.push_str(&format!("  {:<13}{}\n", c.kind.as_str(), c.path));
         }
     }
+    let merge = st.merge.as_ref().map(|m| {
+        json!({
+            "conflict": m.id.to_hex(),
+            "theirs": m.theirs.to_hex(),
+            "conflicts": m.conflicts.iter().map(|c| json!({
+                "path": c.path.to_string(),
+                "kind": c.kind.as_str(),
+                "resolved": c.resolved(),
+                "markers_remaining": c.markers_remaining,
+                "remaining_side_files": c.remaining_side_files.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+        })
+    });
     ok(
         json!({
             "branch": st.branch,
@@ -514,6 +642,7 @@ fn cmd_status(repo: &Repo) -> Result<Output> {
                 "target": m.target.to_hex(),
                 "backup": m.backup.map(|b| b.to_hex()),
             })),
+            "merge": merge,
         }),
         human,
     )
@@ -631,6 +760,7 @@ fn cmd_verify(repo: &Repo, full: bool) -> Result<Output> {
         data: json!({
             "full": full,
             "operations": r.operations,
+            "conflicts": r.conflicts,
             "snapshots": r.snapshots,
             "trees": r.trees,
             "blobs": r.blobs,

@@ -125,7 +125,9 @@ pub fn undo(repo: &Repo) -> Result<UndoOutcome> {
             let b = before
                 .head
                 .ok_or_else(|| refuse("update", "it was the first checkout of this workspace"))?;
-            Some((b, None, true))
+            // The working copy must still be what the update wrote: the new
+            // head, or the conflict tree of a pending merge.
+            Some((b, target.checked_out, true))
         }
         // A restore changed only files: from the backup (or the clean head)
         // to the restored snapshot.
@@ -157,6 +159,9 @@ pub fn undo(repo: &Repo) -> Result<UndoOutcome> {
                     description,
                     expected,
                     undoes: Some(target_id),
+                    // Restores the pending-merge state too (e.g. undoing a
+                    // conflicted update clears it).
+                    set_merge: Some(before.merge),
                 },
             )?;
             Ok(UndoOutcome {
@@ -186,6 +191,9 @@ pub fn undo(repo: &Repo) -> Result<UndoOutcome> {
             let mut view = op.view.clone();
             if let Some(w) = view.workspaces.get_mut(&ws_id) {
                 w.head = before.head;
+                // Undoing the save that completed a merge brings the pending
+                // merge back (its conflicts are already resolved on disk).
+                w.merge = before.merge;
             }
             let new_op = Operation {
                 parents: vec![op_id],

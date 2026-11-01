@@ -251,6 +251,7 @@ impl Repo {
                 name: DEFAULT_WORKSPACE.to_owned(),
                 branch: Some(DEFAULT_BRANCH.to_owned()),
                 head: None,
+                merge: None,
             },
         );
         let root_op = Operation {

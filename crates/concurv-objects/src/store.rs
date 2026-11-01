@@ -6,12 +6,12 @@ use std::path::{Path, PathBuf};
 
 use concurv_core::ids::is_lower_hex;
 use concurv_core::{
-    BlobId, ConcurvError, ErrorCode, ObjectId, OperationId, Result, SnapshotId, TreeId,
+    BlobId, ConcurvError, ConflictId, ErrorCode, ObjectId, OperationId, Result, SnapshotId, TreeId,
 };
 
 use crate::encoding::{
-    HEADER_LEN, MAX_STRUCTURED_PAYLOAD, ObjectHasher, ObjectKind, Operation, Snapshot, Tree,
-    decode_header, decode_object, encode_header, encode_object, hash_object,
+    Conflict, HEADER_LEN, MAX_STRUCTURED_PAYLOAD, ObjectHasher, ObjectKind, Operation, Snapshot,
+    Tree, decode_header, decode_object, encode_header, encode_object, hash_object,
 };
 use crate::fs::{Faults, TempFile, create_dir_durable, rename_durable};
 
@@ -343,6 +343,16 @@ impl ObjectStore {
     pub fn read_operation(&self, id: &OperationId) -> Result<Operation> {
         let p = self.read_object(&id.object_id(), ObjectKind::Operation)?;
         Operation::decode(&p).map_err(|e| ctx(e, &id.object_id()))
+    }
+    /// Store a conflict (pending merge, RFC 0004 §11).
+    pub fn write_conflict(&self, c: &Conflict) -> Result<ConflictId> {
+        self.write_object(ObjectKind::Conflict, &c.encode()?)
+            .map(ConflictId::from_object_id)
+    }
+    /// Load a verified conflict.
+    pub fn read_conflict(&self, id: &ConflictId) -> Result<Conflict> {
+        let p = self.read_object(&id.object_id(), ObjectKind::Conflict)?;
+        Conflict::decode(&p).map_err(|e| ctx(e, &id.object_id()))
     }
 
     // -------------------------------------------------------------- listing

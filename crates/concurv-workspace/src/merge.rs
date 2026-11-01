@@ -2,47 +2,12 @@
 //! within a file: a path changed differently on both sides is a conflict.
 
 use std::collections::BTreeSet;
-use std::fmt;
 
 use concurv_core::{RepoPath, Result};
 
 use crate::worktree::{FileState, FlatTree};
 
-/// Why a path could not be merged.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ConflictKind {
-    /// Changed differently on both sides.
-    BothModified,
-    /// Added on both sides with different content.
-    BothAdded,
-    /// Deleted on one side, changed on the other.
-    DeleteModify,
-    /// A file on one side is a directory on the other.
-    FileDirectory,
-}
-
-impl ConflictKind {
-    /// Stable lowercase name used in JSON.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::BothModified => "both_modified",
-            Self::BothAdded => "both_added",
-            Self::DeleteModify => "delete_modify",
-            Self::FileDirectory => "file_directory",
-        }
-    }
-}
-
-impl fmt::Display for ConflictKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::BothModified => "changed on both sides",
-            Self::BothAdded => "added on both sides with different content",
-            Self::DeleteModify => "deleted on one side, changed on the other",
-            Self::FileDirectory => "a file on one side, a directory on the other",
-        })
-    }
-}
+pub use concurv_objects::encoding::ConflictKind;
 
 /// One conflicting path.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -53,6 +18,16 @@ pub struct MergeConflict {
     pub kind: ConflictKind,
 }
 
+/// Result of a three-way merge: every path that merged cleanly, plus every
+/// conflict (sorted by path). Conflicted paths are absent from `merged`.
+#[derive(Debug)]
+pub struct PartialMerge {
+    /// Cleanly merged files.
+    pub merged: FlatTree,
+    /// Conflicts.
+    pub conflicts: Vec<MergeConflict>,
+}
+
 /// Merge `ours` and `theirs` relative to `base`. Returns the merged file map
 /// if there are no conflicts, otherwise every conflict, sorted by path.
 pub fn merge_flat(
@@ -60,6 +35,16 @@ pub fn merge_flat(
     ours: &FlatTree,
     theirs: &FlatTree,
 ) -> Result<std::result::Result<FlatTree, Vec<MergeConflict>>> {
+    let m = merge_partial(base, ours, theirs)?;
+    Ok(if m.conflicts.is_empty() {
+        Ok(m.merged)
+    } else {
+        Err(m.conflicts)
+    })
+}
+
+/// Merge, keeping both the clean part and the conflicts.
+pub fn merge_partial(base: &FlatTree, ours: &FlatTree, theirs: &FlatTree) -> Result<PartialMerge> {
     let paths: BTreeSet<&RepoPath> = base
         .keys()
         .chain(ours.keys())
@@ -110,12 +95,9 @@ pub fn merge_flat(
             }
         }
     }
-    if conflicts.is_empty() {
-        return Ok(Ok(merged));
-    }
     conflicts.sort();
     conflicts.dedup();
-    Ok(Err(conflicts))
+    Ok(PartialMerge { merged, conflicts })
 }
 
 #[cfg(test)]

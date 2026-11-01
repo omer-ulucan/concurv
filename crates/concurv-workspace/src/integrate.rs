@@ -1,10 +1,13 @@
 //! `concurv publish` and `concurv update` (RFC 0004 §6, §7).
 
-use concurv_core::{ChangeId, ConcurvError, ErrorCode, OperationId, Result, SnapshotId};
-use concurv_objects::{Operation, Snapshot};
+use concurv_core::{
+    ChangeId, ConcurvError, ConflictId, ErrorCode, OperationId, Result, SnapshotId,
+};
+use concurv_objects::{Conflict, ConflictEntry, Operation, Snapshot};
 
+use crate::conflicts::{Labels, build_worktree};
 use crate::graph::{MergeBase, is_ancestor, merge_base};
-use crate::merge::{MergeConflict, merge_flat};
+use crate::merge::{MergeConflict, merge_partial};
 use crate::repo::Repo;
 use crate::restore::{Checkout, checkout};
 use crate::worktree::{FlatTree, write_trees};
@@ -95,6 +98,9 @@ pub enum UpdateKind {
     FastForward,
     /// A merge snapshot of the workspace head and branch head was created.
     Merged,
+    /// The merge has conflicts; they were written into the working copy and
+    /// recorded as a pending merge (`--allow-conflicts`, RFC 0004 §11).
+    Conflicted,
 }
 
 impl UpdateKind {
@@ -104,8 +110,16 @@ impl UpdateKind {
             Self::UpToDate => "up_to_date",
             Self::FastForward => "fast_forward",
             Self::Merged => "merged",
+            Self::Conflicted => "conflicted",
         }
     }
+}
+
+/// Options for `update`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UpdateOptions {
+    /// Record conflicts as a pending merge instead of refusing.
+    pub allow_conflicts: bool,
 }
 
 /// Result of `update`.
@@ -123,6 +137,8 @@ pub struct UpdateOutcome {
     pub deleted: usize,
     /// Operation recorded, if any.
     pub operation: Option<OperationId>,
+    /// For [`UpdateKind::Conflicted`]: the pending merge and its conflicts.
+    pub conflict: Option<(ConflictId, Vec<ConflictEntry>)>,
 }
 
 /// Error for a refused merge, listing every conflicting path.
@@ -135,9 +151,8 @@ fn conflict_error(branch: &str, conflicts: &[MergeConflict]) -> ConcurvError {
         ErrorCode::Conflict,
         format!(
             "cannot merge `{branch}` into this workspace: {} conflicting path(s); nothing was modified.\n{}\n\
-             concurv cannot resolve same-file conflicts yet (planned: RFC 0004 slice 2c). Until then: \
-             create a fresh workspace from `{branch}` (`concurv workspace add <dir>`), re-apply your \
-             change to those files there, then save and publish. This workspace's snapshots stay in history",
+             To resolve them: `concurv update --allow-conflicts` writes the conflicts into the working \
+             copy for editing (see the `*.concurv-conflict` files), then `concurv save`",
             conflicts.len(),
             list.join("\n")
         ),
@@ -145,10 +160,23 @@ fn conflict_error(branch: &str, conflicts: &[MergeConflict]) -> ConcurvError {
 }
 
 /// Bring the branch head into this workspace (fast-forward or file-level
-/// merge). Requires a clean working copy; never publishes.
+/// merge). Requires a clean working copy; never publishes. Conflicts are
+/// refused; see [`update_with`].
 pub fn update(repo: &Repo) -> Result<UpdateOutcome> {
+    update_with(repo, UpdateOptions::default())
+}
+
+/// [`update`] with options.
+pub fn update_with(repo: &Repo, opts: UpdateOptions) -> Result<UpdateOutcome> {
     let ws_lock = repo.workspace_lock()?;
     let (_, op, ws) = repo.current()?;
+    if ws.merge.is_some() {
+        return Err(ConcurvError::new(
+            ErrorCode::Conflict,
+            "a merge is already in progress in this workspace: resolve the conflicts and \
+             `concurv save`, or `concurv update --abort`",
+        ));
+    }
     let branch = workspace_branch(ws.branch.clone())?;
     let main = op.view.branches.get(&branch).copied();
     let up_to_date = |kind| UpdateOutcome {
@@ -158,6 +186,7 @@ pub fn update(repo: &Repo) -> Result<UpdateOutcome> {
         written: 0,
         deleted: 0,
         operation: None,
+        conflict: None,
     };
     let Some(m) = main else {
         return Ok(up_to_date(UpdateKind::UpToDate));
@@ -172,6 +201,9 @@ pub fn update(repo: &Repo) -> Result<UpdateOutcome> {
         None => true,
         Some(w) => is_ancestor(repo.store(), w, m)?,
     };
+    let mut set_head = true;
+    let mut set_merge = None;
+    let mut conflict = None;
     let (target, kind, description) = if fast_forward {
         (
             m,
@@ -182,22 +214,76 @@ pub fn update(repo: &Repo) -> Result<UpdateOutcome> {
         let w = ws
             .head
             .ok_or_else(|| ConcurvError::internal("diverged without a head"))?;
-        let merged = merged_files(repo, w, m, &branch)?;
+        let (base_id, base_files) = merge_base_files(repo, w, m, &branch)?;
+        let ours = repo.snapshot_files(&w)?;
+        let theirs = repo.snapshot_files(&m)?;
+        let partial = merge_partial(&base_files, &ours, &theirs)?;
         let writer = repo.store_writer()?;
-        let tree = write_trees(writer.store(), &merged)?;
-        let snap = writer.store().write_snapshot(&Snapshot {
-            tree,
-            parents: vec![w, m],
-            change_id: ChangeId::generate()?,
-            timestamp_ms: repo.now_ms(),
-            author: repo.author(),
-            message: format!("merge {branch} into workspace {}", ws.name),
-        })?;
-        (
-            snap,
-            UpdateKind::Merged,
-            format!("update: merge {branch} {m} into {w} as {snap}"),
-        )
+        if partial.conflicts.is_empty() {
+            let tree = write_trees(writer.store(), &partial.merged)?;
+            let snap = writer.store().write_snapshot(&Snapshot {
+                tree,
+                parents: vec![w, m],
+                change_id: ChangeId::generate()?,
+                timestamp_ms: repo.now_ms(),
+                author: repo.author(),
+                message: format!("merge {branch} into workspace {}", ws.name),
+            })?;
+            (
+                snap,
+                UpdateKind::Merged,
+                format!("update: merge {branch} {m} into {w} as {snap}"),
+            )
+        } else if !opts.allow_conflicts {
+            return Err(conflict_error(&branch, &partial.conflicts));
+        } else {
+            let labels = Labels {
+                workspace: &ws.name,
+                branch: &branch,
+                ours: w,
+                theirs: m,
+                base: base_id,
+            };
+            let (files, entries) = build_worktree(
+                writer.store(),
+                &partial.merged,
+                &base_files,
+                &ours,
+                &theirs,
+                &partial.conflicts,
+                &labels,
+            )?;
+            let tree = write_trees(writer.store(), &files)?;
+            let worktree = writer.store().write_snapshot(&Snapshot {
+                tree,
+                parents: vec![w, m],
+                change_id: ChangeId::generate()?,
+                timestamp_ms: repo.now_ms(),
+                author: repo.author(),
+                message: format!(
+                    "unresolved merge of {branch} into workspace {} (working copy for resolution)",
+                    ws.name
+                ),
+            })?;
+            let cid = writer.store().write_conflict(&Conflict {
+                ours: w,
+                theirs: m,
+                base: base_id,
+                worktree,
+                entries: entries.clone(),
+            })?;
+            set_head = false;
+            set_merge = Some(Some(cid));
+            conflict = Some((cid, entries));
+            (
+                worktree,
+                UpdateKind::Conflicted,
+                format!(
+                    "update: merge {branch} {m} into {w} with {} conflict(s), pending as {cid}",
+                    partial.conflicts.len()
+                ),
+            )
+        }
     };
     let out = checkout(
         repo,
@@ -205,30 +291,37 @@ pub fn update(repo: &Repo) -> Result<UpdateOutcome> {
         target,
         Checkout {
             force: false,
-            set_head: true,
+            set_head,
             kind: "update",
             description,
             expected: None,
             undoes: None,
+            set_merge,
         },
     )?;
     Ok(UpdateOutcome {
         branch,
         kind,
-        head: Some(target),
+        head: if set_head { Some(target) } else { ws.head },
         written: out.written,
         deleted: out.deleted,
         operation: Some(out.operation),
+        conflict,
     })
 }
 
-fn merged_files(repo: &Repo, w: SnapshotId, m: SnapshotId, branch: &str) -> Result<FlatTree> {
-    let base_files = match merge_base(repo.store(), w, m)? {
-        MergeBase::None => FlatTree::new(),
-        MergeBase::One(b) => repo.snapshot_files(&b)?,
+fn merge_base_files(
+    repo: &Repo,
+    w: SnapshotId,
+    m: SnapshotId,
+    branch: &str,
+) -> Result<(Option<SnapshotId>, FlatTree)> {
+    match merge_base(repo.store(), w, m)? {
+        MergeBase::None => Ok((None, FlatTree::new())),
+        MergeBase::One(b) => Ok((Some(b), repo.snapshot_files(&b)?)),
         MergeBase::Ambiguous(bases) => {
             let ids: Vec<String> = bases.iter().map(|b| b.to_hex()).collect();
-            return Err(ConcurvError::new(
+            Err(ConcurvError::new(
                 ErrorCode::Conflict,
                 format!(
                     "cannot merge `{branch}`: the histories have {} equally good merge bases ({}), \
@@ -236,10 +329,7 @@ fn merged_files(repo: &Repo, w: SnapshotId, m: SnapshotId, branch: &str) -> Resu
                     ids.len(),
                     ids.join(", ")
                 ),
-            ));
+            ))
         }
-    };
-    let ours = repo.snapshot_files(&w)?;
-    let theirs = repo.snapshot_files(&m)?;
-    merge_flat(&base_files, &ours, &theirs)?.map_err(|c| conflict_error(branch, &c))
+    }
 }

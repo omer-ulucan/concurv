@@ -116,6 +116,7 @@ pub fn restore(repo: &Repo, target: SnapshotId, opts: RestoreOptions) -> Result<
             description: format!("restore working copy to {target}"),
             expected: None,
             undoes: None,
+            set_merge: None,
         },
     )
 }
@@ -132,6 +133,9 @@ pub(crate) struct Checkout {
     pub description: String,
     /// Snapshot the working copy must currently equal (default: the head).
     pub expected: Option<SnapshotId>,
+    /// Set this workspace's pending merge in the same operation (`Some(None)`
+    /// clears it).
+    pub set_merge: Option<Option<concurv_core::ConflictId>>,
     /// For an `undo`: the operation being reversed.
     pub undoes: Option<OperationId>,
 }
@@ -188,7 +192,13 @@ pub(crate) fn checkout(
         }
         let writer = repo.store_writer()?;
         let msg = format!("backup of working copy before restoring {target}");
-        let (stored, b) = store_working_copy(repo, writer.store(), ws.head, &head_files, &msg)?;
+        let (stored, b) = store_working_copy(
+            repo,
+            writer.store(),
+            ws.head.into_iter().collect(),
+            &head_files,
+            &msg,
+        )?;
         if stored != working {
             return Err(ConcurvError::new(
                 ErrorCode::ConcurrentModification,
@@ -233,6 +243,11 @@ pub(crate) fn checkout(
         && let Some(w) = view.workspaces.get_mut(&repo.workspace_id())
     {
         w.head = Some(target);
+    }
+    if let Some(m) = how.set_merge
+        && let Some(w) = view.workspaces.get_mut(&repo.workspace_id())
+    {
+        w.merge = m;
     }
     let new_op = Operation {
         parents: vec![op_id],

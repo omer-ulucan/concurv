@@ -4,6 +4,7 @@
 use concurv_core::{ChangeId, ConcurvError, ErrorCode, OperationId, Result, SnapshotId};
 use concurv_objects::{ObjectStore, Operation, Snapshot};
 
+use crate::conflicts::{ConflictStatus, conflict_status, unresolved_error};
 use crate::repo::Repo;
 use crate::status::{Change, diff_flat};
 use crate::worktree::{FlatTree, ScanMode, scan, write_trees};
@@ -25,7 +26,7 @@ pub struct SaveOutcome {
 pub(crate) fn store_working_copy(
     repo: &Repo,
     store: &ObjectStore,
-    parent: Option<SnapshotId>,
+    parents: Vec<SnapshotId>,
     head_files: &FlatTree,
     message: &str,
 ) -> Result<(FlatTree, SnapshotId)> {
@@ -33,7 +34,7 @@ pub(crate) fn store_working_copy(
     let tree = write_trees(store, &working)?;
     let snap = Snapshot {
         tree,
-        parents: parent.into_iter().collect(),
+        parents,
         change_id: ChangeId::generate()?,
         timestamp_ms: repo.now_ms(),
         author: repo.author(),
@@ -55,11 +56,32 @@ pub fn save(repo: &Repo, message: &str) -> Result<SaveOutcome> {
     let (_, _, ws) = repo.current()?;
     let head_files = repo.head_files(ws.head.as_ref())?;
 
+    // A pending merge (RFC 0004 §11) completes with this save, but only once
+    // every conflict is resolved; the snapshot then gets both parents.
+    let parents = match ws.merge {
+        Some(cid) => {
+            let conflict = repo.store().read_conflict(&cid)?;
+            let status = conflict_status(repo, &conflict)?;
+            let unresolved: Vec<&ConflictStatus> =
+                status.iter().filter(|s| !s.resolved()).collect();
+            if !unresolved.is_empty() {
+                return Err(unresolved_error(&unresolved));
+            }
+            if ws.head != Some(conflict.ours) {
+                return Err(ConcurvError::internal(
+                    "pending merge does not start from the workspace head",
+                ));
+            }
+            vec![conflict.ours, conflict.theirs]
+        }
+        None => ws.head.into_iter().collect(),
+    };
+
     // Lock-free phase: other workspaces may commit meanwhile.
     let writer = repo.store_writer()?;
-    let (working, snap) = store_working_copy(repo, writer.store(), ws.head, &head_files, message)?;
+    let (working, snap) = store_working_copy(repo, writer.store(), parents, &head_files, message)?;
     let changes = diff_flat(&head_files, &working);
-    if changes.is_empty() && ws.head.is_some() {
+    if changes.is_empty() && ws.head.is_some() && ws.merge.is_none() {
         // The snapshot object is unreferenced and harmless; no operation recorded.
         return Ok(SaveOutcome {
             snapshot: None,
@@ -71,7 +93,7 @@ pub fn save(repo: &Repo, message: &str) -> Result<SaveOutcome> {
     // Commit phase: apply the change to the *current* view.
     let lock = repo.lock()?;
     let (op_id, op, current_ws) = repo.current()?;
-    if current_ws.head != ws.head {
+    if current_ws.head != ws.head || current_ws.merge != ws.merge {
         return Err(ConcurvError::new(
             ErrorCode::StaleHead,
             "this workspace's head changed while saving; nothing was recorded, retry",
@@ -80,6 +102,7 @@ pub fn save(repo: &Repo, message: &str) -> Result<SaveOutcome> {
     let mut view = op.view.clone();
     if let Some(w) = view.workspaces.get_mut(&repo.workspace_id()) {
         w.head = Some(snap);
+        w.merge = None;
     }
     let first_line = message.lines().next().unwrap_or("").trim();
     let new_op = Operation {
