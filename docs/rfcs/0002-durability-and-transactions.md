@@ -91,10 +91,11 @@ Restore modifies user files, which cannot be made atomic as a set. Protocol:
    hash is re-checked against the scan; a mismatch aborts with
    `ARC_CONCURRENT_MODIFICATION` (narrows, but cannot eliminate, the
    TOCTOU window against other processes).
-6. Commit an operation `restore` (records target and backup) via 3.2.
-7. Remove `restore-in-progress`.
+6. Re-scan the working copy and require it to equal the target exactly.
+7. Commit an operation `restore` (records target and backup) via 3.2.
+8. Remove `restore-in-progress`.
 
-If interrupted between 4 and 7, `arc status` reports the interrupted restore
+If interrupted between 4 and 8, `arc status` reports the interrupted restore
 and its backup id; re-running `arc restore --snapshot <target>` completes it
 (the backup snapshot already preserves the pre-restore state).
 
@@ -125,9 +126,16 @@ repositories.
 
 Every step above passes through a named failpoint (`FaultPoint` enum in
 `arc-objects::fs`): `TmpCreate`, `TmpWrite`, `TmpSync`, `DirCreate`,
-`Rename`, `DirSync`, `OpHeadWrite`, `OpHeadRename`. Tests configure "fail the
-N-th hit of point P" and also a *torn write* mode that writes half the bytes
-before failing. The test suite iterates every point and every N reached by a
+`Rename`, `DirSync`. The op-head update uses the same primitives, so its
+write/sync/rename are covered by the same points (counted per hit). Tests
+configure "fail the N-th hit of point P" and also a *torn write* mode that
+writes half the bytes before failing. Once a fault fires, every later
+failpoint also fails (the "process" is dead), and temp files are left behind
+as crash debris.
+
+Note: a failure *after* the commit-point rename (the final directory fsync)
+is reported as an error although the new state is already visible. This is
+allowed by §1 ("either the previous or the new state"). The test suite iterates every point and every N reached by a
 real `save`, then reopens the repository and checks the invariants of §1.
 This is deterministic fault injection of the *software* failure path; it is
 **not** a power-loss test and cannot detect flush-ignoring hardware.
