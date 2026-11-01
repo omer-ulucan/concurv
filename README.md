@@ -1,12 +1,15 @@
 # concurv
 
+[![ci](https://github.com/omer-ulucan/concurv/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/omer-ulucan/concurv/actions/workflows/ci.yml)
+
 **concurv** stands for *concurrent, agent-native version control*: a local-first
 VCS in Rust. The goal is for humans and AI agents on different machines to
 contribute to one shared branch without ever silently losing acknowledged work
 (see `docs/ARC_Research_and_Roadmap_2026.md`; "ARC" was the project's earlier
 working name).
 
-**Current state: R1 local kernel.** One workspace on one machine. There is no
+**Current state: R1 local kernel, gate passed** (tested on Linux, macOS and
+Windows in CI; see `docs/ROADMAP_STATUS.md`). One workspace on one machine. There is no
 sync, merge, undo, multiple-workspace support or Git bridge yet. Trademark and
 package-name availability for `concurv` have not been checked.
 
