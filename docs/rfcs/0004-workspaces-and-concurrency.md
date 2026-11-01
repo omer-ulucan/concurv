@@ -222,10 +222,9 @@ files can still break the program together. The intended workflow is
 R2 gate (roadmap §9): 2, 5 and 10 simultaneous local writers preserve all
 acknowledged changes, even during retries, forced termination and conflicting
 target head updates; reopening after a crash succeeds without manual object
-surgery. Slice 2a provides the tests for this gate. All four slices are
-implemented and the gate passed on 2026-11-01 (evidence in
-`docs/ROADMAP_STATUS.md`). Before that, the stage was marked passed
-only when the remaining slices also pass their tests.
+surgery. Slice 2a provides the tests for this gate; the stage counts as passed
+only once all four slices pass their tests. That happened on 2026-11-01
+(evidence in `docs/ROADMAP_STATUS.md`).
 
 ## 10. Workspace-scoped undo (slice 2b)
 
