@@ -46,6 +46,7 @@ $ concurv status                     # what changed since the head?
 $ concurv diff                       # line-level diff of text files
 $ concurv save -m "Add parser"       # record a snapshot
 $ concurv log                        # history, newest first (-n 10 to limit)
+$ concurv op log                     # every init/save/restore, including backups
 ```
 
 Details that matter:
@@ -93,14 +94,33 @@ With `--force`, concurv first saves your current working copy, unsaved edits
 included, as a **backup snapshot**, and only then overwrites files. To get your
 work back, restore the backup id.
 
-> **Write down the backup id.** It is printed (and returned as `data.backup`
-> with `--json`) and is permanently recorded in the operation log. However,
-> R1 has **no command that lists the operation log**, and backups don't appear
-> in `concurv log`. If you lose the printed id you can't currently find the
-> backup through the CLI, even though the data is still stored. A
-> `concurv op log` command is planned.
+Backups don't appear in `concurv log`, because they aren't part of the branch
+history. If you lost the printed id, find it in the operation log:
 
-## 5. Checking integrity
+```console
+$ concurv op log -n 5
+operation 7c1e… (restore)
+Date:   2026-11-01 14:02:11 UTC
+    restore working copy to 1a2b3c4d…
+    head after: 5d6e…
+    backup of discarded working copy: 9f8e7d6c…
+    (recover with `concurv restore --snapshot 9f8e7d6c… --force`)
+```
+
+## 5. The operation log
+
+`concurv op log` lists every repository operation, newest first: `init`,
+`save` and `restore`. Each entry shows its time and description, the head
+snapshot after it ran and, for `restore --force`, the backup snapshot of the
+work it replaced. `-n N` limits the output, and `--json` gives the full
+record, including parent operations and branch heads. The command is
+read-only.
+
+The operation log is separate from snapshot history (`concurv log`): a
+`restore` adds an operation but no snapshot. Every backup stays recorded there
+permanently. Nothing is ever garbage-collected in R1.
+
+## 6. Checking integrity
 
 ```console
 $ concurv verify          # everything reachable from history
@@ -110,7 +130,7 @@ $ concurv verify --full   # additionally every object file, including unreferenc
 `verify` never modifies anything. Exit 0 means intact, 30 means a corrupt object,
 and 31 means a missing object. Each problem lists the object id and reason.
 
-## 6. Troubleshooting and recovery
+## 7. Troubleshooting and recovery
 
 | Symptom | What it means | What to do |
 |---|---|---|
@@ -143,7 +163,7 @@ Copy the entire project directory while no `save` or `restore` is running.
 Objects are immutable and the head is a single small file, so a copy taken
 between commands is consistent.
 
-## 7. Scripting and agents
+## 8. Scripting and agents
 
 Add `--json` to any command for one machine-readable JSON document on stdout,
 with `concurv_json_version`, `ok`, `data` and, on failure, `error.code`. Branch
@@ -151,7 +171,7 @@ on the exit code or `error.code`, never on human text. The schema and the
 full error/exit-code table are in `docs/cli.md`. `-C <dir>` runs a command as
 if started in `<dir>`.
 
-## 8. Platform notes
+## 9. Platform notes
 
 | | Linux | macOS | Windows |
 |---|---|---|---|

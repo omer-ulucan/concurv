@@ -11,13 +11,15 @@ Only the commands below exist. Anything else is a usage error (exit 2).
 | `concurv log [-n N]` | first-parent snapshot history of the head | no |
 | `concurv restore --snapshot <id> [--force]` | make working files equal to the snapshot; history unchanged | working copy (+ backup snapshot, operation) |
 | `concurv verify [--full]` | integrity check of reachable graph (`--full`: every object file) | no |
+| `concurv op log [-n N]` | operation log, newest first: init/save/restore with backups | no |
 
 Global flags: `--json`, `-C <dir>`. Author comes from `CONCURV_AUTHOR`, else the OS
 user name (`USER`/`USERNAME`), else `unknown`.
 
 `restore` refuses a dirty working copy (exit 20). With `--force` it first
 saves the working copy as a backup snapshot (printed, and recorded in the
-operation log); recover with `concurv restore --snapshot <backup> --force`.
+operation log, listed by `concurv op log`); recover with
+`concurv restore --snapshot <backup> --force`.
 
 ## JSON envelope (`concurv_json_version` 1)
 
@@ -42,6 +44,7 @@ of a field requires bumping `concurv_json_version`.
 - `log`: `snapshots[]` (`snapshot`, `parents[]`, `tree`, `change_id`, `author`, `timestamp_ms`, `message`)
 - `restore`: `target`, `backup`, `written`, `deleted`, `operation`
 - `verify`: `full`, `operations`, `snapshots`, `trees`, `blobs`, `unreachable`, `problems[]` (`code`, `subject`, `message`), `notes[]`
+- `op log` (`"command": "op log"`): `operations[]` (`operation`, `parents[]`, `kind` ∈ `init|save|restore`, `description`, `timestamp_ms`, `device`, `workspace` (null for `init`), `backup` (null unless `restore --force` replaced unsaved work), `head` (this workspace's head after the operation, or null), `branches` (object: name → snapshot id))
 
 ## Error codes and exit codes
 
