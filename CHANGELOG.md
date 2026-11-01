@@ -5,6 +5,15 @@ version 1 is not frozen until the first release (see ADR 0003).
 
 ## [Unreleased]
 
+### Added
+- `concurv op log [-n N]` lists the operation log (init/save/restore), newest
+  first, with the head after each operation and any backup snapshot recorded
+  by `restore --force`. A lost backup id can now be found again.
+
+### Fixed
+- Code now passes the Clippy lints added in Rust 1.99 (`as_chunks` for hex
+  decoding, a byte-string literal in a test). No behaviour change.
+
 ### Changed
 - **Project renamed from ARC to concurv** (ADR 0003). Binary `arc` → `concurv`,
   crates `arc-*` → `concurv-*`, metadata directory `.arc/` → `.concurv/`,
@@ -33,8 +42,6 @@ version 1 is not frozen until the first release (see ADR 0003).
   every durable-write boundary, and restore-safety and CLI smoke tests.
 
 ### Known gaps
-- No command lists the operation log, so backup ids are only visible in
-  `restore` output.
 - No ignore file, stat cache, GC, rename detection, multiple workspaces, undo,
   merge, sync or Git bridge.
 - Tested on Windows only; the Linux and macOS runs are outstanding.

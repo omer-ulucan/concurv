@@ -26,6 +26,7 @@ $ concurv log
 $ echo unsaved > notes.txt
 $ concurv restore --snapshot <first-id-prefix>          # refused (exit 20); nothing touched
 $ concurv restore --snapshot <first-id-prefix> --force  # saves a backup snapshot, then restores
+$ concurv op log                 # every operation, including backup snapshots
 $ concurv verify --full          # hash-checks every object
 $ concurv --json status          # machine-readable output
 ```
@@ -44,8 +45,8 @@ Full walkthrough and recovery procedures: **`docs/user-guide.md`**.
   never accepted. `restore` verifies the whole target before touching any file.
 - Rejected rather than silently skipped: symlinks and junctions on Windows,
   non-UTF-8 file names, FIFOs and devices.
-- Not implemented yet: ignore files, rename detection, garbage collection, a
-  stat cache (every `status` reads all files), or listing the operation log.
+- Not implemented yet: ignore files, rename detection, garbage collection
+  or a stat cache (every `status` reads all files).
 - Don't keep repositories in cloud-synced folders (OneDrive, Dropbox).
 
 ## Build and test

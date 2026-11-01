@@ -32,3 +32,16 @@ pub fn log(repo: &Repo, limit: usize) -> Result<Vec<(SnapshotId, Snapshot)>> {
     }
     Ok(out)
 }
+
+/// First-parent operation history from the op head, newest first. Includes
+/// `init`, `save` and `restore` operations and the backup snapshots recorded
+/// by `restore --force`. Every operation is hash-verified as it is read.
+pub fn op_log(
+    repo: &Repo,
+    limit: usize,
+) -> Result<Vec<(concurv_core::OperationId, concurv_objects::Operation)>> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    repo.oplog().walk(limit)
+}
