@@ -376,20 +376,18 @@ fn unix_fifo_is_rejected() {
 fn unix_non_utf8_names_are_rejected() {
     use std::os::unix::ffi::OsStrExt;
     let (d, repo) = new_repo();
+    let macos = std::env::consts::OS == "macos";
     let bad = std::ffi::OsStr::from_bytes(b"bad\xffname");
     match fs::write(d.path().join(bad), b"x") {
         Ok(()) => {
-            assert!(
-                !cfg!(target_os = "macos"),
-                "macOS unexpectedly allowed a non-UTF-8 name"
-            );
+            assert!(!macos, "macOS unexpectedly allowed a non-UTF-8 name");
             assert_eq!(save(&repo, "s").unwrap_err().code, ErrorCode::InvalidPath);
             assert!(repo.head_snapshot().unwrap().is_none());
         }
         Err(e) => {
             const EILSEQ_MACOS: i32 = 92;
             assert!(
-                cfg!(target_os = "macos") && e.raw_os_error() == Some(EILSEQ_MACOS),
+                macos && e.raw_os_error() == Some(EILSEQ_MACOS),
                 "unexpected error creating a non-UTF-8 name: {e}"
             );
         }
