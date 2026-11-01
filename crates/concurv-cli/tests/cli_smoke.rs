@@ -529,3 +529,70 @@ fn git_export_and_import() {
     assert_eq!(code, 2, "not a Git repository");
     assert_eq!(cv_json(&b, &["verify", "--full"]).0, 0);
 }
+
+/// R1.5: `check-ignore` JSON contract.
+#[test]
+fn check_ignore_command() {
+    let d = tempfile::tempdir().unwrap();
+    let w = d.path();
+    cv_ok(w, &["init"]);
+    fs::write(w.join(".gitignore"), "*.log\n!keep.log\nbuild/\nbad[x\n").unwrap();
+    fs::create_dir(w.join("build")).unwrap();
+    fs::create_dir(w.join("src")).unwrap();
+    let (code, v) = cv_json(
+        w,
+        &[
+            "check-ignore",
+            "debug.log",
+            "keep.log",
+            "build/out.o",
+            "src/",
+        ],
+    );
+    assert_eq!(
+        (code, v["command"].as_str()),
+        (0, Some("check-ignore")),
+        "{v}"
+    );
+    let p = &v["data"]["paths"];
+    assert_eq!(p[0]["ignored"], true);
+    assert_eq!(p[0]["rule"]["pattern"], "*.log");
+    assert_eq!(p[0]["rule"]["source"], ".gitignore");
+    assert_eq!(
+        (p[1]["ignored"].as_bool(), p[1]["rule"]["negated"].as_bool()),
+        (Some(false), Some(true))
+    );
+    assert_eq!(p[2]["excluded_parent"], "build");
+    assert_eq!(
+        (p[3]["ignored"].as_bool(), p[3]["is_dir"].as_bool()),
+        (Some(false), Some(true))
+    );
+    assert_eq!(v["data"]["unusable_patterns"][0]["line"], 4);
+    // Relative to a subdirectory, and outside the workspace.
+    let (code, v) = cv_json(&w.join("src"), &["check-ignore", "../debug.log"]);
+    assert_eq!(
+        (code, v["data"]["paths"][0]["path"].as_str()),
+        (0, Some("debug.log"))
+    );
+    let other = tempfile::tempdir().unwrap();
+    let outside = other.path().join("x.log");
+    let (code, _) = cv_json(w, &["check-ignore", outside.to_str().unwrap()]);
+    assert_eq!(code, 2);
+    // Human output names the rule.
+    let human = cv_ok(w, &["check-ignore", "debug.log"]);
+    assert!(
+        human.contains("ignored") && human.contains("*.log"),
+        "{human}"
+    );
+    // Ignored files are not saved.
+    fs::write(w.join("debug.log"), "x").unwrap();
+    fs::write(w.join("main.rs"), "x").unwrap();
+    let (_, v) = cv_json(w, &["status"]);
+    let paths: Vec<_> = v["data"]["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["path"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(paths, [".gitignore", "main.rs"]);
+}

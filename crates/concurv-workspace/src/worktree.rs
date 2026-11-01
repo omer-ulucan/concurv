@@ -1,7 +1,7 @@
 //! Working-copy scanning and conversion between on-disk files, flat path
 //! maps and stored trees.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File};
 use std::io;
 use std::path::Path;
@@ -10,6 +10,8 @@ use concurv_core::path::{METADATA_DIR, PlatformRules};
 use concurv_core::{BlobId, ConcurvError, ErrorCode, RepoPath, Result, TreeId};
 use concurv_objects::encoding::blob_id;
 use concurv_objects::{EntryKind, ObjectStore, Tree, TreeEntry, hash_blob_stream};
+
+use crate::ignore::IgnoreRules;
 
 /// Maximum directory nesting accepted from a stored tree.
 pub const MAX_TREE_DEPTH: usize = 512;
@@ -35,27 +37,75 @@ pub enum ScanMode<'a> {
     Store(&'a ObjectStore),
 }
 
-/// True for directory entries concurv never versions: `.concurv` at any level
-/// (case-insensitive) and concurv's own init staging directories at the root.
+/// True for directory entries concurv never versions: `.concurv` and `.git`
+/// at any level (case-insensitive), and concurv's own init staging
+/// directories at the root. `.git` is skipped like Git skips it: a workspace
+/// that is also a Git working tree must never capture Git's internals.
 pub fn is_ignored(rel: &RepoPath, name: &str) -> bool {
-    name.eq_ignore_ascii_case(METADATA_DIR) || (rel.is_root() && name.starts_with(".concurv-init-"))
+    name.eq_ignore_ascii_case(METADATA_DIR)
+        || name.eq_ignore_ascii_case(".git")
+        || (rel.is_root() && name.starts_with(".concurv-init-"))
 }
 
-/// Scan the working copy under `root`. `head` supplies executable bits on
-/// platforms without them (Windows).
+/// True if `dir` is the root of a nested repository or workspace (it holds
+/// `.git` or `.concurv`). Untracked nested repositories are not scanned, as
+/// in Git: their files belong to that repository.
+fn is_nested_repository(dir: &Path) -> bool {
+    [".git", METADATA_DIR]
+        .iter()
+        .any(|m| fs::symlink_metadata(dir.join(m)).is_ok())
+}
+
+/// Scan the working copy under `root`.
+///
+/// `head` is the set of **tracked** paths (the workspace head): tracked paths
+/// are always scanned, even if an ignore rule matches them. Untracked paths
+/// are skipped when `.gitignore` / `.concurv/exclude` rules exclude them
+/// (see [`crate::ignore`]); an excluded directory is not entered unless it
+/// contains tracked files, and untracked files inside it stay excluded.
+/// `head` also supplies executable bits on platforms without them (Windows).
 pub fn scan(root: &Path, mode: ScanMode<'_>, head: &FlatTree) -> Result<FlatTree> {
     let mut out = FlatTree::new();
-    scan_dir(root, &RepoPath::root(), mode, head, &mut out)?;
+    let mut ctx = ScanCtx {
+        root,
+        mode,
+        head,
+        tracked_dirs: tracked_dirs(head),
+        rules: IgnoreRules::load(root)?,
+    };
+    scan_dir(&mut ctx, &RepoPath::root(), false, &mut out)?;
     Ok(out)
 }
 
+/// Every directory that contains a tracked path.
+fn tracked_dirs(head: &FlatTree) -> HashSet<RepoPath> {
+    let mut dirs = HashSet::new();
+    for path in head.keys() {
+        let comps = path.components();
+        for depth in 1..comps.len() {
+            if let Ok(p) = RepoPath::parse(&comps[..depth].join("/")) {
+                dirs.insert(p);
+            }
+        }
+    }
+    dirs
+}
+
+struct ScanCtx<'a> {
+    root: &'a Path,
+    mode: ScanMode<'a>,
+    head: &'a FlatTree,
+    tracked_dirs: HashSet<RepoPath>,
+    rules: IgnoreRules,
+}
+
 fn scan_dir(
-    root: &Path,
+    ctx: &mut ScanCtx<'_>,
     rel: &RepoPath,
-    mode: ScanMode<'_>,
-    head: &FlatTree,
+    parent_excluded: bool,
     out: &mut FlatTree,
 ) -> Result<()> {
+    let (root, mode, head) = (ctx.root, ctx.mode, ctx.head);
     let dir = rel.to_native(root);
     let rd = fs::read_dir(&dir).map_err(|e| ConcurvError::io(e, "read directory", &dir))?;
     let mut entries = Vec::new();
@@ -91,9 +141,28 @@ fn scan_dir(
             )
         })?;
         let native = path.to_native(root);
+        // Decide ignore status before the strict type check, so an ignored
+        // FIFO/socket/device is skipped instead of failing the scan.
+        let is_dir = match fs::symlink_metadata(&native) {
+            Ok(m) => m.is_dir(),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(ConcurvError::io(e, "inspect", &native)),
+        };
+        let tracked = if is_dir {
+            ctx.tracked_dirs.contains(&path)
+        } else {
+            head.contains_key(&path)
+        };
+        let excluded = parent_excluded || ctx.rules.verdict(&path, is_dir)?.is_ignored();
+        if excluded && !tracked {
+            continue;
+        }
+        if is_dir && !tracked && is_nested_repository(&native) {
+            continue;
+        }
         match stat_path(&native)? {
             Present::Missing => {} // deleted while scanning; not versioned
-            Present::Dir => scan_dir(root, &path, mode, head, out)?,
+            Present::Dir => scan_dir(ctx, &path, excluded, out)?,
             Present::File { len, exec } => {
                 let kind = file_kind(exec, head.get(&path));
                 let blob = read_file_blob(&native, len, mode)?;

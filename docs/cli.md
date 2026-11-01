@@ -16,6 +16,7 @@ Every command runs in the workspace containing the current directory (or `-C`).
 | `concurv undo` | reverse this workspace's most recent operation (`save`, `update`, `restore`); repeat to go further back. Refuses `publish` | workspace head and/or working copy |
 | `concurv log [-n N]` | first-parent snapshot history of this workspace's head | no |
 | `concurv restore --snapshot <id> [--force]` | make working files equal to the snapshot; history unchanged | working copy (+ backup snapshot, operation) |
+| `concurv check-ignore <path>…` | explain whether each path is ignored (`.gitignore`, `.concurv/exclude`) or tracked, and by which rule; reports unusable patterns | no |
 | `concurv verify [--full]` | integrity check of reachable graph (`--full`: every object file) | no |
 | `concurv op log [-n N]` | operation log of all workspaces, newest first, with backups | no |
 | `concurv git export <repo> [--branch B]` | write `main`'s history into a Git repository and move Git branch `B` (default `main`) by compare-and-swap. Requires `git` on PATH | the Git repository |
@@ -65,6 +66,7 @@ changes behaviour, not the JSON shape.)
 - `workspace list`: `workspaces[]` (`id`, `name`, `branch`, `head`, `root` (null if unknown on this device), `primary`, `current`)
 - `log`: `snapshots[]` (`snapshot`, `parents[]`, `tree`, `change_id`, `author`, `timestamp_ms`, `message`)
 - `restore`: `target`, `backup`, `written`, `deleted`, `operation`
+- `check-ignore`: `paths[]` (`input`, `path`, `is_dir`, `tracked`, `ignored`, `rule` (null or `{source, pattern, negated}`), `excluded_parent` (null or a directory)), `unusable_patterns[]` (`source`, `line`, `pattern`, `reason`)
 - `verify`: `full`, `operations`, `conflicts`, `snapshots`, `trees`, `blobs`, `unreachable`, `problems[]` (`code`, `subject`, `message`), `notes[]`
 - `op log`: `operations[]` (`operation`, `parents[]`, `kind` ∈ `init|save|restore|workspace-add|publish|update|undo|merge-abort|git-import`, `description`, `timestamp_ms`, `device`, `workspace` (null for `init`), `backup` (null unless `restore --force` replaced unsaved work), `undoes` (for `undo`: the reversed operation), `checked_out` (snapshot the working copy was set to, or null), `head` (the **current** workspace's head after the operation, or null), `branches` (object: name → snapshot id))
 
@@ -78,9 +80,9 @@ changes behaviour, not the JSON shape.)
 | 10 | `CONCURV_NOT_A_REPO` | no repository found, or a workspace whose repository is gone |
 | 11 | `CONCURV_ALREADY_INITIALIZED` | `init` on existing repo |
 | 12 | `CONCURV_UNSUPPORTED_FORMAT` | unknown object/repository format version |
-| 20 | `CONCURV_DIRTY_WORKSPACE` | restore/update/undo would discard unsaved changes |
+| 20 | `CONCURV_DIRTY_WORKSPACE` | restore/update/undo would discard unsaved changes, or would overwrite an ignored untracked file (also with `--force`) |
 | 21 | `CONCURV_CONCURRENT_MODIFICATION` | a file changed while concurv was reading/replacing it |
-| 22 | `CONCURV_INVALID_PATH` | name violates concurv or platform path rules; nested workspace |
+| 22 | `CONCURV_INVALID_PATH` | name violates concurv or platform path rules (incl. a `.git` entry on restore); nested workspace |
 | 23 | `CONCURV_UNSUPPORTED_FILE_TYPE` | FIFO/socket/device, or link on Windows; `git import` of something concurv cannot represent (submodule, `.concurv` path, non-UTF-8 message) |
 | 30 | `CONCURV_OBJECT_CORRUPT`, `CONCURV_WRONG_OBJECT_KIND` | integrity failure |
 | 31 | `CONCURV_OBJECT_MISSING` | referenced object absent |

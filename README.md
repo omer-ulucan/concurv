@@ -77,7 +77,9 @@ Full walkthrough and recovery procedures: **`docs/user-guide.md`**.
 - `update` merges whole files only. Two changes to the same file are refused
   (nothing modified) or, with `--allow-conflicts`, written into the working
   copy for you to resolve; they are never merged automatically.
-- Not implemented yet: ignore files, rename detection, garbage collection
+- Ignores work like Git (`.gitignore`, `.concurv/exclude`, `check-ignore`); ignored
+  files are never overwritten. `.git/` is never versioned.
+- Not implemented yet: rename detection, garbage collection
   or a stat cache (every `status` reads all files).
 - Don't keep repositories in cloud-synced folders (OneDrive, Dropbox).
 

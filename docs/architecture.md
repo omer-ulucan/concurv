@@ -16,7 +16,7 @@ concurv-cli ──► concurv-workspace ──► concurv-ops ──► concurv-
 | `concurv-objects` | `encoding::{Tree, Snapshot, Operation, View, WorkspaceView}`, `ObjectStore`, `fs::{TempFile, TempSession, FileLock, Faults}` | RFC 0001 byte format with strict decoders; verified loose-object store; durable write primitives with deterministic failpoints; bounded-wait OS locks; per-process temp sessions and best-effort debris cleanup |
 | `concurv-refs` | `OpHead`, `RepoLock` | the only mutable pointer and its CAS; the repository (commit) lock |
 | `concurv-ops` | `OpLog` | commit an operation (re-verify referenced snapshots, write op, CAS); walk history; clean store temp debris |
-| `concurv-workspace` | `Repo`, `WorkspaceLock`, `StoreWriter`, `FlatTree`, modules `save`, `status`, `restore`, `integrate` (publish/update), `conflicts` (pending merges), `undo`, `merge`, `graph`, `workspaces`, `verify` | everything touching working copies, workspaces and branch publication |
+| `concurv-workspace` | `Repo`, `WorkspaceLock`, `StoreWriter`, `FlatTree`, `IgnoreRules`, modules `save`, `status`, `restore`, `integrate` (publish/update), `conflicts` (pending merges), `undo`, `merge`, `graph`, `workspaces`, `ignore` (ADR 0004), `verify` | everything touching working copies, workspaces and branch publication |
 | `concurv-git` | `GitRepo`, `export`, `import`, `GitMap` | Git bridge (ADR 0002): drives `git fast-import` / `fast-export`; deterministic commits; snapshot↔commit cache |
 | `concurv-cli` | `concurv` binary | argument parsing, human and JSON output |
 
@@ -63,5 +63,5 @@ concurv-cli ──► concurv-workspace ──► concurv-ops ──► concurv-
 ## Not yet implemented
 
 Line-level (within-file) merging, cross-machine
-sync, importing Git changes into existing history, GC/packing, stat cache, ignore files, rename detection,
+sync, importing Git changes into existing history, GC/packing, stat cache, rename detection,
 `workspace remove`. See `ROADMAP_STATUS.md`.

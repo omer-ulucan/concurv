@@ -4,6 +4,7 @@
 
 pub mod conflicts;
 pub mod graph;
+pub mod ignore;
 pub mod integrate;
 pub mod merge;
 pub mod repo;

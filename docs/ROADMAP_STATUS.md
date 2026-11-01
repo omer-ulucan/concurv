@@ -113,7 +113,7 @@ Backlog ids refer to `docs/ROADMAP_REVISED.md` §3.
 
 | Item | State | Evidence |
 |---|---|---|
-| P0-1…P0-5 ignore engine, local exclude, tracked-stays-tracked, ignored-file safety, `check-ignore` | in progress | — |
+| P0-1…P0-5 ignore engine, local exclude, tracked-stays-tracked, ignored-file safety, `check-ignore` | **done** (local; CI pending) | ADR 0004; `ignore.rs` (11 tests), `ignore_vs_git.rs` (7 differential cases vs real Git), `restore_safety.rs::restore_refuses_to_write_into_dot_git`, `cli_smoke.rs::check_ignore_command`; 122 tests pass on Windows |
 | P0-6 `status` benchmark baseline | not started | — |
 | P0-7 safe stat cache | not started (blocked on P0-6 measurement) | — |
 | P0-8 diff "no newline"/CRLF tests | not started | — |

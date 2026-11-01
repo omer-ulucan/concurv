@@ -34,6 +34,22 @@ R2 slices 2a (private workspaces), 2b (undo), 2c (conflict resolution) and 2d
   are refused with `CONCURV_CONFLICT` (exit 43); nothing is modified.
 - Stress tests: 2/5/10 concurrent writers; 12 rounds of killed processes.
 
+### Added (R1.5, ADR 0004)
+- **Ignore rules like Git**: `.gitignore` (root and nested, negation, anchors,
+  `**`, escapes) and a local `.concurv/exclude`. Already-tracked files stay
+  tracked. Verified against real Git by a differential test.
+- `concurv check-ignore <path>…` explains decisions (`--json`), including
+  unusable patterns.
+
+### Changed (R1.5)
+- `.git/` directories are never scanned, and untracked nested repositories
+  are skipped. History saved by earlier builds that captured `.git/` files
+  shows them as deleted.
+- `restore`, `update`, `undo` and workspace checkout refuse to overwrite an
+  ignored, untracked file, even with `--force` (exit 20), and refuse to write
+  a `.git` entry (exit 22).
+- License metadata removed: no license is asserted until the owner chooses one.
+
 ### Added (R2 slice 2d, ADR 0002)
 - `concurv git export <repo> [--branch B]` writes `main`'s history (merges
   included) into a Git repository via `git fast-import` and moves the Git
@@ -114,6 +130,6 @@ R2 slices 2a (private workspaces), 2b (undo), 2c (conflict resolution) and 2d
   every durable-write boundary, and restore-safety and CLI smoke tests.
 
 ### Known gaps
-- No ignore file, stat cache, GC, rename detection, line-level (within-file)
+- No stat cache, GC, rename detection, line-level (within-file)
   merging, cross-machine sync, importing Git changes into existing history,
   or Git tags.

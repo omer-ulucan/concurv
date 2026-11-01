@@ -28,6 +28,13 @@ OS + version, filesystem, CPU, RAM, tool versions (`git --version`,
 | S8 | Interrupted save (crash during snapshot) | kill/fail at each write boundary | previous acknowledged head intact; no ref to missing object; re-save succeeds | **R1 — implemented as deterministic fault-injection tests** (`crates/concurv-workspace/tests/fault_injection.rs`) |
 | S9 | Restore over dirty working copy | modify file, restore older snapshot | refused without `--force`; with `--force` a backup snapshot is recorded | **R1 — implemented** (`crates/concurv-cli/tests/cli_smoke.rs`, `crates/concurv-workspace/tests/restore_safety.rs`) |
 | S10 | Snapshot misses data with unchanged mtime/size (cf. jj #10509) | rewrite a file with same size within mtime granularity | change detected (concurv hashes content; no stat cache in R1) | **R1 — implemented** (`crates/concurv-workspace/tests/engine.rs::status_detects_same_size_same_mtime_change`) |
+| S11 | Nested ignores; tracked-then-ignored | root + nested `.gitignore` with `!`, excluded parent, tracked file later matched | Git semantics: deeper file wins, excluded parent not re-includable, tracked files stay tracked | **R1.5 — implemented** (`crates/concurv-workspace/tests/ignore.rs`); **reproduced against Git** for the matching rules (`ignore_vs_git.rs`, 7 cases) |
+| S12 | Same file, disjoint hunks | A edits the top function, B the bottom one, same file | merges cleanly; overlapping edits conflict | R2.5 (today: whole-file conflict) |
+| S13 | `status` on 1k/10k files; same-size same-mtime edit | generated trees | correct (no false clean); latency measured | R1.5 (`bench/`) |
+| S14 | Ignored/untracked file survives restore/update | ignored file where the target writes | refused, file intact | **R1.5 — implemented** (`ignore.rs::restore_never_overwrites_an_ignored_file_even_with_force`, `update_refuses_to_overwrite_an_ignored_file_in_another_workspace`) |
+| S15 | Git round trip limits | merge, binary, Unicode, divergence | trees and metadata preserved, documented losses | **R2 — implemented** (`crates/concurv-git/tests/bridge.rs`) |
+| S16 | Two-PC offline divergence and reconnect | two repos, relay | one authoritative head; nothing lost | R3 |
+| S17 | Candidate-hash-bound failing merged test | two green branches, red merge | publish refused | R4 |
 
 ## Competitor capability labels (literature, not reproduced)
 
