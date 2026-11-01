@@ -8,7 +8,8 @@ version 1 is not frozen until the first release (see ADR 0003).
 R1 gate passed on 2026-11-01: the full suite is green on Linux, macOS and
 Windows in CI, with identical golden hashes on all three (`docs/ROADMAP_STATUS.md`).
 R2 slices 2a (private workspaces), 2b (undo), 2c (conflict resolution) and 2d
-(Git bridge) are implemented.
+(Git bridge) are implemented, and the **R2 gate passed** on 2026-11-01 (CI on
+`main`, Linux/macOS/Windows; Git tags are out of scope, see `docs/ROADMAP_STATUS.md`).
 
 ### Changed (behaviour)
 - **`save` no longer moves `main`** (RFC 0004 §2). It advances only the
