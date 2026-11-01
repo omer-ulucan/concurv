@@ -8,8 +8,8 @@ contribute to one shared branch without ever silently losing acknowledged work
 (see `docs/ARC_Research_and_Roadmap_2026.md`; "ARC" was the project's earlier
 working name).
 
-**Current state:** R1 local kernel (gate passed) plus all of R2 (slices
-2a–2d): several private workspaces on one machine share one `main`, with
+**Current state:** R1 (local kernel) and R2 (workspaces and concurrency) gates passed. R2 covers
+several private workspaces on one machine sharing one `main`, with
 compare-and-swap publication, file-level merging, recorded conflicts that
 you resolve and save, workspace-scoped `undo`, and Git export/import,
 stress-tested with 10 concurrent writers and killed processes. Tested on Linux, macOS and Windows
