@@ -8,7 +8,7 @@ Last updated: 2026-11-01.
 |---|---|---|
 | R0 — RFC & competitive reproduction | **in progress** | Done: RFC 0001–0003, ADR 0001–0003, threat model, comparison plan with exact expected behaviour for S1–S10. **Open gate items:** competitor harness (`bench/scenarios/`) not built; **no** Git/jj/but/gitta/Fossil/Pijul scenario reproduced. |
 | R1 — Native local VCS kernel | **gate passed** (2026-11-01) | CI run [41350688459](https://github.com/omer-ulucan/concurv/actions/runs/41350688459) on `main` @ `9b8ed23`: all gate checks pass on Linux, macOS and Windows. See evidence below. |
-| R2 — Private workspaces + concurrency | not started | design constraints in RFC 0001 §7 |
+| R2 — Private workspaces + concurrency | **in progress** | Slice 2a (RFC 0004) implemented and green in CI on Linux, macOS and Windows: workspaces, publish (CAS), update with file-level merge, 2/5/10 concurrent writers, killed processes. **Open:** 2b workspace-scoped undo, 2c conflict objects and resolution, 2d minimum Git import/export. Gate not passed until those land. See "R2 evidence" below. |
 | R3 — Two-PC authenticated sync | not started | design only: RFC 0003 |
 | R4 — Verified integration | not started | — |
 | R5 — Agent-aware coordination | not started | — |
@@ -59,5 +59,28 @@ What the gate does **not** prove (still true, by design of the tests):
 
 ## Next
 
-R2 (private workspaces + concurrency) may start. Open R0 work (competitor
+R2 slice 2a is done (below); slices 2b–2d are next. Open R0 work (competitor
 reproduction harness) continues in parallel and does not block R2.
+
+## R2 evidence (slice 2a; the stage gate is not yet claimed)
+
+CI run [41354312895](https://github.com/omer-ulucan/concurv/actions/runs/41354312895)
+on branch `feat/r2-workspaces`: Linux 81, macOS 81, Windows 80 tests, all
+passed, 0 failed, 0 ignored (rustc 1.99.1); MSRV 1.89 check passed.
+
+| R2 gate requirement (roadmap §9) | Tests | Status |
+|---|---|---|
+| 2, 5 and 10 simultaneous local writers preserve all acknowledged changes, with retries and conflicting target-head updates | `concurv-workspace/tests/concurrency.rs` (`two_writers`, `five_writers`, `ten_writers`): every acked save is in `main`'s history; `main` holds every writer's final content; the op log is linear; `verify --full` passes. Locally 15/15 consecutive runs green after the fix below | passing |
+| … even during forced termination; reopening after a crash needs no manual object surgery | `concurv-cli/tests/kill_recovery.rs`: 12 rounds, 4 workspaces, real `concurv` processes killed at random points in save/update/publish (≈40 kills per run); `verify --full` after every round; recovery uses only the documented `restore --force` | passing |
+| N private workspaces, one logical branch, no shared index | `concurv-workspace/tests/workspaces.rs` (isolation, nested workspaces refused, names) | passing |
+| Atomic CAS publication | `diverged_publish_is_refused_and_changes_nothing`, `save_does_not_move_main_and_publish_fast_forwards`, CLI exit 42 | passing |
+| Conflict handling | file-level merge laws (proptest in `merge.rs`), same-file / delete-modify / add-add / file-directory conflicts refused, criss-cross merge base refused (`workspaces.rs`), CLI exit 43 | refused safely; **stored conflict objects and resolution: slice 2c, not started** |
+| Workspace-specific op log and per-workspace undo | op log records the acting workspace | **undo: slice 2b, not started** |
+| Git import/export minimum subset | — | **slice 2d, not started** |
+
+A real data-integrity bug was found by these tests and fixed before merge: the
+primary workspace's temp cleanup ran on the store's `tmp/` under the wrong
+lock, deleting other writers' in-flight temp files. On Windows this could
+leave `op_head` naming a vanished operation object (RFC 0004 §5). Before the
+fix, at least one concurrency test failed in 4 of 6 runs; after it (plus making
+cleanup races best effort), 15/15 consecutive runs passed.

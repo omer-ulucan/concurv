@@ -8,10 +8,13 @@ contribute to one shared branch without ever silently losing acknowledged work
 (see `docs/ARC_Research_and_Roadmap_2026.md`; "ARC" was the project's earlier
 working name).
 
-**Current state: R1 local kernel, gate passed** (tested on Linux, macOS and
-Windows in CI; see `docs/ROADMAP_STATUS.md`). One workspace on one machine. There is no
-sync, merge, undo, multiple-workspace support or Git bridge yet. Trademark and
-package-name availability for `concurv` have not been checked.
+**Current state:** R1 local kernel (gate passed) plus R2 slice 2a: several
+private workspaces on one machine share one `main`, with compare-and-swap
+publication and file-level merging, stress-tested with 10 concurrent writers
+and killed processes. Tested on Linux, macOS and Windows in CI; see
+`docs/ROADMAP_STATUS.md`. **Not yet:** cross-machine sync, undo, same-file
+conflict resolution, Git bridge. Trademark and package-name availability for
+`concurv` have not been checked.
 
 ## Quick start
 
@@ -25,6 +28,7 @@ $ concurv save -m "first"        # durable snapshot
 $ echo changed > notes.txt
 $ concurv diff                   # unified diff against the head
 $ concurv save -m "second"
+$ concurv publish                # main := this workspace's head (save alone never publishes)
 $ concurv log
 $ echo unsaved > notes.txt
 $ concurv restore --snapshot <first-id-prefix>          # refused (exit 20); nothing touched
@@ -34,13 +38,23 @@ $ concurv verify --full          # hash-checks every object
 $ concurv --json status          # machine-readable output
 ```
 
+Parallel work, one workspace per person or agent:
+
+```console
+$ concurv workspace add ../my-project-agent   # private checkout of main
+$ cd ../my-project-agent && echo work > agent.txt
+$ concurv save -m "agent work"
+$ concurv update                 # merge what others published (file-level)
+$ concurv publish                # exit 42 if main moved again: update and retry
+```
+
 `restore` never rewrites history. It only changes working files, and
 `concurv save` then records the restored state as a new snapshot.
 Full walkthrough and recovery procedures: **`docs/user-guide.md`**.
 
 ## Guarantees and limits
 
-- When `save` succeeds, every object and the new operation have been fsynced,
+- When `save` or `publish` succeeds, every object and the new operation have been fsynced,
   and the repository's single head pointer has been replaced atomically
   (RFC 0002). On Windows, directory fsync isn't available, so rename
   durability relies on NTFS journaling.
@@ -48,6 +62,10 @@ Full walkthrough and recovery procedures: **`docs/user-guide.md`**.
   never accepted. `restore` verifies the whole target before touching any file.
 - Rejected rather than silently skipped: symlinks and junctions on Windows,
   non-UTF-8 file names, FIFOs and devices.
+- Concurrent commands in different workspaces never overwrite each other's
+  acknowledged work; `main` moves only forward, by compare-and-swap.
+- `update` merges whole files only. Two changes to the same file are refused
+  (nothing modified), never merged automatically.
 - Not implemented yet: ignore files, rename detection, garbage collection
   or a stat cache (every `status` reads all files).
 - Don't keep repositories in cloud-synced folders (OneDrive, Dropbox).
@@ -75,6 +93,7 @@ Workspace layout: `crates/concurv-{core,objects,refs,ops,workspace,cli}`
 | `docs/rfcs/0001-vcs-semantics.md` | data model, normative byte format, path rules, test vectors |
 | `docs/rfcs/0002-durability-and-transactions.md` | write ordering, fsync, commit point, recovery |
 | `docs/rfcs/0003-sync-protocol.md` | future multi-device sync (design only) |
+| `docs/rfcs/0004-workspaces-and-concurrency.md` | workspaces, save vs publish, update and file-level merge, locks and concurrency |
 | `docs/adr/0001-storage-format.md` | why a native BLAKE3 store with one mutable pointer |
 | `docs/adr/0002-git-interop.md` | future Git bridge boundary |
 | `docs/adr/0003-project-rename-concurv.md` | the ARC → concurv rename and every identifier it changed |

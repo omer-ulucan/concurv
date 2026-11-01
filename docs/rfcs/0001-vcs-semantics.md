@@ -12,7 +12,7 @@ Status: **Accepted for R1** (format version 1). Changes to anything marked
 | Snapshot | `SnapshotId` = content hash | immutable | implemented |
 | Operation | `OperationId` = content hash | immutable | implemented |
 | Change | `ChangeId` = 16 random bytes | logical identity | recorded in every snapshot, not yet used for rewriting |
-| Workspace | `WorkspaceId` = 16 random bytes | mutable files on disk | one workspace per repo in R1 |
+| Workspace | `WorkspaceId` = 16 random bytes | mutable files on disk | many per repository since R2 (RFC 0004) |
 | Device | `DeviceId` = 16 random bytes | stable per repository clone | recorded in operations |
 | Branch | name (UTF-8) | mutable pointer inside an Operation's view | `main` only in R1 |
 | Local head | `View.workspaces[w].head` | mutable via operation | implemented |
@@ -131,7 +131,7 @@ u32    parent_count, then parent_count × Id (operation ids, no duplicates)
 i64    timestamp_ms
 Rid    device_id
 Rid    workspace_id     (the actor; all-zero bytes = repository-level)
-String kind             ("init" | "save" | "restore")
+String kind             ("init" | "save" | "restore" | "workspace-add" | "publish" | "update")
 String description
 u8     has_backup; if 1: Id backup_snapshot
 View   view
@@ -143,6 +143,7 @@ View:
 u32 branch_count;  repeat: String name, Id snapshot   (sorted by name bytes, unique)
 u32 workspace_count; repeat:                          (sorted by id bytes, unique)
   Rid  workspace_id
+  String name   (since R2: unique, 1–64 chars of [A-Za-z0-9._-]; RFC 0004 §4)
   u8   has_branch; if 1: String branch
   u8   has_head;   if 1: Id snapshot
 ```

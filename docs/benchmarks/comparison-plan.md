@@ -18,11 +18,11 @@ OS + version, filesystem, CPU, RAM, tool versions (`git --version`,
 
 | ID | Scenario | Fixture | Expected concurv behaviour (target) | concurv stage |
 |---|---|---|---|---|
-| S1 | Concurrent edits, same file, two agents | repo with `src/lib.rs`; agents A and B each edit a different function in private workspaces | both saves acknowledged in their own workspaces; neither working copy is modified by the other; integration produces a clean 3-way merge | R2/R4 |
+| S1 | Concurrent edits, same file, two agents | repo with `src/lib.rs`; agents A and B each edit a different function in private workspaces | both saves acknowledged in their own workspaces; neither working copy is modified by the other; integration produces a clean 3-way merge | **R2 slice 2a — implemented for edits in different files** (`concurv-workspace/tests/workspaces.rs`); same-file edits are refused, line-level merge is R4 |
 | S2 | Shared API change | A renames `fn parse()` → `fn parse_v2()`; B adds a new caller of `parse()` | textual merge clean; combined test fails; publish refused with `CONCURV_POLICY_FAIL`; both changes retained | R4 (+R5 warning) |
 | S3 | Tests green individually, red merged | as S2 with `cargo test` gate | attestation for the *candidate hash* is FAIL; neither branch's green result authorizes the candidate | R4 |
 | S4 | Concurrent undo | A and B each save twice; A undoes | only A's workspace operation is reverted; B's acknowledged snapshots unaffected | R2 |
-| S5 | Simultaneous branch publication | A and B publish to `main` with the same expected head | exactly one succeeds; the other gets `CONCURV_STALE_HEAD` with observed head; no lost snapshot | R2 (local CAS) / R3 (relay) |
+| S5 | Simultaneous branch publication | A and B publish to `main` with the same expected head | exactly one succeeds; the other gets `CONCURV_STALE_HEAD` with observed head; no lost snapshot | **R2 local CAS implemented** (`CONCURV_DIVERGED`, `concurrency.rs`); relay is R3 |
 | S6 | Offline reconnect | A and B save offline, reconnect in both orders | all snapshots present on relay; one published head; divergence visible, not overwritten | R3 |
 | S7 | Long transcript overhead | agent session of 10k events | concurv stores no transcript by default; metadata growth bounded | R5 |
 | S8 | Interrupted save (crash during snapshot) | kill/fail at each write boundary | previous acknowledged head intact; no ref to missing object; re-save succeeds | **R1 — implemented as deterministic fault-injection tests** (`crates/concurv-workspace/tests/fault_injection.rs`) |
