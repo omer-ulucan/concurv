@@ -4,16 +4,16 @@ Status: **Accepted for R1**.
 
 ## 1. Acknowledgment contract
 
-When `arc save` (or `init`, `restore`) exits successfully (exit code 0, or
-`"ok": true` in JSON), ARC guarantees, **within the platform contract in §5**:
+When `concurv save` (or `init`, `restore`) exits successfully (exit code 0, or
+`"ok": true` in JSON), concurv guarantees, **within the platform contract in §5**:
 
 1. every object reachable from the new operation has been written, `fsync`ed,
    atomically renamed into the object store, and its directory `fsync`ed;
 2. the new operation object is durable in the same way;
-3. `.arc/op_head` has been atomically replaced to name the new operation and
-   the `.arc` directory has been `fsync`ed.
+3. `.concurv/op_head` has been atomically replaced to name the new operation and
+   the `.concurv` directory has been `fsync`ed.
 
-If ARC exits with an error, or crashes, the repository is in **either** the
+If concurv exits with an error, or crashes, the repository is in **either** the
 previous acknowledged state **or** the new one — never a state where `op_head`
 names a missing or partially written object. Unreferenced objects left behind
 by a failed transaction are harmless (they are immutable and content-addressed)
@@ -26,8 +26,8 @@ durability-reducing options; simultaneous loss of every replica.
 ## 2. Repository layout
 
 ```
-.arc/
-  format          "arc-repo-format 1\n" — written by init, checked by open
+.concurv/
+  format          "concurv-repo-format 1\n" — written by init, checked by open
   device_id       32 hex chars
   workspace_id    32 hex chars (the workspace living at this root)
   op_head         64 hex chars + "\n" — the only mutable pointer
@@ -44,11 +44,11 @@ durability-reducing options; simultaneous loss of every replica.
 
 1. If `objects/ab/<id>` exists, re-read and verify it. If valid → done
    (deduplicated). If corrupt → move it to `quarantine/` and continue.
-2. Create a uniquely named file in `.arc/tmp/` with `create_new` (same
+2. Create a uniquely named file in `.concurv/tmp/` with `create_new` (same
    filesystem as `objects/`).
 3. Write the canonical bytes. Blobs are streamed from the source file while
    hashing; if the number of bytes read differs from the length captured when
-   the header was written, the write fails with `ARC_CONCURRENT_MODIFICATION`.
+   the header was written, the write fails with `CONCURV_CONCURRENT_MODIFICATION`.
 4. `fsync` the temporary file.
 5. Create `objects/ab/` if needed and `fsync` `objects/`.
 6. Rename the temporary file to `objects/ab/<id>` (atomic on POSIX and NTFS).
@@ -61,18 +61,18 @@ Under the exclusive repository lock:
 1. Read `op_head` → `expected`. Compute the new operation from the View stored
    in `expected`.
 2. Write all objects (3.1), then the operation object (3.1).
-3. Re-read `op_head`; if it is not `expected` → `ARC_STALE_HEAD` (cannot happen
+3. Re-read `op_head`; if it is not `expected` → `CONCURV_STALE_HEAD` (cannot happen
    while the lock is honoured; checked anyway as defence in depth).
-4. Write `tmp/op_head.<random>`, `fsync`, rename onto `op_head`, `fsync` `.arc/`.
+4. Write `tmp/op_head.<random>`, `fsync`, rename onto `op_head`, `fsync` `.concurv/`.
    **The rename is the commit point.**
 
 ### 3.3 Init
 
-`arc init` builds a complete `.arc` in a sibling temporary directory
-`.arc-init-<random>` (format, ids, root operation object, op_head), fsyncs it,
-then renames it to `.arc` and fsyncs the workspace root. A crash leaves either
-no repository or a complete one; stale `.arc-init-*` directories are never
-read and are reported by `arc verify`.
+`concurv init` builds a complete `.concurv` in a sibling temporary directory
+`.concurv-init-<random>` (format, ids, root operation object, op_head), fsyncs it,
+then renames it to `.concurv` and fsyncs the workspace root. A crash leaves either
+no repository or a complete one; stale `.concurv-init-*` directories are never
+read and are reported by `concurv verify`.
 
 ### 3.4 Restore (working-copy mutation)
 
@@ -81,7 +81,7 @@ Restore modifies user files, which cannot be made atomic as a set. Protocol:
 1. Load and **fully verify** the target snapshot's tree and every blob before
    touching the working copy. Validate every path for the current platform.
 2. Scan the working copy. If it differs from the workspace head and `--force`
-   is absent → `ARC_DIRTY_WORKSPACE`, nothing changed.
+   is absent → `CONCURV_DIRTY_WORKSPACE`, nothing changed.
 3. With `--force` and a dirty working copy: save the working copy as a backup
    snapshot (durable, 3.1) whose parent is the head.
 4. Durably write `restore-in-progress` (target id, backup id).
@@ -89,22 +89,22 @@ Restore modifies user files, which cannot be made atomic as a set. Protocol:
    by streaming the verified blob to a temp file, `fsync`, and renaming it into
    place. Immediately before replacing or deleting a path, its current content
    hash is re-checked against the scan; a mismatch aborts with
-   `ARC_CONCURRENT_MODIFICATION` (narrows, but cannot eliminate, the
+   `CONCURV_CONCURRENT_MODIFICATION` (narrows, but cannot eliminate, the
    TOCTOU window against other processes).
 6. Re-scan the working copy and require it to equal the target exactly.
 7. Commit an operation `restore` (records target and backup) via 3.2.
 8. Remove `restore-in-progress`.
 
-If interrupted between 4 and 8, `arc status` reports the interrupted restore
-and its backup id; re-running `arc restore --snapshot <target>` completes it
+If interrupted between 4 and 8, `concurv status` reports the interrupted restore
+and its backup id; re-running `concurv restore --snapshot <target>` completes it
 (the backup snapshot already preserves the pre-restore state).
 
 ## 4. Locking
 
-Mutating commands take an OS advisory exclusive lock on `.arc/lock`
+Mutating commands take an OS advisory exclusive lock on `.concurv/lock`
 (`std::fs::File::try_lock`). The OS releases it when the process dies, so a
 crash cannot leave a stale lock. A second writer fails fast with
-`ARC_LOCKED`. Read-only commands do not take the lock; they read `op_head`
+`CONCURV_LOCKED`. Read-only commands do not take the lock; they read `op_head`
 once and then only immutable objects, so they observe a consistent state.
 
 ## 5. Platform guarantees and limits
@@ -125,7 +125,7 @@ repositories.
 ## 6. Fault injection
 
 Every step above passes through a named failpoint (`FaultPoint` enum in
-`arc-objects::fs`): `TmpCreate`, `TmpWrite`, `TmpSync`, `DirCreate`,
+`concurv-objects::fs`): `TmpCreate`, `TmpWrite`, `TmpSync`, `DirCreate`,
 `Rename`, `DirSync`. The op-head update uses the same primitives, so its
 write/sync/rename are covered by the same points (counted per hit). Tests
 configure "fail the N-th hit of point P" and also a *torn write* mode that
@@ -143,7 +143,7 @@ This is deterministic fault injection of the *software* failure path; it is
 ## 7. Recovery, quarantine and retention
 
 - On every mutating open (under the lock), files in `tmp/` are deleted.
-- `arc verify --full` walks every operation reachable from `op_head`, every
+- `concurv verify --full` walks every operation reachable from `op_head`, every
   snapshot, tree and blob reachable from those operations, verifying hashes,
   kinds and graph closure. It additionally scans the whole object directory
   for files whose content does not match their name. Exit code `30`/`31` on

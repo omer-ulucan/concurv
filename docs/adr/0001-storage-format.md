@@ -4,14 +4,14 @@ Status: **Accepted** (R1). Date: 2026-11-01.
 
 ## Context
 
-ARC needs immutable, content-addressed storage with typed, domain-separated ids
+concurv needs immutable, content-addressed storage with typed, domain-separated ids
 (RFC 0001), explicit durability (RFC 0002) and a future Git bridge (ADR 0002).
 
 ## Options
 
 1. **Git object format as native storage** (SHA-1/SHA-256, zlib loose objects
    and packs). + free interop with Git tooling. − Git ids are not typed/domain
-   separated, tree mode rules are Git-specific, SHA-1 is legacy, and ARC
+   separated, tree mode rules are Git-specific, SHA-1 is legacy, and concurv
    concepts (operations, change ids, conflicts, attestations) would need
    side-channel storage anyway.
 2. **Native typed BLAKE3 store** with an explicitly specified byte encoding.
@@ -40,11 +40,11 @@ mutable `op_head` file** (the Jujutsu "view" design).
 
 ## Versioning and migration
 
-- Object magic `ARC1` encodes object-format version 1; repository file
-  `.arc/format` encodes the repository layout version.
+- Object magic `CNV1` encodes object-format version 1; repository file
+  `.concurv/format` encodes the repository layout version.
 - A reader encountering an unknown magic or repository format refuses to
-  operate (`ARC_UNSUPPORTED_FORMAT`) rather than guessing.
-- A future format N+1 will ship an explicit `arc migrate` that rewrites into a
+  operate (`CONCURV_UNSUPPORTED_FORMAT`) rather than guessing.
+- A future format N+1 will ship an explicit `concurv migrate` that rewrites into a
   new store and keeps a mapping from old ids to new ids; old ids are never
   silently reinterpreted.
 

@@ -1,7 +1,7 @@
-# ARC architecture (as implemented in R1)
+# concurv architecture (as implemented in R1)
 
 ```
-arc-cli ──► arc-workspace ──► arc-ops ──► arc-refs ──► arc-objects ──► arc-core
+concurv-cli ──► concurv-workspace ──► concurv-ops ──► concurv-refs ──► concurv-objects ──► concurv-core
  (clap,      (repo, scan,      (OpLog:     (op_head     (encoding,      (ids, errors,
   JSON)       save, status,     commit,     CAS, OS      store, durable  path rules)
               diff, restore,    walk,       lock)        fs, faults)
@@ -10,12 +10,12 @@ arc-cli ──► arc-workspace ──► arc-ops ──► arc-refs ──► a
 
 | Crate | Key types | Responsibility |
 |---|---|---|
-| `arc-core` | `ObjectId`, `BlobId`/`TreeId`/`SnapshotId`/`OperationId`, `ChangeId`/`WorkspaceId`/`DeviceId`, `ArcError`, `ErrorCode`, `RepoPath`, `PlatformRules` | domain ids with compile-time separation; stable error/exit codes; name validation and Windows/case-folding rules |
-| `arc-objects` | `encoding::{Tree, Snapshot, Operation, View}`, `ObjectStore`, `fs::{TempFile, Faults}` | RFC 0001 byte format with strict decoders; verified loose-object store; durable write primitives with deterministic failpoints |
-| `arc-refs` | `OpHead`, `RepoLock` | the only mutable pointer and its CAS; exclusive OS lock |
-| `arc-ops` | `OpLog` | commit an operation (re-verify referenced snapshots, write op, CAS); walk history; clean temp debris |
-| `arc-workspace` | `Repo`, `FlatTree`, `save`, `status`, `diff`, `restore`, `verify`, `log` | everything touching the working copy |
-| `arc-cli` | `arc` binary | argument parsing, human and JSON output |
+| `concurv-core` | `ObjectId`, `BlobId`/`TreeId`/`SnapshotId`/`OperationId`, `ChangeId`/`WorkspaceId`/`DeviceId`, `ConcurvError`, `ErrorCode`, `RepoPath`, `PlatformRules` | domain ids with compile-time separation; stable error/exit codes; name validation and Windows/case-folding rules |
+| `concurv-objects` | `encoding::{Tree, Snapshot, Operation, View}`, `ObjectStore`, `fs::{TempFile, Faults}` | RFC 0001 byte format with strict decoders; verified loose-object store; durable write primitives with deterministic failpoints |
+| `concurv-refs` | `OpHead`, `RepoLock` | the only mutable pointer and its CAS; exclusive OS lock |
+| `concurv-ops` | `OpLog` | commit an operation (re-verify referenced snapshots, write op, CAS); walk history; clean temp debris |
+| `concurv-workspace` | `Repo`, `FlatTree`, `save`, `status`, `diff`, `restore`, `verify`, `log` | everything touching the working copy |
+| `concurv-cli` | `concurv` binary | argument parsing, human and JSON output |
 
 ## Key decisions
 
@@ -30,9 +30,9 @@ arc-cli ──► arc-workspace ──► arc-ops ──► arc-refs ──► a
 - **Synchronous, single-writer engine.** No async runtime; concurrency is
   serialized by the lock. Multi-workspace concurrency is R2.
 
-## Data flow of `arc save`
+## Data flow of `concurv save`
 
-1. Take lock; delete `.arc/tmp/*` debris.
+1. Take lock; delete `.concurv/tmp/*` debris.
 2. Read op head → View → workspace head → head file map.
 3. Walk working copy (no symlink following); stream each file into a temp
    object, fsync, rename into `objects/`, fsync dir (dedup verifies existing).
