@@ -1,0 +1,19 @@
+[package]
+name = "concurv-git"
+description = "Git import/export bridge for concurv (uses the git CLI's fast-import/fast-export)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+concurv-core.workspace = true
+concurv-objects.workspace = true
+concurv-workspace.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

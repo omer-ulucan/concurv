@@ -80,6 +80,11 @@ enum Cmd {
     },
     /// Move the shared branch (`main`) forward to this workspace's head (CAS).
     Publish,
+    /// Exchange history with a Git repository (requires `git` on PATH).
+    Git {
+        #[command(subcommand)]
+        cmd: GitCmd,
+    },
     /// Reverse the most recent operation of this workspace (never shared state).
     Undo,
     /// Bring the shared branch into this workspace (fast-forward or file-level merge).
@@ -92,6 +97,26 @@ enum Cmd {
         /// (edits are kept in a backup snapshot).
         #[arg(long)]
         abort: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum GitCmd {
+    /// Write `main`'s history into a Git repository and move a Git branch to it (CAS).
+    Export {
+        /// Path of the Git repository (bare or not).
+        repo: PathBuf,
+        /// Git branch to update.
+        #[arg(long, default_value = "main")]
+        branch: String,
+    },
+    /// Import a Git branch into this fresh repository and check it out.
+    Import {
+        /// Path of the Git repository.
+        repo: PathBuf,
+        /// Git branch to import.
+        #[arg(long, default_value = "main")]
+        branch: String,
     },
 }
 
@@ -141,6 +166,12 @@ impl Cmd {
             Cmd::Publish => "publish",
             Cmd::Update { .. } => "update",
             Cmd::Undo => "undo",
+            Cmd::Git {
+                cmd: GitCmd::Export { .. },
+            } => "git export",
+            Cmd::Git {
+                cmd: GitCmd::Import { .. },
+            } => "git import",
         }
     }
 }
@@ -392,6 +423,73 @@ fn run(cli: Cli) -> Result<Output> {
                     "operation": o.operation.map(|s| s.to_hex()),
                 }),
                 human,
+            )
+        }
+        Cmd::Git {
+            cmd:
+                GitCmd::Export {
+                    repo: target,
+                    branch,
+                },
+        } => {
+            let repo = Repo::discover(&cwd, opts())?;
+            let target = if target.is_absolute() {
+                target
+            } else {
+                cwd.join(target)
+            };
+            let git = concurv_git::GitRepo::open(&target)?;
+            let o = concurv_git::export(&repo, &git, &branch)?;
+            let human = if o.updated {
+                format!(
+                    "Exported to Git: `{}` is now {} ({} new commit(s), {} already present).",
+                    o.branch, o.tip, o.exported, o.reused
+                )
+            } else {
+                format!(
+                    "Git branch `{}` is already at {}; nothing to export.",
+                    o.branch, o.tip
+                )
+            };
+            ok(
+                json!({
+                    "branch": o.branch,
+                    "tip": o.tip,
+                    "previous": o.previous,
+                    "exported": o.exported,
+                    "reused": o.reused,
+                    "updated": o.updated,
+                }),
+                human,
+            )
+        }
+        Cmd::Git {
+            cmd:
+                GitCmd::Import {
+                    repo: source,
+                    branch,
+                },
+        } => {
+            let repo = Repo::discover(&cwd, opts())?;
+            let source = if source.is_absolute() {
+                source
+            } else {
+                cwd.join(source)
+            };
+            let git = concurv_git::GitRepo::open(&source)?;
+            let o = concurv_git::import(&repo, &git, &branch)?;
+            ok(
+                json!({
+                    "branch": o.branch,
+                    "git_tip": o.git_tip,
+                    "tip": o.tip.to_hex(),
+                    "commits": o.commits,
+                    "written": o.written,
+                }),
+                format!(
+                    "Imported {} commit(s) from Git `{}` ({}); `main` is now {} and checked out ({} file(s)).",
+                    o.commits, o.branch, o.git_tip, o.tip, o.written
+                ),
             )
         }
         Cmd::Undo => {

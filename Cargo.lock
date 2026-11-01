@@ -227,6 +227,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "concurv-core",
+ "concurv-git",
  "concurv-workspace",
  "serde_json",
  "tempfile",
@@ -239,6 +240,16 @@ dependencies = [
  "getrandom",
  "proptest",
  "thiserror",
+]
+
+[[package]]
+name = "concurv-git"
+version = "0.1.0"
+dependencies = [
+ "concurv-core",
+ "concurv-objects",
+ "concurv-workspace",
+ "tempfile",
 ]
 
 [[package]]
