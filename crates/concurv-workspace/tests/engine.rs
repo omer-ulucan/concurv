@@ -354,13 +354,8 @@ fn unix_exec_bits_and_symlinks_roundtrip() {
 
 #[cfg(unix)]
 #[test]
-fn unix_fifo_and_non_utf8_names_are_rejected() {
-    use std::os::unix::ffi::OsStrExt;
+fn unix_fifo_is_rejected() {
     let (d, repo) = new_repo();
-    let bad = std::ffi::OsStr::from_bytes(b"bad\xffname");
-    fs::write(d.path().join(bad), b"x").unwrap();
-    assert_eq!(save(&repo, "s").unwrap_err().code, ErrorCode::InvalidPath);
-    fs::remove_file(d.path().join(bad)).unwrap();
     let st = std::process::Command::new("mkfifo")
         .arg(d.path().join("pipe"))
         .status()
@@ -371,6 +366,34 @@ fn unix_fifo_and_non_utf8_names_are_rejected() {
         ErrorCode::UnsupportedFileType
     );
     assert!(repo.head_snapshot().unwrap().is_none());
+}
+
+/// Non-UTF-8 names are rejected by `save`. macOS (APFS) refuses to create
+/// such names at all (`EILSEQ`), so there the test asserts that refusal: the
+/// name can never reach concurv on that platform.
+#[cfg(unix)]
+#[test]
+fn unix_non_utf8_names_are_rejected() {
+    use std::os::unix::ffi::OsStrExt;
+    let (d, repo) = new_repo();
+    let bad = std::ffi::OsStr::from_bytes(b"bad\xffname");
+    match fs::write(d.path().join(bad), b"x") {
+        Ok(()) => {
+            assert!(
+                !cfg!(target_os = "macos"),
+                "macOS unexpectedly allowed a non-UTF-8 name"
+            );
+            assert_eq!(save(&repo, "s").unwrap_err().code, ErrorCode::InvalidPath);
+            assert!(repo.head_snapshot().unwrap().is_none());
+        }
+        Err(e) => {
+            const EILSEQ_MACOS: i32 = 92;
+            assert!(
+                cfg!(target_os = "macos") && e.raw_os_error() == Some(EILSEQ_MACOS),
+                "unexpected error creating a non-UTF-8 name: {e}"
+            );
+        }
+    }
 }
 
 #[cfg(windows)]
