@@ -2,7 +2,7 @@
 
 Status: **Plan written; no competitor scenario has been reproduced yet.**
 No result in this file is a measurement. Rows labelled *literature* come from
-the project docs/issues cited in `docs/ARC_Research_and_Roadmap_2026.md` §14;
+the project docs/issues listed under "Literature sources" at the end of this file;
 they become *reproduced* only after a script under `bench/scenarios/` runs and
 its output is committed together with tool versions and OS.
 
@@ -28,6 +28,13 @@ OS + version, filesystem, CPU, RAM, tool versions (`git --version`,
 | S8 | Interrupted save (crash during snapshot) | kill/fail at each write boundary | previous acknowledged head intact; no ref to missing object; re-save succeeds | **R1 — implemented as deterministic fault-injection tests** (`crates/concurv-workspace/tests/fault_injection.rs`) |
 | S9 | Restore over dirty working copy | modify file, restore older snapshot | refused without `--force`; with `--force` a backup snapshot is recorded | **R1 — implemented** (`crates/concurv-cli/tests/cli_smoke.rs`, `crates/concurv-workspace/tests/restore_safety.rs`) |
 | S10 | Snapshot misses data with unchanged mtime/size (cf. jj #10509) | rewrite a file with same size within mtime granularity | change detected (concurv hashes content; no stat cache in R1) | **R1 — implemented** (`crates/concurv-workspace/tests/engine.rs::status_detects_same_size_same_mtime_change`) |
+| S11 | Nested ignores; tracked-then-ignored | root + nested `.gitignore` with `!`, excluded parent, tracked file later matched | Git semantics: deeper file wins, excluded parent not re-includable, tracked files stay tracked | **R1.5 — implemented** (`crates/concurv-workspace/tests/ignore.rs`); **reproduced against Git** for the matching rules (`ignore_vs_git.rs`, 7 cases) |
+| S12 | Same file, disjoint hunks | A edits the top function, B the bottom one, same file | merges cleanly; overlapping edits conflict | R2.5 (today: whole-file conflict) |
+| S13 | `status` on 1k/10k files; same-size same-mtime edit | generated trees | correct (no false clean); latency measured | R1.5 (`bench/`) |
+| S14 | Ignored/untracked file survives restore/update | ignored file where the target writes | refused, file intact | **R1.5 — implemented** (`ignore.rs::restore_never_overwrites_an_ignored_file_even_with_force`, `update_refuses_to_overwrite_an_ignored_file_in_another_workspace`) |
+| S15 | Git round trip limits | merge, binary, Unicode, divergence | trees and metadata preserved, documented losses | **R2 — implemented** (`crates/concurv-git/tests/bridge.rs`) |
+| S16 | Two-PC offline divergence and reconnect | two repos, relay | one authoritative head; nothing lost | R3 |
+| S17 | Candidate-hash-bound failing merged test | two green branches, red merge | publish refused | R4 |
 
 ## Competitor capability labels (literature, not reproduced)
 
@@ -46,3 +53,47 @@ Y = documented, P = partial, E = via external tool, ? = unverified.
 prints `RESULT: <pass|fail|unsupported> <detail>` and exits. A driver collects
 results into `bench/results/<date>-<host>.md`. Not yet created; tracked in
 `docs/ROADMAP_STATUS.md` as the remaining R0 gate item.
+
+## Literature sources (retrieved 2026-11-01)
+
+The *documented* labels above refer to these sources. They are literature, not
+reproductions.
+
+### Official docs and repos
+- Git worktrees: https://git-scm.com/docs/git-worktree
+- Git CAS reference updates: https://git-scm.com/docs/git-update-ref
+- Git partial clones: https://git-scm.com/docs/partial-clone
+- Jujutsu README: https://github.com/jj-vcs/jj/blob/main/README.md
+- Jujutsu operation log: https://github.com/jj-vcs/jj/blob/main/docs/operation-log.md
+- Jujutsu working-copy model: https://github.com/jj-vcs/jj/blob/main/docs/working-copy.md
+- Jujutsu Git interoperability caveats: https://github.com/jj-vcs/jj/blob/main/docs/git-compatibility.md
+- GitButler CLI: https://docs.gitbutler.com/cli-overview
+- GitButler repository/license: https://github.com/gitbutlerapp/gitbutler
+- gitta docs: https://gitta.io/docs/
+- gitta internals: https://gitta.io/docs/how-it-works
+- Entire CLI: https://github.com/entireio/cli
+- Entire security: https://github.com/entireio/cli/blob/main/docs/security-and-privacy.md
+- Pijul change theory: https://pijul.org/manual/why_pijul.html
+- Pijul conflicts: https://pijul.org/manual/conflicts.html
+- Fossil design: https://fossil-scm.org/home/doc/tip/www/index.wiki
+- Fossil sync protocol: https://www.fossil-scm.org/home/doc/trunk/www/sync.wiki
+- Container Use: https://github.com/dagger/container-use
+- GitHub stacked PRs: https://docs.github.com/en/pull-requests/reference/stacked-pull-requests
+
+### Selected incident reports and user discussions
+- Jujutsu snapshot issue #10509: https://github.com/jj-vcs/jj/issues/10509
+- Jujutsu concurrent op #10480: https://github.com/jj-vcs/jj/issues/10480
+- Jujutsu workspace undo #10476: https://github.com/jj-vcs/jj/issues/10476
+- Jujutsu colocated index #9711: https://github.com/jj-vcs/jj/issues/9711
+- GitButler resolution #15613: https://github.com/gitbutlerapp/gitbutler/issues/15613
+- Entire storage blowup #2663: https://github.com/entireio/cli/issues/2663
+- Entire worktree cross-session #2979: https://github.com/entireio/cli/issues/2979
+- Entire public transcript/redaction #2951: https://github.com/entireio/cli/issues/2951
+- Reddit multiple agents/worktrees: https://www.reddit.com/r/ClaudeAI/comments/1qzduim/stop_running_multiple_claude_code_agents_in_the/
+- Reddit agent status awareness: https://www.reddit.com/r/ClaudeCode/comments/1vtfawm/how_are_you_running_multiple_coding_agents_at_the/
+- Reddit merged code tests fail: https://www.reddit.com/r/AI_Agents/comments/1wntjk6/a_clean_git_merge_of_my_two_agents_worktrees_that/
+- Reddit isolation limits: https://www.reddit.com/r/AI_Agents/comments/1v53mns/running_multiple_coding_agents_in_parallel_broke/
+
+### Benchmark (tool vendor maintains it; not independent)
+- https://vcbench.dev/
+- https://github.com/gitbutlerapp/version-control-bench

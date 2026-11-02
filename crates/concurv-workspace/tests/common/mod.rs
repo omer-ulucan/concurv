@@ -16,6 +16,7 @@ pub fn opts() -> RepoOptions {
         now_ms: Some(1_793_491_200_000),
         author: Some("Test <test@example.com>".into()),
         lock_timeout: None,
+        stat_cache_window: None,
     }
 }
 

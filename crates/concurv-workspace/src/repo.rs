@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use concurv_core::{
-    ConcurvError, DeviceId, ErrorCode, OperationId, RandomId, Result, SnapshotId, WorkspaceId,
+    ConcurvError, DeviceId, ErrorCode, OperationId, RandomId, RepoPath, Result, SnapshotId,
+    WorkspaceId,
 };
 use concurv_objects::fs::{
     FileLock, TempSession, clean_tmp_root, create_dir_durable, rename_durable, sync_dir,
@@ -47,6 +48,9 @@ pub struct RepoOptions {
     pub author: Option<String>,
     /// How long to wait for a busy lock; `None` = [`DEFAULT_LOCK_TIMEOUT`].
     pub lock_timeout: Option<Duration>,
+    /// Racy-timestamp window of the stat cache (ADR 0005); `None` =
+    /// [`crate::statcache::DEFAULT_RACY_WINDOW`]. Tests shorten it.
+    pub stat_cache_window: Option<Duration>,
 }
 
 /// An open workspace and the repository (store + op log) it belongs to.
@@ -323,6 +327,31 @@ impl Repo {
         self.opts.lock_timeout.unwrap_or(DEFAULT_LOCK_TIMEOUT)
     }
 
+    /// A recorder for the stat cache, started now (before a scan).
+    pub(crate) fn cache_recorder(&self) -> crate::statcache::CacheRecorder {
+        crate::statcache::CacheRecorder::new(
+            std::time::SystemTime::now(),
+            self.opts
+                .stat_cache_window
+                .unwrap_or(crate::statcache::DEFAULT_RACY_WINDOW),
+        )
+    }
+
+    /// Replace this workspace's stat cache. Best effort: a failure only
+    /// means the next `status` hashes more. Requires the workspace lock.
+    pub(crate) fn persist_stat_cache(
+        &self,
+        _lock: &WorkspaceLock,
+        recorder: crate::statcache::CacheRecorder,
+    ) {
+        let _ = recorder.persist(&self.ws_meta, &self.ws_meta.join(WORKSPACE_TMP));
+    }
+
+    /// The stat cache of this workspace (empty if missing or unusable).
+    pub(crate) fn stat_cache(&self) -> crate::statcache::StatCache {
+        crate::statcache::StatCache::load(&self.ws_meta)
+    }
+
     // ------------------------------------------------------------------ locks
 
     /// Take the repository lock (bounded wait) and remove debris of
@@ -474,4 +503,75 @@ pub(crate) fn simplify(p: PathBuf) -> PathBuf {
         return PathBuf::from(rest);
     }
     p
+}
+
+impl Repo {
+    /// Resolve a user-supplied path (absolute, or relative to `cwd`; it need
+    /// not exist) to a workspace-relative path. Returns the path and whether
+    /// it was written as a directory (`dir/`). Paths outside this workspace
+    /// are refused.
+    pub fn repo_relative(&self, cwd: &Path, input: &str) -> Result<(RepoPath, bool)> {
+        let dir_hint = input.ends_with(['/', '\\']);
+        let given = Path::new(input);
+        let joined = if given.is_absolute() {
+            given.to_path_buf()
+        } else {
+            cwd.join(given)
+        };
+        // Lexically normalize `.` and `..`, then canonicalize the longest
+        // existing prefix so it matches the canonical workspace root.
+        let mut parts: Vec<std::path::Component<'_>> = Vec::new();
+        for c in joined.components() {
+            match c {
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    if matches!(parts.last(), Some(std::path::Component::Normal(_))) {
+                        parts.pop();
+                    }
+                }
+                other => parts.push(other),
+            }
+        }
+        let normalized: PathBuf = parts.iter().collect();
+        let mut existing = normalized.clone();
+        let mut rest: Vec<std::ffi::OsString> = Vec::new();
+        while fs::symlink_metadata(&existing).is_err() {
+            match (
+                existing.file_name().map(|n| n.to_os_string()),
+                existing.parent(),
+            ) {
+                (Some(name), Some(parent)) => {
+                    rest.push(name);
+                    existing = parent.to_path_buf();
+                }
+                _ => break,
+            }
+        }
+        let mut full = fs::canonicalize(&existing)
+            .map(simplify)
+            .unwrap_or(existing);
+        for n in rest.into_iter().rev() {
+            full.push(n);
+        }
+        let root = fs::canonicalize(&self.root)
+            .map(simplify)
+            .unwrap_or_else(|_| self.root.clone());
+        let rel = full.strip_prefix(&root).map_err(|_| {
+            ConcurvError::new(
+                ErrorCode::InvalidArgument,
+                format!("`{input}` is outside this workspace (`{}`)", root.display()),
+            )
+        })?;
+        let mut names = Vec::new();
+        for c in rel.components() {
+            let s = c.as_os_str().to_str().ok_or_else(|| {
+                ConcurvError::new(
+                    ErrorCode::InvalidPath,
+                    format!("`{input}` is not valid UTF-8"),
+                )
+            })?;
+            names.push(s.to_owned());
+        }
+        Ok((RepoPath::parse(&names.join("/"))?, dir_hint))
+    }
 }

@@ -10,7 +10,7 @@ use concurv_objects::EntryKind;
 use crate::conflicts::{ConflictStatus, conflict_status};
 use crate::repo::Repo;
 use crate::restore::{RestoreMarker, read_marker};
-use crate::worktree::{FileState, FlatTree, ScanMode, scan};
+use crate::worktree::{FileState, FlatTree, ScanMode, scan_with};
 
 /// Kind of a working-copy change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,11 +115,39 @@ pub struct StatusReport {
     pub merge: Option<MergeStatus>,
 }
 
-/// Compute status without writing anything.
+/// Options for [`status_with`] and [`diff_with`].
+#[derive(Clone, Copy, Debug)]
+pub struct StatusOptions {
+    /// Trust the stat cache for unchanged files (ADR 0005). `false` hashes
+    /// every file (`--no-cache`).
+    pub use_stat_cache: bool,
+}
+
+impl Default for StatusOptions {
+    fn default() -> Self {
+        Self {
+            use_stat_cache: true,
+        }
+    }
+}
+
+/// Compute status without writing anything (uses the stat cache).
 pub fn status(repo: &Repo) -> Result<StatusReport> {
+    status_with(repo, StatusOptions::default())
+}
+
+/// Compute status without writing anything.
+pub fn status_with(repo: &Repo, opts: StatusOptions) -> Result<StatusReport> {
     let (_, _, ws) = repo.current()?;
     let head_files = repo.head_files(ws.head.as_ref())?;
-    let working = scan(repo.root(), ScanMode::HashOnly, &head_files)?;
+    let cache = opts.use_stat_cache.then(|| repo.stat_cache());
+    let working = scan_with(
+        repo.root(),
+        ScanMode::HashOnly,
+        &head_files,
+        cache.as_ref(),
+        None,
+    )?;
     Ok(StatusReport {
         branch: ws.branch,
         head: ws.head,
@@ -163,7 +191,12 @@ fn as_text(bytes: Vec<u8>) -> Option<String> {
 
 /// Compute per-file diffs of the working copy against the head.
 pub fn diff(repo: &Repo) -> Result<Vec<FileDiff>> {
-    let st = status(repo)?;
+    diff_with(repo, StatusOptions::default())
+}
+
+/// [`diff`] with options.
+pub fn diff_with(repo: &Repo, opts: StatusOptions) -> Result<Vec<FileDiff>> {
+    let st = status_with(repo, opts)?;
     let mut out = Vec::new();
     for change in st.changes {
         let old = match &change.old {

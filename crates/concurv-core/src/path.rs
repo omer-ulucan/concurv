@@ -65,6 +65,16 @@ impl PlatformRules {
 
     /// Check one name against these platform rules.
     pub fn check_name(&self, name: &str) -> Result<()> {
+        // On every platform: never materialize into a `.git` directory, which
+        // could plant hooks or config into a colocated Git repository (the
+        // class of Git's CVE-2014-9390). A restore-time policy, not a format
+        // rule, so older snapshots stay readable.
+        if name.eq_ignore_ascii_case(".git") {
+            return Err(ConcurvError::new(
+                ErrorCode::InvalidPath,
+                "refusing to write a `.git` entry: it could alter a Git repository in this directory",
+            ));
+        }
         if self.windows_names {
             check_windows_name(name)?;
         }
@@ -116,11 +126,15 @@ fn check_windows_name(name: &str) -> Result<()> {
     }
     // NTFS 8.3 short names such as `CONCUR~1` may alias `.concurv` (cf. Git's `GIT~1`).
     let upper = name.to_ascii_uppercase();
-    if let Some(rest) = upper.strip_prefix("CONCUR~")
-        && !rest.is_empty()
-        && rest.bytes().all(|b| b.is_ascii_digit())
-    {
-        return bad("may alias the `.concurv` metadata directory via an NTFS short name");
+    for (prefix, what) in [("CONCUR~", "`.concurv` metadata"), ("GIT~", "a `.git`")] {
+        if let Some(rest) = upper.strip_prefix(prefix)
+            && !rest.is_empty()
+            && rest.bytes().all(|b| b.is_ascii_digit())
+        {
+            return bad(&format!(
+                "may alias {what} directory via an NTFS short name"
+            ));
+        }
     }
     let stem = name.split('.').next().unwrap_or(name).trim_end();
     if WINDOWS_RESERVED
@@ -239,6 +253,7 @@ mod tests {
             "y ",
             "q?",
             "CONCUR~1",
+            "GIT~1",
             "concur~12",
         ] {
             assert!(w.check_name(bad).is_err(), "{bad:?} accepted");

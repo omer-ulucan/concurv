@@ -7,9 +7,9 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use concurv_core::{ConcurvError, ErrorCode, Result};
 use concurv_workspace::{
-    Change, Repo, RepoOptions, RestoreOptions, UpdateKind, UpdateOptions, WorkspaceInfo,
-    abort_merge, diff, log, op_log, publish, restore, save, status, undo, update_with, verify,
-    workspaces,
+    Change, Repo, RepoOptions, RestoreOptions, StatusOptions, UpdateKind, UpdateOptions,
+    WorkspaceInfo, abort_merge, diff_with, log, op_log, publish, restore, save, status_with, undo,
+    update_with, verify, workspaces,
 };
 use serde_json::{Value, json};
 
@@ -38,9 +38,17 @@ enum Cmd {
     /// Create a new repository in the current directory.
     Init,
     /// Show working-copy changes relative to the workspace head (read-only).
-    Status,
+    Status {
+        /// Hash every file instead of trusting the stat cache.
+        #[arg(long)]
+        no_cache: bool,
+    },
     /// Show content differences relative to the workspace head (read-only).
-    Diff,
+    Diff {
+        /// Hash every file instead of trusting the stat cache.
+        #[arg(long)]
+        no_cache: bool,
+    },
     /// Durably record the working copy as a snapshot in this workspace (does not publish).
     Save {
         /// Snapshot message.
@@ -61,6 +69,12 @@ enum Cmd {
         /// Overwrite unsaved changes after saving them as a backup snapshot.
         #[arg(long)]
         force: bool,
+    },
+    /// Explain whether paths are ignored (.gitignore, .concurv/exclude) or tracked (read-only).
+    CheckIgnore {
+        /// Paths to check (relative to the current directory; `dir/` marks a directory).
+        #[arg(required = true)]
+        paths: Vec<String>,
     },
     /// Check integrity of the repository (read-only).
     Verify {
@@ -148,12 +162,13 @@ impl Cmd {
     fn name(&self) -> &'static str {
         match self {
             Cmd::Init => "init",
-            Cmd::Status => "status",
-            Cmd::Diff => "diff",
+            Cmd::Status { .. } => "status",
+            Cmd::Diff { .. } => "diff",
             Cmd::Save { .. } => "save",
             Cmd::Log { .. } => "log",
             Cmd::Restore { .. } => "restore",
             Cmd::Verify { .. } => "verify",
+            Cmd::CheckIgnore { .. } => "check-ignore",
             Cmd::Op {
                 cmd: OpCmd::Log { .. },
             } => "op log",
@@ -258,13 +273,13 @@ fn run(cli: Cli) -> Result<Output> {
                 ),
             )
         }
-        Cmd::Status => {
+        Cmd::Status { no_cache } => {
             let repo = Repo::discover(&cwd, opts())?;
-            cmd_status(&repo)
+            cmd_status(&repo, status_opts(no_cache))
         }
-        Cmd::Diff => {
+        Cmd::Diff { no_cache } => {
             let repo = Repo::discover(&cwd, opts())?;
-            cmd_diff(&repo)
+            cmd_diff(&repo, status_opts(no_cache))
         }
         Cmd::Save { message } => {
             let repo = Repo::discover(&cwd, opts())?;
@@ -337,6 +352,10 @@ fn run(cli: Cli) -> Result<Output> {
                 }),
                 human,
             )
+        }
+        Cmd::CheckIgnore { paths } => {
+            let repo = Repo::discover(&cwd, opts())?;
+            cmd_check_ignore(&repo, &cwd, &paths)
         }
         Cmd::Verify { full } => {
             let repo = Repo::discover(&cwd, opts())?;
@@ -658,8 +677,14 @@ fn change_json(c: &Change) -> Value {
     })
 }
 
-fn cmd_status(repo: &Repo) -> Result<Output> {
-    let st = status(repo)?;
+fn status_opts(no_cache: bool) -> StatusOptions {
+    StatusOptions {
+        use_stat_cache: !no_cache,
+    }
+}
+
+fn cmd_status(repo: &Repo, how: StatusOptions) -> Result<Output> {
+    let st = status_with(repo, how)?;
     let mut human = format!(
         "On branch {}, head {}\n",
         st.branch.as_deref().unwrap_or("(none)"),
@@ -746,8 +771,8 @@ fn cmd_status(repo: &Repo) -> Result<Output> {
     )
 }
 
-fn cmd_diff(repo: &Repo) -> Result<Output> {
-    let diffs = diff(repo)?;
+fn cmd_diff(repo: &Repo, how: StatusOptions) -> Result<Output> {
+    let diffs = diff_with(repo, how)?;
     let mut human = String::new();
     let mut arr = Vec::new();
     for d in &diffs {
@@ -893,6 +918,71 @@ fn format_time(ms: i64) -> String {
         tod / 3600,
         tod % 3600 / 60,
         tod % 60
+    )
+}
+
+fn cmd_check_ignore(repo: &Repo, cwd: &std::path::Path, inputs: &[String]) -> Result<Output> {
+    let mut paths = Vec::with_capacity(inputs.len());
+    for i in inputs {
+        paths.push(repo.repo_relative(cwd, i)?);
+    }
+    let (_, _, ws) = repo.current()?;
+    let head = repo.head_files(ws.head.as_ref())?;
+    let (reports, unusable) = concurv_workspace::ignore::check_ignore(repo.root(), &head, &paths)?;
+    let mut human = String::new();
+    let mut arr = Vec::new();
+    for (input, r) in inputs.iter().zip(&reports) {
+        use concurv_workspace::ignore::Verdict;
+        let (rule, negated) = match &r.verdict {
+            Verdict::Unmatched => (None, false),
+            Verdict::Ignored { source, pattern } => {
+                (Some((source.to_string(), pattern.clone())), false)
+            }
+            Verdict::Included { source, pattern } => {
+                (Some((source.to_string(), pattern.clone())), true)
+            }
+        };
+        let why = match (&rule, &r.excluded_parent) {
+            (Some((s, p)), Some(parent)) => format!("parent `{parent}/` excluded by `{p}` in {s}"),
+            (Some((s, p)), None) => format!(
+                "{} by `{p}` in {s}",
+                if negated { "re-included" } else { "excluded" }
+            ),
+            (None, _) => "no rule matches".to_owned(),
+        };
+        let state = if r.tracked && (r.excluded_parent.is_some() || r.verdict.is_ignored()) {
+            "tracked (still versioned: ignore rules only apply to untracked paths)"
+        } else if r.tracked {
+            "tracked"
+        } else if r.ignored {
+            "ignored"
+        } else {
+            "not ignored"
+        };
+        human.push_str(&format!("{input}: {state}; {why}\n"));
+        arr.push(json!({
+            "input": input,
+            "path": r.path.to_string(),
+            "is_dir": r.is_dir,
+            "tracked": r.tracked,
+            "ignored": r.ignored,
+            "rule": rule.as_ref().map(|(s, p)| json!({ "source": s, "pattern": p, "negated": negated })),
+            "excluded_parent": r.excluded_parent.as_ref().map(|p| p.to_string()),
+        }));
+    }
+    for u in &unusable {
+        human.push_str(&format!(
+            "warning: {} line {}: pattern `{}` is unusable and never matches ({})\n",
+            u.source, u.line, u.pattern, u.reason
+        ));
+    }
+    let warnings: Vec<Value> = unusable
+        .iter()
+        .map(|u| json!({ "source": u.source.to_string(), "line": u.line, "pattern": u.pattern, "reason": u.reason }))
+        .collect();
+    ok(
+        json!({ "paths": arr, "unusable_patterns": warnings }),
+        human,
     )
 }
 

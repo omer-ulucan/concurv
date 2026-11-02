@@ -176,6 +176,26 @@ pub(crate) fn checkout(
     // 2. Refuse to discard unsaved work unless forced; forced → backup first.
     let head_files = repo.head_files(ws.head.as_ref())?;
     let working = scan(repo.root(), ScanMode::HashOnly, &head_files)?;
+    // Ignored files are not part of `working`, so neither the dirty check nor
+    // a `--force` backup covers them: never overwrite one (R1.5 P0-4).
+    let collisions = ignored_collisions(repo.root(), &working, &target_files, &head_files)?;
+    if !collisions.is_empty() {
+        let list: Vec<String> = collisions
+            .iter()
+            .take(10)
+            .map(|p| format!("  {p}"))
+            .collect();
+        return Err(ConcurvError::new(
+            ErrorCode::DirtyWorkspace,
+            format!(
+                "the target would overwrite {} ignored, untracked path(s) that concurv does not version \
+                 (and so cannot back up); nothing was modified.\n{}\n\
+                 Move or delete them first (this refusal also applies with --force)",
+                collisions.len(),
+                list.join("\n")
+            ),
+        ));
+    }
     // Unsaved work is measured against what the working copy is expected to
     // hold: normally the head; for undoing a restore, the restored snapshot.
     let expected_files = match how.expected {
@@ -198,6 +218,7 @@ pub(crate) fn checkout(
             ws.head.into_iter().collect(),
             &head_files,
             &msg,
+            None,
         )?;
         if stored != working {
             return Err(ConcurvError::new(
@@ -352,7 +373,12 @@ fn apply(
                 ),
             ));
         }
-        if current_state(root, path, head)? != have.copied() {
+        let current = current_state(root, path, head)?;
+        if current == Some(*want) {
+            // Already correct on disk (e.g. written by an interrupted restore).
+            continue;
+        }
+        if current != have.copied() {
             return Err(changed_underneath(path));
         }
         materialize(repo, tmp, path, want, &native)?;
@@ -501,4 +527,46 @@ fn make_symlink(
         ErrorCode::UnsupportedFileType,
         format!("cannot create symlink `{path}` on this platform"),
     ))
+}
+
+/// Paths on disk that writing `target` would overwrite although they are not
+/// part of the scanned working copy (ignored, untracked): a file or symlink at
+/// a target path, or at a directory the target needs. Directories in the way
+/// are left to `apply`, which refuses them.
+fn ignored_collisions(
+    root: &Path,
+    working: &FlatTree,
+    target: &FlatTree,
+    head: &FlatTree,
+) -> Result<Vec<RepoPath>> {
+    let mut out = std::collections::BTreeSet::new();
+    for path in target.keys() {
+        if working.contains_key(path) {
+            continue;
+        }
+        let comps = path.components();
+        for depth in 1..=comps.len() {
+            let p = RepoPath::parse(&comps[..depth].join("/"))?;
+            if working.contains_key(&p) {
+                // A tracked file there is replaced or removed by the plan.
+                break;
+            }
+            match stat_path(&p.to_native(root))? {
+                Present::Missing => break,
+                Present::Dir => {}
+                Present::File { .. } | Present::Symlink(_) => {
+                    // Already holding exactly the target content (e.g. an
+                    // interrupted restore being resumed): nothing to lose.
+                    if depth == comps.len()
+                        && current_state(root, &p, head)? == target.get(&p).copied()
+                    {
+                        break;
+                    }
+                    out.insert(p);
+                    break;
+                }
+            }
+        }
+    }
+    Ok(out.into_iter().collect())
 }

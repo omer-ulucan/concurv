@@ -59,9 +59,11 @@ $ concurv undo                       # reverse your last save/update/restore
 
 Details that matter:
 
-- **Everything is versioned** except `.concurv/` itself, at any depth. There is
-  **no ignore file yet**, so build outputs such as `target/` or `node_modules/`
-  are saved too. Keep them outside the project, or accept the extra storage.
+- **Ignoring files works like Git.** Put patterns in `.gitignore` files (any
+  directory; deeper files win, `!` re-includes) or in the local, never-shared
+  `.concurv/exclude`. `concurv check-ignore <path>` tells you why a path is or
+  isn't ignored. `.concurv/` and `.git/` are never versioned, and neither are
+  nested repositories. Details: section 3a below.
 - Empty directories are not versioned, the same as Git.
 - A rename shows up as `deleted` plus `added`.
 - `status` compares file **contents**, not timestamps, so it never misses an
@@ -73,6 +75,57 @@ Details that matter:
   symlink changes get a one-line note instead.
 - `save` records your work durably **in your workspace only**. Nobody else
   sees it until you `publish`.
+
+## 3a. Ignoring files
+
+concurv reads the same ignore files Git does:
+
+```gitignore
+# .gitignore at the project root
+/target
+node_modules/
+.env
+*.log
+!keep.log
+```
+
+- **Sources**, from strongest to weakest: the `.gitignore` in the deepest
+  directory, then shallower ones, then the local `.concurv/exclude` (yours
+  only; never saved or shared, like `.git/info/exclude`).
+- **Rules** are Git's: `#` comments, `\#` and `\!` escapes, trailing spaces
+  ignored, `!` re-include, `/` anchors to the file's directory, a trailing
+  `/` matches directories only, `*`, `?`, `[abc]`, `**`. A file inside an
+  excluded directory cannot be re-included, exactly as in Git.
+- **Already-tracked files stay tracked.** Adding a rule that matches a file
+  you've already saved doesn't drop it: changes still show up and are saved,
+  and deleting it still shows as `deleted`. Rules only hide **untracked**
+  files.
+- **Ignored files are never touched.** `restore`, `update`, `undo` and
+  workspace checkouts refuse (exit 20, nothing modified) rather than
+  overwrite an ignored file, even with `--force`, because a backup can't
+  contain it. Move it away first.
+- `.concurv/` and `.git/` are never versioned, and a subdirectory that is its
+  own Git or concurv repository is skipped.
+- Matching is **case-sensitive on every platform** (Git on Windows and macOS
+  defaults to case-insensitive).
+- Concurv agrees with Git on everything its differential test covers
+  (`crates/concurv-workspace/tests/ignore_vs_git.rs`). One known difference:
+  for a reversed range like `[z-a]`, Git matches the first character; concurv
+  matches nothing.
+- Ignore rules **don't protect secrets** that were already saved; they only
+  keep new untracked files out.
+
+Ask why a path is or isn't ignored:
+
+```console
+$ concurv check-ignore target/debug/app src/main.rs build/
+target/debug/app: ignored; parent `target/` excluded by `/target` in .gitignore
+src/main.rs: not ignored; no rule matches
+build/: not ignored; no rule matches
+```
+
+A pattern concurv cannot use (for example an unclosed `[`) never matches, as in
+Git, and `check-ignore` lists it under a warning.
 
 ## 4. Working in parallel: workspaces, update and publish
 
@@ -327,6 +380,7 @@ trailer). Tags, notes and signatures are not imported. Full details:
 | `error[CONCURV_CONCURRENT_MODIFICATION]` (exit 21) | A file changed while concurv was reading or replacing it (e.g. an editor or build was writing) | Let the other program finish, then retry. Nothing was recorded or overwritten from the inconsistent read |
 | `error[CONCURV_UNSUPPORTED_FILE_TYPE]` (exit 23) | A FIFO, socket or device file, or (on Windows) a symlink or junction, is in the project | Move it out of the project directory. R1 cannot version it, and refuses rather than silently skipping it |
 | `error[CONCURV_INVALID_PATH]` (exit 22) on `save` | A file name is not valid UTF-8, or contains characters concurv forbids | Rename the file |
+| `status` seems to miss a change on a network or FUSE filesystem | That filesystem may not update the inode change time, which the stat cache relies on (Unix only, ADR 0005) | `concurv status --no-cache` hashes every file. `save` never trusts the cache, so snapshots are always correct |
 | `error[CONCURV_INVALID_PATH]` on `restore` (Windows/macOS) | The snapshot has names this OS can't create safely (`CON`, `a:b`, names differing only in case, …) | Restore on Linux, or rename those files there and save. Nothing was modified |
 | `verify` reports `CONCURV_OBJECT_CORRUPT` / `CONCURV_OBJECT_MISSING` | Storage damage (disk fault, manual edits, an aborted copy) | See below |
 | `error[CONCURV_UNSUPPORTED_FORMAT]` (exit 12) | The repository was written by an incompatible concurv version | Use the matching concurv version. concurv never guesses at unknown formats |
@@ -368,3 +422,4 @@ if started in `<dir>`.
 | Directory fsync after rename | yes | yes | not available; relies on NTFS journaling |
 | Non-UTF-8 file names | rejected by `save` | cannot exist (APFS refuses them) | rejected (unpaired surrogates) |
 | Unsafe-name checks on restore | none needed | case collisions | reserved names, `<>:"\|?*`, trailing dot/space, case collisions, `CONCUR~n` |
+| `status`/`diff` stat cache (ADR 0005) | yes | yes | no (always hashes every file) |

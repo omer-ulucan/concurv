@@ -5,7 +5,7 @@
 **concurv** stands for *concurrent, agent-native version control*: a local-first
 VCS in Rust. The goal is for humans and AI agents on different machines to
 contribute to one shared branch without ever silently losing acknowledged work
-(see `docs/ARC_Research_and_Roadmap_2026.md`; "ARC" was the project's earlier
+(see `docs/ROADMAP_REVISED.md`; "ARC" was the project's earlier
 working name).
 
 **Current state:** R1 (local kernel) and R2 (workspaces and concurrency) gates passed. R2 covers
@@ -77,7 +77,9 @@ Full walkthrough and recovery procedures: **`docs/user-guide.md`**.
 - `update` merges whole files only. Two changes to the same file are refused
   (nothing modified) or, with `--allow-conflicts`, written into the working
   copy for you to resolve; they are never merged automatically.
-- Not implemented yet: ignore files, rename detection, garbage collection
+- Ignores work like Git (`.gitignore`, `.concurv/exclude`, `check-ignore`); ignored
+  files are never overwritten. `.git/` is never versioned.
+- Not implemented yet: rename detection, garbage collection
   or a stat cache (every `status` reads all files).
 - Don't keep repositories in cloud-synced folders (OneDrive, Dropbox).
 
@@ -111,4 +113,3 @@ Workspace layout: `crates/concurv-{core,objects,refs,ops,workspace,cli}`
 | `docs/security/threat-model.md` | threats and mitigation status |
 | `docs/benchmarks/comparison-plan.md` | competitor reproduction plan (no results yet) |
 | `CHANGELOG.md` | changes since the start of the project |
-| `CLAUDE.md` | rules for AI coding sessions working on this repo |

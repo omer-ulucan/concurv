@@ -225,7 +225,8 @@ A header announcing a larger non-blob payload is rejected before allocation.
   serialized by an exclusive repository lock and `op_head` is updated with a
   compare-and-swap against the operation id read under that lock.
 - **R1-I4** `status`, `diff`, `log` and `verify` never write to the repository or
-  the working copy, and take no lock. Only mutating commands (`save`, `restore`)
+  the working copy, and take no lock. (They may read the disposable stat cache
+  of ADR 0005, which only `save` writes.) Only mutating commands (`save`, `restore`)
   delete stale `.concurv/tmp` debris, and only while holding the lock.
 - **R1-I5** `restore` never discards working-copy data that differs from the
   head snapshot unless `--force` is given, and with `--force` the current

@@ -5,7 +5,7 @@ Status: **Accepted**. Date: 2026-11-01. Decided by: project owner.
 ## Context
 
 The project started under the working name **ARC** (`arc`). The roadmap
-(`docs/ARC_Research_and_Roadmap_2026.md`) flagged the name as provisional
+(the original research document) flagged the name as provisional
 because availability and executable collisions had not been checked. The owner
 chose the permanent name **concurv**, short for *concurrent, agent-native
 version control*.
@@ -68,10 +68,9 @@ semantics. Only the identifier strings above changed.
   the directory untouched. Its objects would fail the magic check with
   `CONCURV_OBJECT_CORRUPT` ("bad object magic"). No migration tool is provided
   because no such repositories were ever distributed.
-- The source documents `docs/ARC_Research_and_Roadmap_2026.md` and
-  `prompts/START_WITH_CLAUDE_CODE.md` keep their original text and filenames as
-  historical inputs. The roadmap has a one-line rename note at the top, and
-  "ARC"/`arc` in either document means concurv.
+- The original research document and starter prompt (historical inputs
+  written under the ARC name) are no longer part of the repository. Their
+  roadmap content is carried forward in `docs/ROADMAP_REVISED.md`.
 - Trademark, domain and package-registry (crates.io) availability of
   `concurv` has **not** been checked. This must be done before any public release.
 - From now on, any change to an identifier in the "After" column is a format or

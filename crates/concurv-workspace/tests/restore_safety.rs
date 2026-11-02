@@ -327,3 +327,104 @@ fn interrupted_restore_is_reported_and_resumable() {
         }
     }
 }
+
+/// R1.5: a snapshot containing a `.git` directory is never materialized; it
+/// could plant hooks or config into a colocated Git repository.
+#[test]
+fn restore_refuses_to_write_into_dot_git() {
+    let (d, repo) = new_repo();
+    fs::write(d.path().join("keep"), b"k").unwrap();
+    save(&repo, "base").unwrap();
+    let hook = repo
+        .store()
+        .write_blob_bytes(b"#!/bin/sh\necho pwned\n")
+        .unwrap();
+    let hooks = repo
+        .store()
+        .write_tree(
+            &Tree::new(vec![TreeEntry {
+                name: "post-checkout".into(),
+                kind: EntryKind::Executable,
+                id: hook.object_id(),
+            }])
+            .unwrap(),
+        )
+        .unwrap();
+    let dotgit = repo
+        .store()
+        .write_tree(
+            &Tree::new(vec![TreeEntry {
+                name: "hooks".into(),
+                kind: EntryKind::Tree,
+                id: hooks.object_id(),
+            }])
+            .unwrap(),
+        )
+        .unwrap();
+    for name in [".git", ".GIT"] {
+        let root = Tree::new(vec![TreeEntry {
+            name: name.into(),
+            kind: EntryKind::Tree,
+            id: dotgit.object_id(),
+        }])
+        .unwrap();
+        let s = snapshot_of(&repo, repo.store().write_tree(&root).unwrap());
+        let e = restore(&repo, s, FORCE).unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidPath, "{name}: {e}");
+        assert!(!d.path().join(name).exists());
+        assert_eq!(read_disk(d.path()), files(&[("keep", b"k")]));
+    }
+}
+
+/// Case-fold collisions (P0-9): on case-insensitive platforms (Windows,
+/// macOS) a snapshot with sibling names that differ only in case, as made on
+/// Linux or imported from Git, is refused before any write, including in a
+/// subdirectory and for a file/directory pair. On Linux it restores normally.
+#[test]
+fn case_fold_collisions_follow_the_platform() {
+    let (d, repo) = new_repo();
+    fs::write(d.path().join("keep"), b"k").unwrap();
+    save(&repo, "base").unwrap();
+    let b = repo.store().write_blob_bytes(b"x").unwrap().object_id();
+    let file = |name: &str| TreeEntry {
+        name: name.into(),
+        kind: EntryKind::File,
+        id: b,
+    };
+    let sub = repo
+        .store()
+        .write_tree(&Tree::new(vec![file("Makefile"), file("makefile")]).unwrap())
+        .unwrap()
+        .object_id();
+    let inner = repo
+        .store()
+        .write_tree(&Tree::new(vec![file("f")]).unwrap())
+        .unwrap()
+        .object_id();
+    let dir = |name: &str, id| TreeEntry {
+        name: name.into(),
+        kind: EntryKind::Tree,
+        id,
+    };
+    let cases = [
+        vec![file("README.md"), file("readme.md")],
+        vec![dir("src", sub)],
+        vec![dir("Docs", inner), file("docs")],
+    ];
+    let insensitive = cfg!(any(windows, target_os = "macos"));
+    for entries in cases {
+        let tree = repo
+            .store()
+            .write_tree(&Tree::new(entries).unwrap())
+            .unwrap();
+        let s = snapshot_of(&repo, tree);
+        let r = restore(&repo, s, FORCE);
+        if insensitive {
+            assert_eq!(r.unwrap_err().code, ErrorCode::InvalidPath);
+            assert_eq!(read_disk(d.path()), files(&[("keep", b"k")]));
+        } else {
+            r.unwrap();
+            assert!(verify(&repo, true).ok());
+        }
+    }
+}
