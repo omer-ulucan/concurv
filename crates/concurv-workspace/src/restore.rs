@@ -117,6 +117,7 @@ pub fn restore(repo: &Repo, target: SnapshotId, opts: RestoreOptions) -> Result<
             expected: None,
             undoes: None,
             set_merge: None,
+            set_branch: None,
         },
     )
 }
@@ -138,6 +139,8 @@ pub(crate) struct Checkout {
     pub set_merge: Option<Option<concurv_core::ConflictId>>,
     /// For an `undo`: the operation being reversed.
     pub undoes: Option<OperationId>,
+    /// Set the branch this workspace tracks in the same operation (ADR 0007).
+    pub set_branch: Option<Option<String>>,
 }
 
 /// Materialize `target` in this workspace (RFC 0002 §3.4), then commit one
@@ -269,6 +272,11 @@ pub(crate) fn checkout(
         && let Some(w) = view.workspaces.get_mut(&repo.workspace_id())
     {
         w.merge = m;
+    }
+    if let Some(b) = how.set_branch
+        && let Some(w) = view.workspaces.get_mut(&repo.workspace_id())
+    {
+        w.branch = b;
     }
     let new_op = Operation {
         parents: vec![op_id],

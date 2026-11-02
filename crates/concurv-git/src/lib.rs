@@ -13,7 +13,7 @@ pub mod map;
 pub mod meta;
 pub mod quote;
 
-pub use export::{ExportOutcome, export};
+pub use export::{ExportOutcome, export, export_from};
 pub use git::GitRepo;
 pub use import::{ImportOutcome, import};
 pub use map::GitMap;

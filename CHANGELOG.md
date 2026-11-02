@@ -5,6 +5,13 @@ version 1 and the CLI/JSON contract are not frozen until 0.1.0 (see ADR 0003).
 
 ## [Unreleased]
 
+### Added (R2.5, ADR 0007)
+- **Named branches**: `branch create [--at]`, `branch list`, `branch switch`;
+  `workspace add --branch`; `update --from <branch>` merges another branch;
+  `git export --from <branch>`. `branch switch` refuses unsaved changes,
+  pending merges and saves that would be left on no branch; `undo` reverses
+  a switch. New operation kinds `branch-create`, `branch-switch`.
+
 ## [0.1.0-alpha.1] — 2026-11-01
 
 First public pre-release (`docs/releases/v0.1.0-alpha.1.md`). No license is

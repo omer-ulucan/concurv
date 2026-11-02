@@ -172,6 +172,18 @@ pub fn update(repo: &Repo) -> Result<UpdateOutcome> {
 
 /// [`update`] with options.
 pub fn update_with(repo: &Repo, opts: UpdateOptions) -> Result<UpdateOutcome> {
+    integrate(repo, None, opts)
+}
+
+/// Merge another branch, `from`, into this workspace (ADR 0007): the same as
+/// [`update_with`], but the source is `from` instead of the tracked branch.
+/// The workspace keeps tracking its own branch, so a following `publish`
+/// moves that branch.
+pub fn update_from(repo: &Repo, from: &str, opts: UpdateOptions) -> Result<UpdateOutcome> {
+    integrate(repo, Some(from), opts)
+}
+
+fn integrate(repo: &Repo, from: Option<&str>, opts: UpdateOptions) -> Result<UpdateOutcome> {
     let ws_lock = repo.workspace_lock()?;
     let (_, op, ws) = repo.current()?;
     if ws.merge.is_some() {
@@ -181,7 +193,16 @@ pub fn update_with(repo: &Repo, opts: UpdateOptions) -> Result<UpdateOutcome> {
              `concurv save`, or `concurv update --abort`",
         ));
     }
-    let branch = workspace_branch(ws.branch.clone())?;
+    let branch = match from {
+        Some(b) if !op.view.branches.contains_key(b) => {
+            return Err(ConcurvError::new(
+                ErrorCode::NotFound,
+                format!("no branch named `{b}` (see `concurv branch list`)"),
+            ));
+        }
+        Some(b) => b.to_owned(),
+        None => workspace_branch(ws.branch.clone())?,
+    };
     let main = op.view.branches.get(&branch).copied();
     let up_to_date = |kind| UpdateOutcome {
         branch: branch.clone(),
@@ -309,6 +330,7 @@ pub fn update_with(repo: &Repo, opts: UpdateOptions) -> Result<UpdateOutcome> {
             expected: None,
             undoes: None,
             set_merge,
+            set_branch: None,
         },
     )?;
     Ok(UpdateOutcome {

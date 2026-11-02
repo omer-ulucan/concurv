@@ -93,6 +93,11 @@ fn io(e: std::io::Error) -> ConcurvError {
 /// at it. Refuses (`CONCURV_DIVERGED`) if the Git branch has commits that are
 /// not part of that history.
 pub fn export(repo: &Repo, git: &GitRepo, branch: &str) -> Result<ExportOutcome> {
+    export_from(repo, git, "main", branch)
+}
+
+/// [`export`] of concurv branch `from` instead of `main` (ADR 0007).
+pub fn export_from(repo: &Repo, git: &GitRepo, from: &str, branch: &str) -> Result<ExportOutcome> {
     let refname = format!("refs/heads/{branch}");
     if !git.run(["check-ref-format", &refname])?.status.success() {
         return Err(ConcurvError::new(
@@ -101,10 +106,12 @@ pub fn export(repo: &Repo, git: &GitRepo, branch: &str) -> Result<ExportOutcome>
         ));
     }
     let (_, op, _) = repo.current()?;
-    let Some(main) = op.view.branches.get("main").copied() else {
+    let Some(main) = op.view.branches.get(from).copied() else {
         return Err(ConcurvError::new(
             ErrorCode::NotFound,
-            "nothing has been published to `main` yet; `concurv publish` first",
+            format!(
+                "concurv has no branch `{from}` (nothing published to it yet?); nothing was exported"
+            ),
         ));
     };
     let store = repo.store();
@@ -234,7 +241,7 @@ pub fn export(repo: &Repo, git: &GitRepo, branch: &str) -> Result<ExportOutcome>
     }
     let tip = map
         .get(&main)
-        .ok_or_else(|| ConcurvError::internal("main was not exported"))?
+        .ok_or_else(|| ConcurvError::internal("the branch head was not exported"))?
         .to_owned();
     map.save(repo)?;
 
@@ -248,7 +255,7 @@ pub fn export(repo: &Repo, git: &GitRepo, branch: &str) -> Result<ExportOutcome>
             return Err(ConcurvError::new(
                 ErrorCode::Diverged,
                 format!(
-                    "Git branch `{branch}` is at {old}, which is not part of concurv's `main` history; \
+                    "Git branch `{branch}` is at {old}, which is not part of concurv's `{from}` history; \
                      nothing was changed in Git. Integrate those Git commits first, or export to a new branch"
                 ),
             ));

@@ -614,3 +614,78 @@ fn status_and_diff_accept_no_cache() {
     let (_, st) = cv_json(w, &["status", "--no-cache"]);
     assert_eq!(st["data"]["clean"], false);
 }
+
+#[test]
+fn branch_commands() {
+    let outer = tempfile::tempdir().unwrap();
+    let a = outer.path().join("a");
+    fs::create_dir(&a).unwrap();
+    cv_ok(&a, &["init"]);
+    fs::write(a.join("f.txt"), "base\n").unwrap();
+    cv_ok(&a, &["save", "-m", "base"]);
+    cv_ok(&a, &["publish"]);
+
+    let (code, v) = cv_json(&a, &["branch", "create", "feature"]);
+    assert_eq!(
+        (code, v["command"].as_str()),
+        (0, Some("branch create")),
+        "{v}"
+    );
+    let (code, v) = cv_json(&a, &["branch", "create", "feature"]);
+    assert_eq!(
+        (code, v["error"]["code"].as_str()),
+        (2, Some("CONCURV_INVALID_ARGUMENT")),
+        "{v}"
+    );
+
+    let b = outer.path().join("b");
+    let (code, v) = cv_json(
+        &a,
+        &[
+            "workspace",
+            "add",
+            b.to_str().unwrap(),
+            "--branch",
+            "feature",
+        ],
+    );
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["data"]["workspace"]["branch"], "feature");
+    fs::write(b.join("feat.txt"), "F\n").unwrap();
+    cv_ok(&b, &["save", "-m", "feature"]);
+    cv_ok(&b, &["publish"]);
+
+    let (_, v) = cv_json(&a, &["branch", "list"]);
+    let list = v["data"]["branches"].as_array().unwrap();
+    assert_eq!(list.len(), 2);
+    assert_eq!(list[0]["name"], "feature");
+    assert_eq!(list[0]["workspaces"][0], "b");
+    assert_eq!(list[1]["current"], true);
+
+    let (code, v) = cv_json(&a, &["update", "--from", "feature"]);
+    assert_eq!(
+        (code, v["data"]["result"].as_str()),
+        (0, Some("fast_forward")),
+        "{v}"
+    );
+    assert_eq!(fs::read_to_string(a.join("feat.txt")).unwrap(), "F\n");
+    cv_ok(&a, &["publish"]);
+
+    let (code, v) = cv_json(&a, &["branch", "switch", "feature"]);
+    assert_eq!(
+        (code, v["data"]["branch"].as_str()),
+        (0, Some("feature")),
+        "{v}"
+    );
+    let (code, v) = cv_json(&a, &["branch", "switch", "nope"]);
+    assert_eq!(
+        (code, v["error"]["code"].as_str()),
+        (50, Some("CONCURV_NOT_FOUND")),
+        "{v}"
+    );
+    fs::write(a.join("f.txt"), "dirty\n").unwrap();
+    let (code, _) = cv_json(&a, &["branch", "switch", "main"]);
+    assert_eq!(code, 20);
+    let (code, _) = cv_json(&a, &["update", "--abort", "--from", "main"]);
+    assert_eq!(code, 2);
+}

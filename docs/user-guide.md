@@ -1,7 +1,8 @@
 # concurv user guide
 
 This guide covers what the current build actually does: a single-machine VCS
-with several private workspaces sharing one branch (`main`). Cross-machine
+with several private workspaces sharing named branches (`main` first).
+Cross-machine
 sync does not exist yet (see `docs/ROADMAP_STATUS.md`).
 
 ## 1. Install
@@ -233,6 +234,45 @@ marker sections helps.
 Many workspaces can save, update and publish at the same time: commits are
 serialized internally, and nobody's acknowledged save is ever lost. This is
 tested with 2, 5 and 10 concurrent writers, and with processes killed mid-command.
+
+## 4a. Branches
+
+A **branch** is a shared, named line of work (`main` is the first one). A
+**workspace** always tracks exactly one branch: `publish` moves that branch
+and `update` brings it in. Several workspaces can track the same branch.
+Rules and rationale: `docs/adr/0007-branch-model.md`.
+
+```console
+$ concurv branch create feature/login         # at this workspace's head; nothing else moves
+$ concurv workspace add ../login --branch feature/login
+$ cd ../login && concurv save -m "login form" && concurv publish   # moves feature/login only
+$ concurv branch list                         # every branch, its head, who tracks it
+```
+
+Bring a branch into another one with `update --from`, then publish as usual:
+
+```console
+$ cd ~/code/project                           # tracks main
+$ concurv update --from feature/login         # same merge rules as `update`
+$ concurv publish                             # main now contains the feature
+```
+
+Or move the current workspace to another branch:
+
+```console
+$ concurv branch switch feature/login         # checks out that branch's head
+$ concurv undo                                # back to the previous branch and files
+```
+
+`branch switch` never loses work. It refuses, with nothing changed, if you
+have unsaved changes (exit 20), a pending merge (exit 43), or saves that are
+on neither the old nor the new branch (exit 42), because those would end up
+on no branch. In that case publish them first, or keep them on a new branch:
+`concurv branch create keep-this`, then switch. Branch names use ASCII
+letters, digits and `._-/`, so they export to Git unchanged:
+`concurv git export ../mirror.git --from feature/login`. Deleting and
+renaming branches is not supported yet. `undo` cannot reverse
+`branch create`: branches are shared, and someone may already be using it.
 
 ## 5. Going back to an earlier snapshot
 
