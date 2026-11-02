@@ -1,7 +1,8 @@
 # ADR 0007 — Branch model: shared references, private workspaces
 
 Status: **Approved in principle by the owner (2026-11-01); refinements
-implemented, verification evidence in `docs/ROADMAP_STATUS.md` (R2.5).**
+implemented and verified** (CI run 41375647699 on `main` @ `79caf3f`; see
+`docs/ROADMAP_STATUS.md`, R2.5).
 Final acceptance is the owner's decision. Sections 7 and 8 (R3) are design
 only.
 

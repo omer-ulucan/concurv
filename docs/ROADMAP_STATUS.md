@@ -182,6 +182,15 @@ refinements before full acceptance. Status of each:
 | 7 | Document workspace state, local branch refs, remote-tracking refs, authoritative heads | ADR 0007 §8, RFC 0004 §12, RFC 0003 §5, user guide §4a, architecture | docs |
 | 8 | Delete/rename, protected branches, tags stay on the roadmap | not implemented | `ROADMAP_REVISED.md` P2-1, P2-8, P2-9, P2-10 |
 
-Local run (Windows 11, rustc 1.95): 191 tests passed, 0 failed, 0 ignored;
-clippy clean for Windows and the Linux target. CI evidence: pending (added
-when the branch is merged).
+CI run [41375647699](https://github.com/omer-ulucan/concurv/actions/runs/41375647699)
+on `main` @ `79caf3f`, rustc 1.99.1, `--locked`, `--no-fail-fast`: ubuntu-latest
+**195 passed**, macos-latest **195 passed**, windows-latest **191 passed**
+(Unix-only tests differ), 0 failed, 0 ignored; MSRV 1.89 `cargo check` pass.
+The crash tests assert that kills actually landed mid-switch and were
+resumed, and that transient failures were actually rolled back, so a green
+run proves both happened on every OS.
+
+**Verdict:** every refinement is implemented and its invariants (ADR 0007
+§6, B1–B5) are verified by the tests above on all three platforms. ADR 0007
+is *approved in principle*; marking it fully accepted, and with it the
+R2.5 gate, is the owner's decision.
