@@ -157,8 +157,8 @@ What `update` does:
 |---|---|
 | `main` has nothing new | `up_to_date`, nothing changes |
 | you have no unpublished work | fast-forward: your files and head move to `main` |
-| both sides have new work | **file-level merge**: if the two sides changed *different files*, a merge snapshot is created and checked out. Run your tests before publishing |
-| both sides changed the **same file** (or one deleted what the other changed) | refused with exit 43 `CONCURV_CONFLICT`, listing the paths; **nothing is modified**. Use `update --allow-conflicts` to resolve them (below) |
+| both sides have new work | **three-way merge**: changes to *different files* merge, and so do edits to *different parts of the same text file* (separated by at least one unchanged line; listed as "merged line by line"). A merge snapshot is created and checked out. Run your tests before publishing |
+| both sides changed the **same lines** of a file (or touching lines, or a binary file, or one deleted what the other changed) | refused with exit 43 `CONCURV_CONFLICT`, listing the paths; **nothing is modified**. Use `update --allow-conflicts` to resolve them (below) |
 | a file on one side is a directory on the other | always refused, nothing modified |
 
 `update` needs a clean working copy, so `save` first. It never publishes.
@@ -169,8 +169,8 @@ exit 42 `CONCURV_DIVERGED` and nothing changes. Then run `update`, test, and
 `publish` again. Agents can simply loop `update` → test → `publish` until
 publish succeeds.
 
-**A clean file-level merge is not proof the code works.** Two edits to
-different files can still break the build together. That is why the merge
+**A clean merge is not proof the code works.** Two edits to
+different files, or to different parts of one file, can still break the build together. That is why the merge
 happens in your workspace, where you can test it, and not in `main`.
 
 ### Resolving conflicts
@@ -214,8 +214,8 @@ and ends the merge. If you had already edited files, they are kept in a backup
 snapshot first. Right after `update --allow-conflicts` (before editing),
 `concurv undo` does the same.
 
-Markers always cover the whole file: concurv does not merge line by line
-yet. For large files, a diff tool on `P` (ours), `P.concurv-theirs` or the
+Markers cover the whole file: a file is either merged line by line
+completely or left entirely to you. For large files, a diff tool on `P` (ours), `P.concurv-theirs` or the
 marker sections helps.
 
 Many workspaces can save, update and publish at the same time: commits are
@@ -370,7 +370,7 @@ trailer). Tags, notes and signatures are not imported. Full details:
 | `status` shows **WARNING: a restore … was interrupted** | A restore, `update` or `workspace add` checkout crashed or was killed midway; some files are from the old state and some from the new | Re-run the printed command: `concurv restore --snapshot <target> --force`. If a backup id is shown, your pre-restore work is safe in that snapshot |
 | `error[CONCURV_LOCKED]` (exit 40) | Another concurv process held the repository or workspace lock for the whole 30 s wait | Retry. Commands normally wait for each other automatically. The lock is held by the OS and released automatically when that process exits, even if it crashed, so there's nothing to delete |
 | `error[CONCURV_DIVERGED]` (exit 42) on `publish` | Someone published to `main` after your last `update` | `concurv update`, test, `concurv publish` again. Nothing was changed |
-| `error[CONCURV_CONFLICT]` (exit 43) on `update` | Both sides changed the same file (paths are listed), a file is a directory on the other side, the histories have no single merge base, or a merge is already pending | Nothing was modified. Same-file conflicts: `concurv update --allow-conflicts` and resolve (section 4). A pending merge: finish it with `save` or `update --abort` |
+| `error[CONCURV_CONFLICT]` (exit 43) on `update` | Both sides changed the same lines of a file, or a binary file (paths are listed), a file is a directory on the other side, the histories have no single merge base, or a merge is already pending | Nothing was modified. Same-file conflicts: `concurv update --allow-conflicts` and resolve (section 4). A pending merge: finish it with `save` or `update --abort` |
 | `error[CONCURV_CONFLICT]` (exit 43) on `save` | A merge is pending and some conflicts are unresolved (listed: markers remain or side files still exist) | Finish resolving, delete the `*.concurv-conflict` / `*.concurv-theirs` files, save again. Or `concurv update --abort` |
 | `error[CONCURV_INVALID_ARGUMENT]` (exit 2) on `undo` | Your most recent operation was a `publish` (or `workspace add`), which undo never reverts | Make a new change that reverts the published work, save and publish it |
 | `error[CONCURV_NOT_FOUND]` (exit 50) on `undo` | Nothing left to undo in this workspace | — |

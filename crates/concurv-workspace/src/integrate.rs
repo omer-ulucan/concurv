@@ -1,16 +1,17 @@
 //! `concurv publish` and `concurv update` (RFC 0004 §6, §7).
 
 use concurv_core::{
-    ChangeId, ConcurvError, ConflictId, ErrorCode, OperationId, Result, SnapshotId,
+    ChangeId, ConcurvError, ConflictId, ErrorCode, OperationId, RepoPath, Result, SnapshotId,
 };
-use concurv_objects::{Conflict, ConflictEntry, Operation, Snapshot};
+use concurv_objects::{Conflict, ConflictEntry, EntryKind, ObjectStore, Operation, Snapshot};
 
 use crate::conflicts::{Labels, build_worktree};
 use crate::graph::{MergeBase, is_ancestor, merge_base};
-use crate::merge::{MergeConflict, merge_partial};
+use crate::merge::{MergeConflict, merge_partial_with};
 use crate::repo::Repo;
 use crate::restore::{Checkout, checkout};
-use crate::worktree::{FlatTree, write_trees};
+use crate::textmerge::{MAX_MERGE_BYTES, merge3};
+use crate::worktree::{FileState, FlatTree, write_trees};
 
 /// Result of `publish`.
 #[derive(Debug)]
@@ -139,6 +140,9 @@ pub struct UpdateOutcome {
     pub operation: Option<OperationId>,
     /// For [`UpdateKind::Conflicted`]: the pending merge and its conflicts.
     pub conflict: Option<(ConflictId, Vec<ConflictEntry>)>,
+    /// Files changed on both sides whose edits were merged line by line
+    /// (ADR 0006), sorted.
+    pub content_merged: Vec<RepoPath>,
 }
 
 /// Error for a refused merge, listing every conflicting path.
@@ -187,6 +191,7 @@ pub fn update_with(repo: &Repo, opts: UpdateOptions) -> Result<UpdateOutcome> {
         deleted: 0,
         operation: None,
         conflict: None,
+        content_merged: Vec::new(),
     };
     let Some(m) = main else {
         return Ok(up_to_date(UpdateKind::UpToDate));
@@ -204,6 +209,7 @@ pub fn update_with(repo: &Repo, opts: UpdateOptions) -> Result<UpdateOutcome> {
     let mut set_head = true;
     let mut set_merge = None;
     let mut conflict = None;
+    let mut content_merged = Vec::new();
     let (target, kind, description) = if fast_forward {
         (
             m,
@@ -217,8 +223,14 @@ pub fn update_with(repo: &Repo, opts: UpdateOptions) -> Result<UpdateOutcome> {
         let (base_id, base_files) = merge_base_files(repo, w, m, &branch)?;
         let ours = repo.snapshot_files(&w)?;
         let theirs = repo.snapshot_files(&m)?;
-        let partial = merge_partial(&base_files, &ours, &theirs)?;
         let writer = repo.store_writer()?;
+        let partial = merge_partial_with(&base_files, &ours, &theirs, &mut |path, b, o, t| {
+            let merged = merge_contents(repo.store(), writer.store(), b, o, t)?;
+            if merged.is_some() {
+                content_merged.push(path.clone());
+            }
+            Ok(merged)
+        })?;
         if partial.conflicts.is_empty() {
             let tree = write_trees(writer.store(), &partial.merged)?;
             let snap = writer.store().write_snapshot(&Snapshot {
@@ -307,6 +319,7 @@ pub fn update_with(repo: &Repo, opts: UpdateOptions) -> Result<UpdateOutcome> {
         deleted: out.deleted,
         operation: Some(out.operation),
         conflict,
+        content_merged,
     })
 }
 
@@ -332,4 +345,47 @@ fn merge_base_files(
             ))
         }
     }
+}
+
+/// Line-level merge of one path changed on both sides (ADR 0006). Only
+/// regular files (plain or executable) whose three versions are text are
+/// merged; the executable bit merges like a file-level change. `None` keeps
+/// the conflict. The merged blob is stored through `writer`.
+fn merge_contents(
+    store: &ObjectStore,
+    writer: &ObjectStore,
+    b: &FileState,
+    o: &FileState,
+    t: &FileState,
+) -> Result<Option<FileState>> {
+    let regular = |s: &FileState| matches!(s.kind, EntryKind::File | EntryKind::Executable);
+    if !(regular(b) && regular(o) && regular(t)) {
+        return Ok(None);
+    }
+    let kind = if o.kind == t.kind || t.kind == b.kind {
+        o.kind
+    } else if o.kind == b.kind {
+        t.kind
+    } else {
+        return Ok(None);
+    };
+    let blob = if o.blob == t.blob || t.blob == b.blob {
+        o.blob
+    } else if o.blob == b.blob {
+        t.blob
+    } else {
+        let mut texts = Vec::with_capacity(3);
+        for s in [b, o, t] {
+            let (_, len) = store.verify(&s.blob.object_id())?;
+            if len > MAX_MERGE_BYTES as u64 {
+                return Ok(None);
+            }
+            texts.push(store.read_blob(&s.blob)?);
+        }
+        match merge3(&texts[0], &texts[1], &texts[2]) {
+            Some(bytes) => writer.write_blob_bytes(&bytes)?,
+            None => return Ok(None),
+        }
+    };
+    Ok(Some(FileState { kind, blob }))
 }
