@@ -375,3 +375,56 @@ fn restore_refuses_to_write_into_dot_git() {
         assert_eq!(read_disk(d.path()), files(&[("keep", b"k")]));
     }
 }
+
+/// Case-fold collisions (P0-9): on case-insensitive platforms (Windows,
+/// macOS) a snapshot with sibling names that differ only in case, as made on
+/// Linux or imported from Git, is refused before any write, including in a
+/// subdirectory and for a file/directory pair. On Linux it restores normally.
+#[test]
+fn case_fold_collisions_follow_the_platform() {
+    let (d, repo) = new_repo();
+    fs::write(d.path().join("keep"), b"k").unwrap();
+    save(&repo, "base").unwrap();
+    let b = repo.store().write_blob_bytes(b"x").unwrap().object_id();
+    let file = |name: &str| TreeEntry {
+        name: name.into(),
+        kind: EntryKind::File,
+        id: b,
+    };
+    let sub = repo
+        .store()
+        .write_tree(&Tree::new(vec![file("Makefile"), file("makefile")]).unwrap())
+        .unwrap()
+        .object_id();
+    let inner = repo
+        .store()
+        .write_tree(&Tree::new(vec![file("f")]).unwrap())
+        .unwrap()
+        .object_id();
+    let dir = |name: &str, id| TreeEntry {
+        name: name.into(),
+        kind: EntryKind::Tree,
+        id,
+    };
+    let cases = [
+        vec![file("README.md"), file("readme.md")],
+        vec![dir("src", sub)],
+        vec![dir("Docs", inner), file("docs")],
+    ];
+    let insensitive = cfg!(any(windows, target_os = "macos"));
+    for entries in cases {
+        let tree = repo
+            .store()
+            .write_tree(&Tree::new(entries).unwrap())
+            .unwrap();
+        let s = snapshot_of(&repo, tree);
+        let r = restore(&repo, s, FORCE);
+        if insensitive {
+            assert_eq!(r.unwrap_err().code, ErrorCode::InvalidPath);
+            assert_eq!(read_disk(d.path()), files(&[("keep", b"k")]));
+        } else {
+            r.unwrap();
+            assert!(verify(&repo, true).ok());
+        }
+    }
+}
