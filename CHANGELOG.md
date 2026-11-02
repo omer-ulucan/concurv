@@ -1,9 +1,14 @@
 # Changelog
 
-All notable changes to concurv. Nothing has been released yet. Format
-version 1 is not frozen until the first release (see ADR 0003).
+All notable changes to concurv. Releases before 0.1.0 are alphas: format
+version 1 and the CLI/JSON contract are not frozen until 0.1.0 (see ADR 0003).
 
 ## [Unreleased]
+
+## [0.1.0-alpha.1] — 2026-11-01
+
+First public pre-release (`docs/releases/v0.1.0-alpha.1.md`). No license is
+asserted yet.
 
 R1 gate passed on 2026-11-01: the full suite is green on Linux, macOS and
 Windows in CI, with identical golden hashes on all three (`docs/ROADMAP_STATUS.md`).

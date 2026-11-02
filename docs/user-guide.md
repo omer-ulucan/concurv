@@ -2,8 +2,7 @@
 
 This guide covers what the current build actually does: a single-machine VCS
 with several private workspaces sharing one branch (`main`). Cross-machine
-sync and line-level (within-file) merging do not exist yet (see
-`docs/ROADMAP_STATUS.md`).
+sync does not exist yet (see `docs/ROADMAP_STATUS.md`).
 
 ## 1. Install
 
@@ -14,7 +13,7 @@ $ git clone https://github.com/omer-ulucan/concurv.git
 $ cd concurv
 $ cargo install --path crates/concurv-cli    # installs `concurv` into ~/.cargo/bin
 $ concurv --version
-concurv 0.1.0
+concurv 0.1.0-alpha.1
 ```
 
 Or build without installing: `cargo build --release` puts the binary at

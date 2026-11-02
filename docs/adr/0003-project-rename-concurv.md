@@ -71,7 +71,9 @@ semantics. Only the identifier strings above changed.
 - The original research document and starter prompt (historical inputs
   written under the ARC name) are no longer part of the repository. Their
   roadmap content is carried forward in `docs/ROADMAP_REVISED.md`.
-- Trademark, domain and package-registry (crates.io) availability of
-  `concurv` has **not** been checked. This must be done before any public release.
+- Name availability, checked 2026-11-01 before the first pre-release: the
+  crate name `concurv` is unclaimed on crates.io and no other GitHub project
+  uses it. **Trademark and domain availability have not been checked**; that
+  is the owner's decision before a stable (non-alpha) release.
 - From now on, any change to an identifier in the "After" column is a format or
   contract change and follows the versioning rules in ADR 0001 and `docs/cli.md`.
