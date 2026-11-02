@@ -344,7 +344,7 @@ fn export_of_a_feature_branch_shares_history_with_main() {
     let a = concurv_history(outer.path());
     let g = bare(&outer.path().join("mirror.git"));
     export(&a, &g, "main").unwrap();
-    branches::create(&a, "feature/x", None).unwrap();
+    branches::create(&a, "feature/x", branches::CreateOptions::default()).unwrap();
     branches::switch(&a, "feature/x").unwrap();
     write(a.root(), &[("feature.txt", b"F\n")]);
     save(&a, "feature work").unwrap();

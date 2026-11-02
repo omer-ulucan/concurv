@@ -8,6 +8,8 @@ pub mod graph;
 pub mod ignore;
 pub mod integrate;
 pub mod merge;
+pub mod reconcile;
+pub mod refname;
 pub mod repo;
 pub mod restore;
 pub mod save;
@@ -21,7 +23,7 @@ pub mod worktree;
 
 pub use conflicts::{ConflictStatus, abort_merge, conflict_status, pending_merge};
 pub use integrate::{
-    PublishOutcome, UpdateKind, UpdateOptions, UpdateOutcome, publish, update, update_from,
+    PublishOutcome, UpdateKind, UpdateOptions, UpdateOutcome, merge_branch, publish, update,
     update_with,
 };
 pub use merge::{ConflictKind, MergeConflict, PartialMerge};

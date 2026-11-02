@@ -662,12 +662,19 @@ fn branch_commands() {
     assert_eq!(list[0]["workspaces"][0], "b");
     assert_eq!(list[1]["current"], true);
 
-    let (code, v) = cv_json(&a, &["update", "--from", "feature"]);
+    let (code, v) = cv_json(&a, &["merge", "feature"]);
     assert_eq!(
-        (code, v["data"]["result"].as_str()),
-        (0, Some("fast_forward")),
+        (code, v["command"].as_str(), v["data"]["result"].as_str()),
+        (0, Some("merge"), Some("fast_forward")),
         "{v}"
     );
+    // `update --from` was never released: it is a usage error now.
+    assert_eq!(
+        cv(&a, &["update", "--from", "feature"]).status.code(),
+        Some(2)
+    );
+    let (code, v) = cv_json(&a, &["merge", "main"]);
+    assert_eq!(code, 2, "merging the tracked branch is `update`: {v}");
     assert_eq!(fs::read_to_string(a.join("feat.txt")).unwrap(), "F\n");
     cv_ok(&a, &["publish"]);
 
@@ -686,6 +693,27 @@ fn branch_commands() {
     fs::write(a.join("f.txt"), "dirty\n").unwrap();
     let (code, _) = cv_json(&a, &["branch", "switch", "main"]);
     assert_eq!(code, 20);
-    let (code, _) = cv_json(&a, &["update", "--abort", "--from", "main"]);
+    let (code, _) = cv_json(&a, &["merge", "main", "--abort"]);
     assert_eq!(code, 2);
+    fs::write(
+        a.join("f.txt"),
+        "F work
+",
+    )
+    .unwrap();
+    cv_ok(&a, &["save", "-m", "unpublished"]);
+    let (code, _) = cv_json(&a, &["branch", "switch", "main"]);
+    assert_eq!(code, 42, "unpublished saves would be on no branch");
+    let (code, v) = cv_json(&a, &["branch", "create", "keep", "--switch"]);
+    assert_eq!(
+        (code, v["data"]["switched"].as_bool()),
+        (0, Some(true)),
+        "{v}"
+    );
+    let (code, v) = cv_json(&a, &["branch", "switch", "main"]);
+    assert_eq!(
+        (code, v["data"]["resumed"].as_bool()),
+        (0, Some(false)),
+        "{v}"
+    );
 }

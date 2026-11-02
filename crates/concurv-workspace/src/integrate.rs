@@ -175,11 +175,13 @@ pub fn update_with(repo: &Repo, opts: UpdateOptions) -> Result<UpdateOutcome> {
     integrate(repo, None, opts)
 }
 
-/// Merge another branch, `from`, into this workspace (ADR 0007): the same as
-/// [`update_with`], but the source is `from` instead of the tracked branch.
-/// The workspace keeps tracking its own branch, so a following `publish`
-/// moves that branch.
-pub fn update_from(repo: &Repo, from: &str, opts: UpdateOptions) -> Result<UpdateOutcome> {
+/// `concurv merge <branch>` (ADR 0007 §2): integrate **another** branch into
+/// this workspace, with exactly the rules of [`update_with`] (clean working
+/// copy, exact merge base, line-level merge, conflicts refused or recorded).
+/// The workspace keeps tracking its own branch, so only a following
+/// `publish` (a compare-and-swap) can make the result a published head.
+/// Merging the tracked branch itself is `update`, and is refused here.
+pub fn merge_branch(repo: &Repo, from: &str, opts: UpdateOptions) -> Result<UpdateOutcome> {
     integrate(repo, Some(from), opts)
 }
 
@@ -200,9 +202,16 @@ fn integrate(repo: &Repo, from: Option<&str>, opts: UpdateOptions) -> Result<Upd
                 format!("no branch named `{b}` (see `concurv branch list`)"),
             ));
         }
+        Some(b) if ws.branch.as_deref() == Some(b) => {
+            return Err(ConcurvError::new(
+                ErrorCode::InvalidArgument,
+                format!("this workspace already tracks `{b}`; use `concurv update` to bring it in"),
+            ));
+        }
         Some(b) => b.to_owned(),
         None => workspace_branch(ws.branch.clone())?,
     };
+    let kind_name: &'static str = if from.is_some() { "merge" } else { "update" };
     let main = op.view.branches.get(&branch).copied();
     let up_to_date = |kind| UpdateOutcome {
         branch: branch.clone(),
@@ -235,7 +244,7 @@ fn integrate(repo: &Repo, from: Option<&str>, opts: UpdateOptions) -> Result<Upd
         (
             m,
             UpdateKind::FastForward,
-            format!("update: fast-forward to {branch} {m}"),
+            format!("{kind_name}: fast-forward to {branch} {m}"),
         )
     } else {
         let w = ws
@@ -265,7 +274,7 @@ fn integrate(repo: &Repo, from: Option<&str>, opts: UpdateOptions) -> Result<Upd
             (
                 snap,
                 UpdateKind::Merged,
-                format!("update: merge {branch} {m} into {w} as {snap}"),
+                format!("{kind_name}: merge {branch} {m} into {w} as {snap}"),
             )
         } else if !opts.allow_conflicts {
             return Err(conflict_error(&branch, &partial.conflicts));
@@ -312,7 +321,7 @@ fn integrate(repo: &Repo, from: Option<&str>, opts: UpdateOptions) -> Result<Upd
                 worktree,
                 UpdateKind::Conflicted,
                 format!(
-                    "update: merge {branch} {m} into {w} with {} conflict(s), pending as {cid}",
+                    "{kind_name}: merge {branch} {m} into {w} with {} conflict(s), pending as {cid}",
                     partial.conflicts.len()
                 ),
             )
@@ -325,12 +334,13 @@ fn integrate(repo: &Repo, from: Option<&str>, opts: UpdateOptions) -> Result<Upd
         Checkout {
             force: false,
             set_head,
-            kind: "update",
+            kind: kind_name,
             description,
             expected: None,
             undoes: None,
             set_merge,
             set_branch: None,
+            transactional: false,
         },
     )?;
     Ok(UpdateOutcome {

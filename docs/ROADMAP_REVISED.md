@@ -62,7 +62,7 @@ completion evidence.
 |---|---|---|---|---|---|
 | P1-1 | Hunk-level 3-way merge reusing the conflict model; markers per hunk | R2.5 | disjoint hunks merge; adjacent/overlapping conflict; identical edits; EOF insert; no final newline; CRLF; binary → whole-file conflict; crash during materialization; Git round trip | any doubt → conflict, never a silent pick | tests |
 | P1-2 | Branch model ADR (named branches vs workspaces, switch semantics, publish targets, sync implications) | R2.5 | ADR accepted by the owner (done: ADR 0007, accepted under the owner's delegation) | — | ADR |
-| P1-3 | Minimal branches: `branch create/list`, workspace on a branch, publish to it | R2.5 | tests for isolation and CAS per branch | refuse ambiguous operations | tests |
+| P1-3 | Minimal branches: `branch create/list/switch`, workspace on a branch, publish to it, `merge <branch>`, transactional switch, Git-compatible names (ADR 0007 refinements) | R2.5 | tests for isolation and CAS per branch | refuse ambiguous operations | tests |
 | P1-4 | RFC 0003 revision (wire schema, device identity, ACLs, TLS, negotiation, quarantine, resume, replay defense) | R3 prep | RFC review | — | RFC |
 | P1-5 | Fuzz targets for decoders and the fast-export parser | R1.5–R2.5 | `cargo fuzz` runs recorded (not just configured) | — | corpus + run log |
 | P1-6 | Explicit `track` / `untrack` with persisted state | R2.5 | ADR + tests: untrack keeps the file on disk | — | tests |
@@ -80,6 +80,9 @@ completion evidence.
 | P2-5 | Filesystem watcher for `status` | R7 |
 | P2-6 | Agent identity, intent, JSONL events | R5 |
 | P2-7 | Candidate test gates, attestations, sandbox | R4 |
+| P2-8 | Branch delete and rename (policy for workspaces tracking them; sync semantics; refuse while tracked or unmerged) | R3 |
+| P2-9 | Protected branches (publication only through R4 gates) | R4 |
+| P2-10 | Remote-tracking references in the view (`remote/<relay>/<b>`, separate from `branches`) and wiring `reconcile::plan` into fetch | R3 |
 
 ## 4. Execution order
 

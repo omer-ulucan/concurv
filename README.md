@@ -11,8 +11,10 @@ working name).
 
 **Current state:** first pre-release, **v0.1.0-alpha.1**
 ([download](https://github.com/omer-ulucan/concurv/releases/tag/v0.1.0-alpha.1)).
-Gates passed: R1 (local kernel), R1.5 (daily usability and safety), R2
-(workspaces and concurrency) and R2.5 (local merge and branches). On one
+Gates passed: R1 (local kernel), R1.5 (daily usability and safety) and R2
+(workspaces and concurrency). R2.5 (local merge and branches) is
+implemented and tested; it awaits the owner's final acceptance of the
+branch model (ADR 0007). On one
 machine: several private workspaces on shared named branches, compare-and-swap
 publication, three-way merge with line-level merging of non-overlapping
 edits, recorded conflicts that you resolve and save, workspace-scoped
@@ -74,8 +76,9 @@ Branches (ADR 0007):
 ```console
 $ concurv branch create feature
 $ concurv workspace add ../my-project-feature --branch feature
-$ concurv update --from feature           # (on main) merge the feature, then publish
+$ concurv merge feature                   # (on main) merge the feature, then publish
 $ concurv branch switch feature           # or move this workspace to another branch
+$ concurv branch create topic --switch    # keep unpublished saves on a new branch
 ```
 
 Share with Git / GitHub (needs `git` on PATH):
@@ -148,7 +151,7 @@ Workspace layout: `crates/concurv-{core,objects,refs,ops,workspace,git,cli,bench
 | `docs/adr/0004-ignore-rules.md` | Git-compatible ignores and the tracked-file model |
 | `docs/adr/0005-stat-cache.md` | the stat cache and why it can never produce a wrong snapshot |
 | `docs/adr/0006-hunk-merge.md` | line-level merge in `update` |
-| `docs/adr/0007-branch-model.md` | named branches vs workspaces, switching, `update --from` |
+| `docs/adr/0007-branch-model.md` | branches vs workspaces, naming, transactional switch, `merge`, reference kinds, R3 reconciliation rules |
 | `docs/security/threat-model.md` | threats and mitigation status |
 | `docs/benchmarks/comparison-plan.md` | competitor reproduction plan (no results yet) |
 | `bench/RESULTS.md` | `status`/`save` benchmark results (reproducible with `concurv-bench`) |

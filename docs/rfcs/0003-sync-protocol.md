@@ -21,7 +21,7 @@ is executed or trusted without verification.
 | Level | Effect | Mutates working files? |
 |---|---|---|
 | `awareness` | ephemeral presence/intent events (R5) | never |
-| `fetch` | download missing objects + remote head pointers into `remote/<relay>/<branch>` | never |
+| `fetch` | download missing objects + remote heads into remote-tracking references `remote/<relay>/<branch>` (§5) | never |
 | `apply` | explicit user/policy action integrating fetched changes into a private workspace | yes, via normal restore safety rules |
 | `publish` | CAS of the relay's branch head | never locally |
 
@@ -63,15 +63,55 @@ is executed or trusted without verification.
 - Events carry `(device_id, monotonic seq)` and a relay timestamp; stale or
   replayed awareness events are dropped after their TTL.
 
-## 5. Offline divergence
+## 5. Branch references and offline divergence
 
-Clients record the last fetched published head in their View as
-`remote/<relay>/<branch>`. A local branch can advance while offline. On
-reconnect: fetch → the client sees `local` and `remote` heads; if `local` does
-not descend from `remote`, publishing requires integration (R4) producing a
-new candidate whose parents include the remote head. A stale publish is
-rejected, never force-applied. Nothing is overwritten: both heads remain
-reachable on the client.
+Revised for the branch model (ADR 0007 §7–8). Reconciliation is per branch.
+
+**Four kinds of state** take part, and only the relay's state is
+authoritative across machines:
+
+| Kind | Stored | Moved by |
+|---|---|---|
+| Workspace state (files, workspace head, pending merge) | the workspace | local commands in that workspace; **never synced** |
+| Local branch reference `b` | the client's view, `branches` | local `publish` (CAS fast-forward), the fast-forward below |
+| Remote-tracking reference `remote/<relay>/<b>` | the client's view, a **separate** map (never `branches`), plus the relay's `publish_seq` | only `fetch` |
+| Authoritative published head of `b` | the relay | only the relay's CAS `Publish` (§3.8) |
+
+The names `remote/…` and `remotes/…` are reserved, so local branches can
+never shadow a remote-tracking reference (ADR 0007 §5). Adding the
+remote-tracking map to the view is a format change scheduled with R3.
+
+**Rules after a fetch**, with `L` the local reference, `T` the remote-tracking
+reference before the fetch, and `R` the relay's head:
+
+1. **Fetched history is preserved.** Objects are verified and promoted
+   (§3.6), then `T := R`, whatever the relation of `L` and `R`.
+2. **Local references move only forward.** If `L` is an ancestor of `R`,
+   `L` may fast-forward to `R`. A workspace tracking `b` still integrates
+   only through `update` (its files are never changed by sync, §2).
+   Otherwise `L` stays where it is.
+3. **No implicit publication.** If `R` is an ancestor of `L`, the client
+   may offer `Publish{expected_head: R, proposed_head: L}`. If they diverge,
+   nothing is published. A user or agent must integrate `R` with
+   `concurv merge` in a workspace, which produces a merge candidate with
+   parents `L` and `R`. The candidate must pass the conflict checks and the
+   branch's R4 gates. It is then published by a CAS that expects `R`. A
+   merge candidate never becomes a published head automatically.
+4. **Stale and racing publications** are rejected by the relay's CAS
+   (`CONCURV_STALE_HEAD`), never force-applied. The loser fetches again,
+   and rule 3 applies.
+5. **A rewound relay is not followed.** If `R` does not descend from `T`
+   (the relay's head moved backwards or sideways, or the branch vanished),
+   the client reports it and changes no reference automatically.
+6. **Both sides stay reachable.** On the client, `L`, `T` and every
+   workspace head remain references, so no acknowledged snapshot becomes
+   unreachable (ADR 0007 invariant B1).
+
+These rules are implemented as a pure decision function,
+`concurv_workspace::reconcile::plan`, which is not wired to any command.
+They are tested with an in-memory relay model (`tests/reconcile.rs`):
+divergence preserved, exactly one winner of racing CAS publications, and a
+rewound relay ignored.
 
 ## 6. Security requirements (see threat model)
 

@@ -52,14 +52,23 @@ pub struct RestoreMarker {
     pub target: SnapshotId,
     /// Backup taken before modifying files.
     pub backup: Option<SnapshotId>,
+    /// For a branch switch (ADR 0007): the workspace head before it, i.e. the
+    /// state a rollback returns to.
+    pub origin: Option<SnapshotId>,
+    /// For a branch switch: the branch being switched to.
+    pub branch: Option<String>,
 }
 
 fn marker_bytes(m: &RestoreMarker) -> String {
-    format!(
+    let mut s = format!(
         "concurv-restore 1\ntarget {}\nbackup {}\n",
         m.target,
         m.backup.map_or_else(|| "-".to_owned(), |b| b.to_hex())
-    )
+    );
+    if let (Some(o), Some(b)) = (m.origin, &m.branch) {
+        s.push_str(&format!("origin {o}\nbranch {b}\n"));
+    }
+    s
 }
 
 /// Read the interrupted-restore marker, if present.
@@ -89,7 +98,24 @@ pub fn read_marker(repo: &Repo) -> Result<Option<RestoreMarker>> {
         )),
         None => return Err(bad()),
     };
-    Ok(Some(RestoreMarker { target, backup }))
+    // Optional switch lines (absent in markers of restores and older builds).
+    let origin = match lines.next().and_then(|l| l.strip_prefix("origin ")) {
+        Some(h) => Some(SnapshotId::from_object_id(
+            ObjectId::from_hex(h).map_err(|_| bad())?,
+        )),
+        None => None,
+    };
+    let branch = match (origin, lines.next().and_then(|l| l.strip_prefix("branch "))) {
+        (Some(_), Some(b)) => Some(b.to_owned()),
+        (Some(_), None) => return Err(bad()),
+        (None, _) => None,
+    };
+    Ok(Some(RestoreMarker {
+        target,
+        backup,
+        origin,
+        branch,
+    }))
 }
 
 /// Remove the marker durably (no-op if absent). Requires the workspace lock.
@@ -118,6 +144,7 @@ pub fn restore(repo: &Repo, target: SnapshotId, opts: RestoreOptions) -> Result<
             undoes: None,
             set_merge: None,
             set_branch: None,
+            transactional: false,
         },
     )
 }
@@ -141,11 +168,67 @@ pub(crate) struct Checkout {
     pub undoes: Option<OperationId>,
     /// Set the branch this workspace tracks in the same operation (ADR 0007).
     pub set_branch: Option<Option<String>>,
+    /// Branch-switch semantics (ADR 0007 §3): untracked files that do not
+    /// collide with the target stay in place; colliding ones are refused;
+    /// a failure before the commit point rolls the working copy back.
+    pub transactional: bool,
+}
+
+/// Every proper directory prefix of the paths in `files`.
+fn dir_prefixes(files: &FlatTree) -> Result<std::collections::BTreeSet<RepoPath>> {
+    let mut out = std::collections::BTreeSet::new();
+    for p in files.keys() {
+        let comps = p.components();
+        for depth in 1..comps.len() {
+            out.insert(RepoPath::parse(&comps[..depth].join("/"))?);
+        }
+    }
+    Ok(out)
+}
+
+/// Untracked paths of `working` (not in `expected`) that writing `target`
+/// would overwrite or need to remove: a different file at a target path, a
+/// file where the target needs a directory, or a file under a path that the
+/// target makes a file. Also returns `target` extended with the untracked
+/// paths that can stay as they are.
+fn untracked_plan(
+    working: &FlatTree,
+    expected: &FlatTree,
+    target: &FlatTree,
+) -> Result<(Vec<RepoPath>, FlatTree)> {
+    let dirs = dir_prefixes(target)?;
+    let mut collisions = Vec::new();
+    let mut effective = target.clone();
+    for (p, st) in working {
+        if expected.contains_key(p) {
+            continue;
+        }
+        match target.get(p) {
+            Some(t) if t == st => {} // already the target content
+            Some(_) => collisions.push(p.clone()),
+            None => {
+                let comps = p.components();
+                let file_above = (1..comps.len()).any(|d| {
+                    RepoPath::parse(&comps[..d].join("/")).is_ok_and(|a| target.contains_key(&a))
+                });
+                if dirs.contains(p) || file_above {
+                    collisions.push(p.clone());
+                } else {
+                    effective.insert(p.clone(), *st);
+                }
+            }
+        }
+    }
+    Ok((collisions, effective))
 }
 
 /// Materialize `target` in this workspace (RFC 0002 §3.4), then commit one
 /// operation. The caller holds the workspace lock; the repository lock is
 /// taken only for short critical sections (temp session, commit).
+///
+/// A path whose current content already equals the target is never counted
+/// as unsaved work: overwriting it loses nothing. This makes an interrupted
+/// checkout resumable by running it again.
 pub(crate) fn checkout(
     repo: &Repo,
     ws_lock: &WorkspaceLock,
@@ -179,9 +262,37 @@ pub(crate) fn checkout(
     // 2. Refuse to discard unsaved work unless forced; forced → backup first.
     let head_files = repo.head_files(ws.head.as_ref())?;
     let working = scan(repo.root(), ScanMode::HashOnly, &head_files)?;
+    // Unsaved work is measured against what the working copy is expected to
+    // hold: normally the head; for undoing a restore, the restored snapshot.
+    let expected_files = match how.expected {
+        Some(e) => repo.snapshot_files(&e)?,
+        None => head_files.clone(),
+    };
+    let effective = if how.transactional {
+        let (collisions, effective) = untracked_plan(&working, &expected_files, &target_files)?;
+        if !collisions.is_empty() {
+            let list: Vec<String> = collisions
+                .iter()
+                .take(10)
+                .map(|p| format!("  {p}"))
+                .collect();
+            return Err(ConcurvError::new(
+                ErrorCode::DirtyWorkspace,
+                format!(
+                    "the target would overwrite or remove {} untracked path(s); nothing was modified.\n{}\n\
+                     Save, move or delete them first",
+                    collisions.len(),
+                    list.join("\n")
+                ),
+            ));
+        }
+        effective
+    } else {
+        target_files.clone()
+    };
     // Ignored files are not part of `working`, so neither the dirty check nor
     // a `--force` backup covers them: never overwrite one (R1.5 P0-4).
-    let collisions = ignored_collisions(repo.root(), &working, &target_files, &head_files)?;
+    let collisions = ignored_collisions(repo.root(), &working, &effective, &head_files)?;
     if !collisions.is_empty() {
         let list: Vec<String> = collisions
             .iter()
@@ -199,17 +310,14 @@ pub(crate) fn checkout(
             ),
         ));
     }
-    // Unsaved work is measured against what the working copy is expected to
-    // hold: normally the head; for undoing a restore, the restored snapshot.
-    let expected_files = match how.expected {
-        Some(e) => repo.snapshot_files(&e)?,
-        None => head_files.clone(),
-    };
-    let dirty = diff_flat(&expected_files, &working);
+    // A change whose current state is already the target state loses
+    // nothing (it is not overwritten), e.g. after an interrupted checkout.
+    let dirty: Vec<_> = diff_flat(&expected_files, &working)
+        .into_iter()
+        .filter(|c| working.get(&c.path) != effective.get(&c.path))
+        .collect();
     let mut backup = None;
-    // A working copy that already equals the target loses nothing, even if it
-    // differs from the head (e.g. resuming an interrupted checkout).
-    if !dirty.is_empty() && working != target_files {
+    if !dirty.is_empty() {
         if !how.force {
             return Err(dirty_error(&dirty));
         }
@@ -234,64 +342,111 @@ pub(crate) fn checkout(
 
     // 3. Durable marker, then apply, using a workspace-local temp session.
     let session = repo.workspace_session(ws_lock)?;
-    let marker = RestoreMarker { target, backup };
-    write_file_atomic(
+    let wanted_branch = how.set_branch.clone().flatten();
+    let marker = RestoreMarker {
+        target,
+        backup,
+        origin: if how.transactional { ws.head } else { None },
+        branch: if how.transactional {
+            wanted_branch.clone()
+        } else {
+            None
+        },
+    };
+    if let Err(e) = write_file_atomic(
         session.dir(),
         &repo.restore_marker(),
         marker_bytes(&marker).as_bytes(),
         store.faults(),
-    )?;
-    let (written, deleted) = apply(session.dir(), repo, &working, &target_files, &head_files)?;
-
-    // 4. Confirm the result before recording it.
-    let after = scan(repo.root(), ScanMode::HashOnly, &target_files)?;
-    if after != target_files {
-        return Err(ConcurvError::new(
-            ErrorCode::ConcurrentModification,
-            "working copy does not match the target after restore (modified concurrently?); \
-             re-run the restore",
-        ));
+    ) {
+        // No file was touched yet. A transactional checkout also removes a
+        // marker that may have reached the disk, so nothing claims an
+        // interrupted switch (best effort: a leftover one is harmless).
+        if how.transactional {
+            let _ = clear_marker(repo, ws_lock);
+        }
+        return Err(e);
     }
+    let rollback = |err: ConcurvError| -> ConcurvError {
+        if !how.transactional {
+            return err;
+        }
+        roll_back(
+            repo,
+            ws_lock,
+            session.dir(),
+            &working,
+            &effective,
+            &head_files,
+            err,
+        )
+    };
+    let applied = apply(session.dir(), repo, &working, &effective, &head_files).and_then(|wd| {
+        // 4. Confirm the result before recording it.
+        let after = scan(repo.root(), ScanMode::HashOnly, &target_files)?;
+        if after != effective {
+            return Err(ConcurvError::new(
+                ErrorCode::ConcurrentModification,
+                "working copy does not match the target after restore (modified concurrently?); \
+                 re-run the restore",
+            ));
+        }
+        Ok(wd)
+    });
+    let (written, deleted) = match applied {
+        Ok(wd) => wd,
+        Err(e) => return Err(rollback(e)),
+    };
 
     // 5. Commit against the current view.
-    let lock = repo.lock()?;
-    let (op_id, op, current_ws) = repo.current()?;
-    if current_ws.head != ws.head {
-        return Err(ConcurvError::new(
-            ErrorCode::StaleHead,
-            "this workspace's head changed during the restore; re-run it",
-        ));
-    }
-    let mut view = op.view.clone();
-    if how.set_head
-        && let Some(w) = view.workspaces.get_mut(&repo.workspace_id())
-    {
-        w.head = Some(target);
-    }
-    if let Some(m) = how.set_merge
-        && let Some(w) = view.workspaces.get_mut(&repo.workspace_id())
-    {
-        w.merge = m;
-    }
-    if let Some(b) = how.set_branch
-        && let Some(w) = view.workspaces.get_mut(&repo.workspace_id())
-    {
-        w.branch = b;
-    }
-    let new_op = Operation {
-        parents: vec![op_id],
-        timestamp_ms: repo.now_ms(),
-        device_id: repo.device_id(),
-        workspace_id: Some(repo.workspace_id()),
-        kind: how.kind.into(),
-        description: how.description,
-        backup,
-        undoes: how.undoes,
-        checked_out: Some(target),
-        view,
+    let committed = (|| -> Result<OperationId> {
+        let lock = repo.lock()?;
+        let (op_id, op, current_ws) = repo.current()?;
+        if current_ws.head != ws.head {
+            return Err(ConcurvError::new(
+                ErrorCode::StaleHead,
+                "this workspace's head changed during the restore; re-run it",
+            ));
+        }
+        let mut view = op.view.clone();
+        if let Some(w) = view.workspaces.get_mut(&repo.workspace_id()) {
+            if how.set_head {
+                w.head = Some(target);
+            }
+            if let Some(m) = how.set_merge {
+                w.merge = m;
+            }
+            if let Some(b) = how.set_branch.clone() {
+                w.branch = b;
+            }
+        }
+        let new_op = Operation {
+            parents: vec![op_id],
+            timestamp_ms: repo.now_ms(),
+            device_id: repo.device_id(),
+            workspace_id: Some(repo.workspace_id()),
+            kind: how.kind.into(),
+            description: how.description.clone(),
+            backup,
+            undoes: how.undoes,
+            checked_out: Some(target),
+            view,
+        };
+        repo.oplog().commit(&lock, &op_id, &new_op)
+    })();
+    let operation = match committed {
+        Ok(op) => op,
+        Err(e) => {
+            // Roll back only if the commit point was not reached. With the
+            // workspace lock held, nobody else can set our entry to the
+            // target state.
+            let reached = how.transactional
+                && repo.current().is_ok_and(|(_, _, now)| {
+                    now.head == Some(target) && now.branch == wanted_branch
+                });
+            return Err(if reached { e } else { rollback(e) });
+        }
     };
-    let operation = repo.oplog().commit(&lock, &op_id, &new_op)?;
-    drop(lock);
     clear_marker(repo, ws_lock)?;
     Ok(RestoreOutcome {
         target,
@@ -300,6 +455,64 @@ pub(crate) fn checkout(
         deleted,
         operation,
     })
+}
+
+/// Return the working copy to `original` after a failed transactional
+/// checkout. Only content the checkout itself wrote (equal to `effective`)
+/// is replaced or removed; anything else found on disk is left alone.
+fn roll_back(
+    repo: &Repo,
+    ws_lock: &WorkspaceLock,
+    tmp: &Path,
+    original: &FlatTree,
+    effective: &FlatTree,
+    head_files: &FlatTree,
+    err: ConcurvError,
+) -> ConcurvError {
+    let result = (|| -> Result<()> {
+        let now = scan(repo.root(), ScanMode::HashOnly, head_files)?;
+        let mut back = FlatTree::new();
+        for (p, st) in original {
+            match now.get(p) {
+                Some(n) if n != st && Some(n) != effective.get(p) => {
+                    back.insert(p.clone(), *n); // a foreign change: keep it
+                }
+                _ => {
+                    back.insert(p.clone(), *st);
+                }
+            }
+        }
+        for (p, n) in &now {
+            if !original.contains_key(p) && Some(n) != effective.get(p) {
+                back.insert(p.clone(), *n); // not written by us: keep it
+            }
+        }
+        apply(tmp, repo, &now, &back, head_files)?;
+        if scan(repo.root(), ScanMode::HashOnly, head_files)? != back {
+            return Err(ConcurvError::new(
+                ErrorCode::ConcurrentModification,
+                "working copy changed during the rollback",
+            ));
+        }
+        clear_marker(repo, ws_lock)
+    })();
+    match result {
+        Ok(()) => ConcurvError::new(
+            err.code,
+            format!(
+                "{}; the working copy was rolled back, nothing changed",
+                err.message
+            ),
+        ),
+        Err(e2) => ConcurvError::new(
+            err.code,
+            format!(
+                "{}; rolling the working copy back also failed ({}). Every file holds either its \
+                 previous or its new content; `concurv status` shows how to finish or undo the switch",
+                err.message, e2.message
+            ),
+        ),
+    }
 }
 
 /// The standard refusal for a dirty working copy.

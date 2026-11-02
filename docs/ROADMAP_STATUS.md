@@ -3,7 +3,7 @@
 Legend: `not started` · `in progress` · `gate passed` · `blocked`.
 A stage is `gate passed` only with the evidence listed next to it.
 The plan itself (stages, gates, backlog, acceptance tests) lives in
-**`docs/ROADMAP_REVISED.md`**. Last updated: 2026-11-01 (R2.5 gate).
+**`docs/ROADMAP_REVISED.md`**. Last updated: 2026-11-01 (R2.5 branch-model refinements).
 
 | Stage | Status | Evidence / blockers |
 |---|---|---|
@@ -11,7 +11,7 @@ The plan itself (stages, gates, backlog, acceptance tests) lives in
 | R1 — Native local VCS kernel | **gate passed** (2026-11-01) | CI run [41350688459](https://github.com/omer-ulucan/concurv/actions/runs/41350688459) on `main` @ `9b8ed23`: all gate checks pass on Linux, macOS and Windows. See evidence below. |
 | R1.5 — Daily VCS usability & safety | **gate passed** (2026-11-01) | CI run [41366633305](https://github.com/omer-ulucan/concurv/actions/runs/41366633305) on `main` @ `19ce0ed`: ignores (ADR 0004), ignored-file safety, `check-ignore`, benchmark, stat cache (ADR 0005), diff and case-collision tests, green on Linux, macOS and Windows. See "R1.5 evidence" below |
 | R2 — Private workspaces + concurrency | **gate passed** (2026-11-01) | CI run [41359891403](https://github.com/omer-ulucan/concurv/actions/runs/41359891403) on `main` @ `0689e96`: all four slices (RFC 0004, ADR 0002) green on Linux, macOS and Windows; 2/5/10 concurrent writers and killed-process tests pass. Git tags not supported (scoped). See "R2 evidence" below. |
-| R2.5 — Local merge & branch semantics | **gate passed** (2026-11-01) | CI run [41370038493](https://github.com/omer-ulucan/concurv/actions/runs/41370038493) on `main` @ `8e450c8`: line-level merge (ADR 0006) and named branches (ADR 0007), green on Linux, macOS and Windows. See "R2.5 evidence" below |
+| R2.5 — Local merge & branch semantics | **in progress** (gate re-opened 2026-11-01) | Line-level merge (ADR 0006) verified. Branch model: the owner approved ADR 0007 **in principle** and requested refinements; they are implemented and tested (see "R2.5 branch-model refinements" below). Remaining gate item: the owner's final acceptance of ADR 0007 |
 | R3 — Two-PC authenticated sync | not started | design only: RFC 0003 (draft; must be revised for per-branch reconciliation, ADR 0007, before implementation) |
 | R4 — Verified integration | not started | — |
 | R5 — Agent-aware coordination | not started | — |
@@ -62,7 +62,8 @@ What the gate does **not** prove (still true, by design of the tests):
 
 ## Next
 
-R0 (harness) remains open; R1, R1.5, R2 and R2.5 are complete. Next: revise
+R0 (harness) remains open; R1, R1.5 and R2 are complete; R2.5 awaits the owner's
+final acceptance of ADR 0007. Next: revise
 RFC 0003 (per-branch reconciliation, ADR 0007) and start R3 (see `docs/ROADMAP_REVISED.md`). Open R0 work (competitor
 reproduction harness) continues in parallel and does not block R3.
 
@@ -142,7 +143,7 @@ not maintain `ctime` (ADR 0005 residual risk; use `--no-cache`); ignore
 compatibility beyond the tested cases (one known divergence: Git matches a
 reversed range `[z-a]`, concurv does not).
 
-## R2.5 evidence (gate passed 2026-11-01)
+## R2.5 evidence, first pass (2026-11-01; branch items superseded below)
 
 CI run [41370038493](https://github.com/omer-ulucan/concurv/actions/runs/41370038493)
 on `main` @ `8e450c8`, rustc 1.99.1, `--locked`, `--no-fail-fast`:
@@ -157,10 +158,30 @@ on `main` @ `8e450c8`, rustc 1.99.1, `--locked`, `--no-fail-fast`:
 | Gate item | Tests / evidence |
 |---|---|
 | Hunk-level 3-way merge: disjoint same-file edits merge, overlap conflicts, reusing the conflict model and existing commands | ADR 0006; `textmerge.rs` unit + property tests (one side unchanged → other side, same change → that change, symmetry); `tests/hunk_merge.rs` (disjoint edits merge and publish, overlap refused with nothing changed, mixed merge records only real conflicts under `--allow-conflicts`, binary never merged, CRLF/no-final-newline byte-exact) |
-| Branch-model ADR accepted | ADR 0007, accepted under the owner's delegation ("finish R2 completely"); the owner may revise it before 0.1.0 |
-| Smallest branch slice (create/list/switch-by-workspace) | `branch create/list/switch`, `workspace add --branch`, `update --from`, `git export --from`; `tests/branches.rs` (12 tests incl. per-branch CAS isolation, switch-never-loses-work, undo of a switch, 5 concurrent creates with one winner, 4 concurrent publishes to different branches), `bridge.rs::export_of_a_feature_branch_shares_history_with_main`, `cli_smoke.rs::branch_commands` |
+| Branch-model ADR accepted | First recorded as accepted under the owner's delegation; **superseded**: the owner then approved it in principle only and requested refinements (below) |
+| Smallest branch slice (create/list/switch-by-workspace) | `branch create/list/switch`, `workspace add --branch`, `update --from` (since replaced by `merge`), `git export --from`; `tests/branches.rs` (12 tests at the time incl. per-branch CAS isolation, switch-never-loses-work, undo of a switch, 5 concurrent creates with one winner, 4 concurrent publishes to different branches), `bridge.rs::export_of_a_feature_branch_shares_history_with_main`, `cli_smoke.rs::branch_commands` |
 | CI green on 3 OSes | run above |
 
 What the R2.5 gate does **not** prove: merges across machines (R3), and that
 a clean textual merge builds or passes tests (R4). Not implemented: branch
 delete/rename, protected branches (R4), tags (R6).
+
+## R2.5 branch-model refinements (owner review, 2026-11-01)
+
+The owner approved the branch model in principle and asked for eight
+refinements before full acceptance. Status of each:
+
+| # | Refinement | Implementation | Evidence |
+|---|---|---|---|
+| 1 | Complete Git-compatible names, sequences, components, reserved patterns, namespace collisions | `refname.rs`: Git rule layer, portability policy, component-wise case/prefix collisions; checked again under the repository lock | `refname.rs` unit tests; `tests/refname_vs_git.rs` (≈460 names, identical verdicts to `git check-ref-format`; every accepted name is a valid Git branch). The test found that `@` alone is valid in Git's ref grammar but expanded to HEAD as a branch name, so it moved to the branch policy. A namespace bug (`Topic/y` vs `topic/x` both accepted) was found by `concurrent_creates_of_colliding_names_have_one_winner` and fixed |
+| 2 | Branch creation preserves unpublished saves | default start = workspace head; `branch create --switch` (one operation, no file changes); invariant B1 | `create_switch_keeps_unpublished_saves_on_the_new_branch`, `switch_never_loses_work`, reachability assertions |
+| 3 | `update` vs `merge <branch>` | `merge_branch`, CLI `concurv merge`, operation kind `merge`, undoable; `update` unchanged; unreleased `update --from` removed | `merge_another_branch_then_publish_to_own`, CLI `branch_commands` |
+| 4 | Transactional switch: dirty trees, untracked and ignored collisions, incomplete merges, filesystem errors | transactional checkout (untracked plan, rollback, origin/branch marker, resume) | `switch_keeps_untracked_files_and_refuses_collisions`, `switch_never_overwrites_an_ignored_file`, `switch_is_refused_during_a_pending_merge`, `tests/branch_switch_faults.rs` (all 6 fault points × every hit × {transient, crash}: 43 transient failures, all rolled back to the exact original state or already committed; every crash state old-or-new and resumed), `interrupted_switch_can_be_finished_or_undone` |
+| 5 | R3 reconciliation preserves divergence; no automatic publication | RFC 0003 §5 rewritten; `reconcile::plan` (pure, not wired to a command) | `tests/reconcile.rs` with an in-memory CAS relay |
+| 6 | Tests: concurrent creation, several workspaces per branch, switching, unpublished changes, CAS failures, crash recovery, cross-machine divergence | — | `tests/branches.rs` (19), `branch_switch_faults.rs` (2), `reconcile.rs` (4), `refname_vs_git.rs` (2), CLI `kill_recovery.rs::killed_branch_switches_are_finished_by_running_them_again` (real processes; locally 20 kills, 18 mid-switch, all resumed) |
+| 7 | Document workspace state, local branch refs, remote-tracking refs, authoritative heads | ADR 0007 §8, RFC 0004 §12, RFC 0003 §5, user guide §4a, architecture | docs |
+| 8 | Delete/rename, protected branches, tags stay on the roadmap | not implemented | `ROADMAP_REVISED.md` P2-1, P2-8, P2-9, P2-10 |
+
+Local run (Windows 11, rustc 1.95): 191 tests passed, 0 failed, 0 ignored;
+clippy clean for Windows and the Linux target. CI evidence: pending (added
+when the branch is merged).

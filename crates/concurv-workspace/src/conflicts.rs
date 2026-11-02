@@ -363,6 +363,7 @@ pub fn abort_merge(repo: &Repo) -> Result<RestoreOutcome> {
             set_merge: Some(None),
             undoes: None,
             set_branch: None,
+            transactional: false,
         },
     )
 }
