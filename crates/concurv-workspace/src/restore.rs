@@ -218,6 +218,7 @@ pub(crate) fn checkout(
             ws.head.into_iter().collect(),
             &head_files,
             &msg,
+            None,
         )?;
         if stored != working {
             return Err(ConcurvError::new(

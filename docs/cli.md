@@ -6,8 +6,8 @@ Every command runs in the workspace containing the current directory (or `-C`).
 | Command | Effect | Mutates |
 |---|---|---|
 | `concurv init` | create `.concurv` in the current directory (atomic); it becomes workspace `default` | creates repo |
-| `concurv status` | changes of working copy vs this workspace's head; warns about interrupted restores | no |
-| `concurv diff` | unified text diffs; binary/large/symlink changes are summarized | no |
+| `concurv status [--no-cache]` | changes of working copy vs this workspace's head; warns about interrupted restores. Uses the stat cache on Unix (ADR 0005); `--no-cache` hashes every file | no |
+| `concurv diff [--no-cache]` | unified text diffs (Git style, incl. `\ No newline at end of file`; CRLF kept); binary/large/symlink changes are summarized | no |
 | `concurv save -m <msg>` | durably snapshot the working copy and advance **this workspace's head**. Does not publish | workspace history |
 | `concurv publish` | CAS fast-forward of the workspace's branch (`main`) to the workspace head | shared branch |
 | `concurv update [--allow-conflicts \| --abort]` | bring `main` into this workspace: fast-forward, or file-level merge into a new snapshot. `--allow-conflicts`: write conflicts into the working copy and start a pending merge; `--abort`: give a pending merge up | working copy, workspace head |

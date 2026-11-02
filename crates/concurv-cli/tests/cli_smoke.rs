@@ -596,3 +596,21 @@ fn check_ignore_command() {
         .collect();
     assert_eq!(paths, [".gitignore", "main.rs"]);
 }
+
+#[test]
+fn status_and_diff_accept_no_cache() {
+    let d = tempfile::tempdir().unwrap();
+    let w = d.path();
+    cv_ok(w, &["init"]);
+    fs::write(w.join("a.txt"), "one\n").unwrap();
+    cv_ok(w, &["save", "-m", "one"]);
+    fs::write(w.join("a.txt"), "two\n").unwrap();
+    for cmd in ["status", "diff"] {
+        let (code, cached) = cv_json(w, &[cmd]);
+        let (code2, full) = cv_json(w, &[cmd, "--no-cache"]);
+        assert_eq!((code, code2), (0, 0), "{cached} {full}");
+        assert_eq!(cached["data"], full["data"], "{cmd}");
+    }
+    let (_, st) = cv_json(w, &["status", "--no-cache"]);
+    assert_eq!(st["data"]["clean"], false);
+}

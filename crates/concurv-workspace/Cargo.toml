@@ -11,6 +11,7 @@ concurv-core.workspace = true
 concurv-objects.workspace = true
 concurv-ops.workspace = true
 concurv-refs.workspace = true
+blake3.workspace = true
 ignore = "0.4"
 similar.workspace = true
 

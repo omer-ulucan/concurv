@@ -12,6 +12,7 @@ use concurv_objects::encoding::blob_id;
 use concurv_objects::{EntryKind, ObjectStore, Tree, TreeEntry, hash_blob_stream};
 
 use crate::ignore::IgnoreRules;
+use crate::statcache::{CacheRecorder, StatCache, StatKey};
 
 /// Maximum directory nesting accepted from a stored tree.
 pub const MAX_TREE_DEPTH: usize = 512;
@@ -65,6 +66,19 @@ fn is_nested_repository(dir: &Path) -> bool {
 /// contains tracked files, and untracked files inside it stay excluded.
 /// `head` also supplies executable bits on platforms without them (Windows).
 pub fn scan(root: &Path, mode: ScanMode<'_>, head: &FlatTree) -> Result<FlatTree> {
+    scan_with(root, mode, head, None, None)
+}
+
+/// [`scan`] with the stat cache (ADR 0005): `cache` lets unchanged files
+/// skip hashing (only `status`/`diff` pass one); `recorder` collects
+/// trustworthy entries while hashing (only `save` passes one).
+pub(crate) fn scan_with(
+    root: &Path,
+    mode: ScanMode<'_>,
+    head: &FlatTree,
+    cache: Option<&StatCache>,
+    recorder: Option<&mut CacheRecorder>,
+) -> Result<FlatTree> {
     let mut out = FlatTree::new();
     let mut ctx = ScanCtx {
         root,
@@ -72,6 +86,8 @@ pub fn scan(root: &Path, mode: ScanMode<'_>, head: &FlatTree) -> Result<FlatTree
         head,
         tracked_dirs: tracked_dirs(head),
         rules: IgnoreRules::load(root)?,
+        cache,
+        recorder,
     };
     scan_dir(&mut ctx, &RepoPath::root(), false, &mut out)?;
     Ok(out)
@@ -97,6 +113,8 @@ struct ScanCtx<'a> {
     head: &'a FlatTree,
     tracked_dirs: HashSet<RepoPath>,
     rules: IgnoreRules,
+    cache: Option<&'a StatCache>,
+    recorder: Option<&'a mut CacheRecorder>,
 }
 
 fn scan_dir(
@@ -163,9 +181,25 @@ fn scan_dir(
         match stat_path(&native)? {
             Present::Missing => {} // deleted while scanning; not versioned
             Present::Dir => scan_dir(ctx, &path, excluded, out)?,
-            Present::File { len, exec } => {
+            Present::File { len, exec, key } => {
                 let kind = file_kind(exec, head.get(&path));
-                let blob = read_file_blob(&native, len, mode)?;
+                let cached = match (ctx.cache, &key) {
+                    (Some(c), Some(k)) => c.lookup(&path, k),
+                    _ => None,
+                };
+                let blob = match cached {
+                    Some(blob) => blob,
+                    None => {
+                        let (blob, opened) = read_file_blob_keyed(&native, len, mode)?;
+                        if let Some(r) = ctx.recorder.as_deref_mut() {
+                            let after = fs::symlink_metadata(&native)
+                                .ok()
+                                .and_then(|m| StatKey::of(&m));
+                            r.record(&path, [key, opened, after], blob);
+                        }
+                        blob
+                    }
+                };
                 out.insert(path, FileState { kind, blob });
             }
             Present::Symlink(target) => {
@@ -214,6 +248,8 @@ pub enum Present {
         len: u64,
         /// Executable bit.
         exec: Option<bool>,
+        /// Identity for the stat cache (`None` where it is never trusted).
+        key: Option<StatKey>,
     },
     /// A symbolic link with its raw target bytes.
     Symlink(Vec<u8>),
@@ -237,6 +273,7 @@ pub fn stat_path(native: &Path) -> Result<Present> {
         return Ok(Present::File {
             len: meta.len(),
             exec: exec_bit(&meta),
+            key: StatKey::of(&meta),
         });
     }
     Err(ConcurvError::new(
@@ -289,6 +326,16 @@ fn symlink_target(native: &Path) -> Result<Vec<u8>> {
 /// Hash (and optionally store) a regular file, guarding against the path
 /// being swapped for a different file type between `stat` and `open`.
 pub fn read_file_blob(native: &Path, len: u64, mode: ScanMode<'_>) -> Result<BlobId> {
+    read_file_blob_keyed(native, len, mode).map(|(blob, _)| blob)
+}
+
+/// [`read_file_blob`], also returning the opened file's identity (`fstat`
+/// before reading) for the stat cache.
+fn read_file_blob_keyed(
+    native: &Path,
+    len: u64,
+    mode: ScanMode<'_>,
+) -> Result<(BlobId, Option<StatKey>)> {
     let file = File::open(native).map_err(|e| ConcurvError::io(e, "open", native))?;
     let meta = file
         .metadata()
@@ -300,10 +347,31 @@ pub fn read_file_blob(native: &Path, len: u64, mode: ScanMode<'_>) -> Result<Blo
         )
         .with_path(native));
     }
-    match mode {
-        ScanMode::HashOnly => hash_blob_stream(file, len, native),
-        ScanMode::Store(s) => s.write_blob_stream(file, len, native),
-    }
+    let key = StatKey::of(&meta);
+    let blob = match mode {
+        ScanMode::HashOnly => hash_blob_stream(file, len, native)?,
+        ScanMode::Store(s) => {
+            // Hash first: an unchanged file whose (re-verified) object is
+            // already stored needs no temp write and no fsync. Only missing
+            // or corrupt objects are written. If the file changes between the
+            // two reads, `write_blob_stream` returns the id of what it
+            // actually stored, so the snapshot stays consistent.
+            let id = hash_blob_stream(file, len, native)?;
+            if s.has_valid(&id.object_id())? {
+                id
+            } else {
+                let again = File::open(native).map_err(|e| ConcurvError::io(e, "open", native))?;
+                let stored = s.write_blob_stream(again, len, native)?;
+                if stored != id {
+                    // Changed between the two reads: the snapshot records
+                    // what was stored, and nothing is cached for it.
+                    return Ok((stored, None));
+                }
+                stored
+            }
+        }
+    };
+    Ok((blob, key))
 }
 
 /// Current state of one path, hashed (used for re-checks before replacing).
@@ -311,7 +379,7 @@ pub fn current_state(root: &Path, path: &RepoPath, head: &FlatTree) -> Result<Op
     let native = path.to_native(root);
     Ok(match stat_path(&native)? {
         Present::Missing | Present::Dir => None,
-        Present::File { len, exec } => Some(FileState {
+        Present::File { len, exec, .. } => Some(FileState {
             kind: file_kind(exec, head.get(path)),
             blob: read_file_blob(&native, len, ScanMode::HashOnly)?,
         }),

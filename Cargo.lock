@@ -231,6 +231,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
+name = "concurv-bench"
+version = "0.1.0"
+dependencies = [
+ "concurv-core",
+ "concurv-workspace",
+]
+
+[[package]]
 name = "concurv-cli"
 version = "0.1.0"
 dependencies = [
@@ -293,6 +301,7 @@ dependencies = [
 name = "concurv-workspace"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "concurv-core",
  "concurv-objects",
  "concurv-ops",

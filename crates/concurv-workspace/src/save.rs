@@ -6,8 +6,9 @@ use concurv_objects::{ObjectStore, Operation, Snapshot};
 
 use crate::conflicts::{ConflictStatus, conflict_status, unresolved_error};
 use crate::repo::Repo;
+use crate::statcache::CacheRecorder;
 use crate::status::{Change, diff_flat};
-use crate::worktree::{FlatTree, ScanMode, scan, write_trees};
+use crate::worktree::{FlatTree, ScanMode, scan_with, write_trees};
 
 /// Result of a save.
 #[derive(Debug)]
@@ -29,8 +30,15 @@ pub(crate) fn store_working_copy(
     parents: Vec<SnapshotId>,
     head_files: &FlatTree,
     message: &str,
+    recorder: Option<&mut CacheRecorder>,
 ) -> Result<(FlatTree, SnapshotId)> {
-    let working = scan(repo.root(), ScanMode::Store(store), head_files)?;
+    let working = scan_with(
+        repo.root(),
+        ScanMode::Store(store),
+        head_files,
+        None,
+        recorder,
+    )?;
     let tree = write_trees(store, &working)?;
     let snap = Snapshot {
         tree,
@@ -79,10 +87,19 @@ pub fn save(repo: &Repo, message: &str) -> Result<SaveOutcome> {
 
     // Lock-free phase: other workspaces may commit meanwhile.
     let writer = repo.store_writer()?;
-    let (working, snap) = store_working_copy(repo, writer.store(), parents, &head_files, message)?;
+    let mut recorder = repo.cache_recorder();
+    let (working, snap) = store_working_copy(
+        repo,
+        writer.store(),
+        parents,
+        &head_files,
+        message,
+        Some(&mut recorder),
+    )?;
     let changes = diff_flat(&head_files, &working);
     if changes.is_empty() && ws.head.is_some() && ws.merge.is_none() {
         // The snapshot object is unreferenced and harmless; no operation recorded.
+        repo.persist_stat_cache(&ws_lock, recorder);
         return Ok(SaveOutcome {
             snapshot: None,
             operation: None,
@@ -122,6 +139,7 @@ pub fn save(repo: &Repo, message: &str) -> Result<SaveOutcome> {
     // A completed save records the full working copy, so any interrupted
     // restore is now superseded (its backup stays reachable in the op log).
     crate::restore::clear_marker(repo, &ws_lock)?;
+    repo.persist_stat_cache(&ws_lock, recorder);
     Ok(SaveOutcome {
         snapshot: Some(snap),
         operation: Some(new_op_id),

@@ -7,9 +7,9 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use concurv_core::{ConcurvError, ErrorCode, Result};
 use concurv_workspace::{
-    Change, Repo, RepoOptions, RestoreOptions, UpdateKind, UpdateOptions, WorkspaceInfo,
-    abort_merge, diff, log, op_log, publish, restore, save, status, undo, update_with, verify,
-    workspaces,
+    Change, Repo, RepoOptions, RestoreOptions, StatusOptions, UpdateKind, UpdateOptions,
+    WorkspaceInfo, abort_merge, diff_with, log, op_log, publish, restore, save, status_with, undo,
+    update_with, verify, workspaces,
 };
 use serde_json::{Value, json};
 
@@ -38,9 +38,17 @@ enum Cmd {
     /// Create a new repository in the current directory.
     Init,
     /// Show working-copy changes relative to the workspace head (read-only).
-    Status,
+    Status {
+        /// Hash every file instead of trusting the stat cache.
+        #[arg(long)]
+        no_cache: bool,
+    },
     /// Show content differences relative to the workspace head (read-only).
-    Diff,
+    Diff {
+        /// Hash every file instead of trusting the stat cache.
+        #[arg(long)]
+        no_cache: bool,
+    },
     /// Durably record the working copy as a snapshot in this workspace (does not publish).
     Save {
         /// Snapshot message.
@@ -154,8 +162,8 @@ impl Cmd {
     fn name(&self) -> &'static str {
         match self {
             Cmd::Init => "init",
-            Cmd::Status => "status",
-            Cmd::Diff => "diff",
+            Cmd::Status { .. } => "status",
+            Cmd::Diff { .. } => "diff",
             Cmd::Save { .. } => "save",
             Cmd::Log { .. } => "log",
             Cmd::Restore { .. } => "restore",
@@ -265,13 +273,13 @@ fn run(cli: Cli) -> Result<Output> {
                 ),
             )
         }
-        Cmd::Status => {
+        Cmd::Status { no_cache } => {
             let repo = Repo::discover(&cwd, opts())?;
-            cmd_status(&repo)
+            cmd_status(&repo, status_opts(no_cache))
         }
-        Cmd::Diff => {
+        Cmd::Diff { no_cache } => {
             let repo = Repo::discover(&cwd, opts())?;
-            cmd_diff(&repo)
+            cmd_diff(&repo, status_opts(no_cache))
         }
         Cmd::Save { message } => {
             let repo = Repo::discover(&cwd, opts())?;
@@ -669,8 +677,14 @@ fn change_json(c: &Change) -> Value {
     })
 }
 
-fn cmd_status(repo: &Repo) -> Result<Output> {
-    let st = status(repo)?;
+fn status_opts(no_cache: bool) -> StatusOptions {
+    StatusOptions {
+        use_stat_cache: !no_cache,
+    }
+}
+
+fn cmd_status(repo: &Repo, how: StatusOptions) -> Result<Output> {
+    let st = status_with(repo, how)?;
     let mut human = format!(
         "On branch {}, head {}\n",
         st.branch.as_deref().unwrap_or("(none)"),
@@ -757,8 +771,8 @@ fn cmd_status(repo: &Repo) -> Result<Output> {
     )
 }
 
-fn cmd_diff(repo: &Repo) -> Result<Output> {
-    let diffs = diff(repo)?;
+fn cmd_diff(repo: &Repo, how: StatusOptions) -> Result<Output> {
+    let diffs = diff_with(repo, how)?;
     let mut human = String::new();
     let mut arr = Vec::new();
     for d in &diffs {

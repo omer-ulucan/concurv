@@ -1,0 +1,42 @@
+name: bench
+
+# Status/save benchmarks (bench/RESULTS.md). Shared CI runners are noisy:
+# use the numbers for before/after comparisons on the same runner type, not
+# as absolute claims.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - crates/concurv-bench/**
+      - crates/concurv-workspace/src/statcache.rs
+      - crates/concurv-workspace/src/worktree.rs
+      - .github/workflows/bench.yml
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bench:
+    name: bench (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run
+        shell: bash
+        run: |
+          {
+            echo "### ${{ matrix.os }}"
+            echo
+            echo '```'
+            rustc --version
+            uname -a
+            echo '```'
+            echo
+            cargo run --release --locked -q -p concurv-bench -- --sizes 100,1000,10000 --runs 10
+          } | tee -a "$GITHUB_STEP_SUMMARY"

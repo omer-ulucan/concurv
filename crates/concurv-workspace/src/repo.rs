@@ -48,6 +48,9 @@ pub struct RepoOptions {
     pub author: Option<String>,
     /// How long to wait for a busy lock; `None` = [`DEFAULT_LOCK_TIMEOUT`].
     pub lock_timeout: Option<Duration>,
+    /// Racy-timestamp window of the stat cache (ADR 0005); `None` =
+    /// [`crate::statcache::DEFAULT_RACY_WINDOW`]. Tests shorten it.
+    pub stat_cache_window: Option<Duration>,
 }
 
 /// An open workspace and the repository (store + op log) it belongs to.
@@ -322,6 +325,31 @@ impl Repo {
     }
     fn lock_timeout(&self) -> Duration {
         self.opts.lock_timeout.unwrap_or(DEFAULT_LOCK_TIMEOUT)
+    }
+
+    /// A recorder for the stat cache, started now (before a scan).
+    pub(crate) fn cache_recorder(&self) -> crate::statcache::CacheRecorder {
+        crate::statcache::CacheRecorder::new(
+            std::time::SystemTime::now(),
+            self.opts
+                .stat_cache_window
+                .unwrap_or(crate::statcache::DEFAULT_RACY_WINDOW),
+        )
+    }
+
+    /// Replace this workspace's stat cache. Best effort: a failure only
+    /// means the next `status` hashes more. Requires the workspace lock.
+    pub(crate) fn persist_stat_cache(
+        &self,
+        _lock: &WorkspaceLock,
+        recorder: crate::statcache::CacheRecorder,
+    ) {
+        let _ = recorder.persist(&self.ws_meta, &self.ws_meta.join(WORKSPACE_TMP));
+    }
+
+    /// The stat cache of this workspace (empty if missing or unusable).
+    pub(crate) fn stat_cache(&self) -> crate::statcache::StatCache {
+        crate::statcache::StatCache::load(&self.ws_meta)
     }
 
     // ------------------------------------------------------------------ locks

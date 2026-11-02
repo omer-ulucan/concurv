@@ -161,6 +161,13 @@ impl ObjectStore {
         Ok(BlobId::from_object_id(id))
     }
 
+    /// True if a valid copy of `id` is stored (fully re-verified). A corrupt
+    /// copy is moved to quarantine and `false` is returned, so the caller
+    /// writes the object again (self-healing).
+    pub fn has_valid(&self, id: &ObjectId) -> Result<bool> {
+        self.dedup(id)
+    }
+
     /// If a valid copy already exists return true; quarantine a corrupt copy.
     fn dedup(&self, id: &ObjectId) -> Result<bool> {
         if !self.contains(id) {

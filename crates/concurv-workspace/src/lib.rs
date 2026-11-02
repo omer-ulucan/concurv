@@ -10,6 +10,7 @@ pub mod merge;
 pub mod repo;
 pub mod restore;
 pub mod save;
+pub mod statcache;
 pub mod status;
 pub mod undo;
 pub mod verify;
@@ -24,7 +25,10 @@ pub use merge::{ConflictKind, MergeConflict, PartialMerge};
 pub use repo::{DEFAULT_BRANCH, DEFAULT_WORKSPACE, Repo, RepoOptions};
 pub use restore::{RestoreMarker, RestoreOptions, RestoreOutcome, restore};
 pub use save::{SaveOutcome, save};
-pub use status::{Change, ChangeKind, FileDiff, MergeStatus, StatusReport, diff, status};
+pub use status::{
+    Change, ChangeKind, FileDiff, MergeStatus, StatusOptions, StatusReport, diff, diff_with,
+    status, status_with,
+};
 pub use undo::{UndoOutcome, undo};
 pub use verify::{Problem, VerifyReport, verify};
 pub use workspaces::{AddOutcome, WorkspaceInfo};

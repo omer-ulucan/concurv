@@ -40,6 +40,14 @@ R2 slices 2a (private workspaces), 2b (undo), 2c (conflict resolution) and 2d
   tracked. Verified against real Git by a differential test.
 - `concurv check-ignore <path>…` explains decisions (`--json`), including
   unusable patterns.
+- **Stat cache** (ADR 0005, Unix only): `status`/`diff` skip rehashing files
+  whose exact identity (device, inode, size, mode, mtime, ctime) is unchanged
+  since the last save; a racy-timestamp guard and a false-clean test suite.
+  `status --no-cache` / `diff --no-cache` hash every file. Windows always
+  hashes.
+- `concurv-bench`: reproducible `status`/`save` benchmark (`bench/RESULTS.md`).
+- Golden tests for diff output (` No newline at end of file`, CRLF, binary)
+  and a case-collision restore test that runs on every OS.
 
 ### Changed (R1.5)
 - `.git/` directories are never scanned, and untracked nested repositories
@@ -49,6 +57,9 @@ R2 slices 2a (private workspaces), 2b (undo), 2c (conflict resolution) and 2d
   ignored, untracked file, even with `--force` (exit 20), and refuse to write
   a `.git` entry (exit 22).
 - License metadata removed: no license is asserted until the owner chooses one.
+- `save` hashes a file before storing it and skips the temp write and fsync
+  when a verified copy of the object already exists: a no-op save of 10k
+  files went from 46.0 s to 1.7 s on the reference machine.
 
 ### Added (R2 slice 2d, ADR 0002)
 - `concurv git export <repo> [--branch B]` writes `main`'s history (merges
