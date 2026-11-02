@@ -20,7 +20,7 @@ const JSON_VERSION: u32 = 1;
 #[command(
     name = "concurv",
     version,
-    about = "concurv — a local-first version control system (R1 kernel)"
+    about = "concurv — a local-first, agent-native version control system"
 )]
 struct Cli {
     /// Emit a single versioned JSON document instead of human output.
