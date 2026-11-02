@@ -3,15 +3,15 @@
 Legend: `not started` · `in progress` · `gate passed` · `blocked`.
 A stage is `gate passed` only with the evidence listed next to it.
 The plan itself (stages, gates, backlog, acceptance tests) lives in
-**`docs/ROADMAP_REVISED.md`**. Last updated: 2026-11-01 (V2 audit at `53a33ae`).
+**`docs/ROADMAP_REVISED.md`**. Last updated: 2026-11-01 (R1.5 gate; first pre-release v0.1.0-alpha.1).
 
 | Stage | Status | Evidence / blockers |
 |---|---|---|
 | R0 — RFC & competitive reproduction | **in progress** | Done: RFC 0001–0003, ADR 0001–0003, threat model, comparison plan with exact expected behaviour for S1–S10. **Open gate items:** competitor harness (`bench/scenarios/`) not built; **no** Git/jj/but/gitta/Fossil/Pijul scenario reproduced. |
 | R1 — Native local VCS kernel | **gate passed** (2026-11-01) | CI run [41350688459](https://github.com/omer-ulucan/concurv/actions/runs/41350688459) on `main` @ `9b8ed23`: all gate checks pass on Linux, macOS and Windows. See evidence below. |
-| R1.5 — Daily VCS usability & safety | **in progress** | Inserted by the V2 audit. P0: ignore engine, ignored-file safety, `check-ignore`, `status` baseline + safe stat cache, diff correctness, macOS case test. See R1.5 progress below |
+| R1.5 — Daily VCS usability & safety | **gate passed** (2026-11-01) | CI run [41366633305](https://github.com/omer-ulucan/concurv/actions/runs/41366633305) on `main` @ `19ce0ed`: ignores (ADR 0004), ignored-file safety, `check-ignore`, benchmark, stat cache (ADR 0005), diff and case-collision tests, green on Linux, macOS and Windows. See "R1.5 evidence" below |
 | R2 — Private workspaces + concurrency | **gate passed** (2026-11-01) | CI run [41359891403](https://github.com/omer-ulucan/concurv/actions/runs/41359891403) on `main` @ `0689e96`: all four slices (RFC 0004, ADR 0002) green on Linux, macOS and Windows; 2/5/10 concurrent writers and killed-process tests pass. Git tags not supported (scoped). See "R2 evidence" below. |
-| R2.5 — Local merge & branch semantics | not started | Inserted by the V2 audit: hunk-level merge (needed before R3 reconciliation), branch-model ADR. Depends on R1.5 |
+| R2.5 — Local merge & branch semantics | **in progress** | Done: line-level merge in `update` (ADR 0006). Open: branch-model ADR and the smallest branch slice. See "R2.5 progress" below |
 | R3 — Two-PC authenticated sync | not started | design only: RFC 0003 (draft, must be revised first); depends on R2.5 merge |
 | R4 — Verified integration | not started | — |
 | R5 — Agent-aware coordination | not started | — |
@@ -53,17 +53,17 @@ What the gate does **not** prove (still true, by design of the tests):
 - On Windows, directory fsync is not available (RFC 0002 §5).
 - macOS refuses non-UTF-8 names at the filesystem level, so concurv's own
   rejection of them is exercised on Linux only.
-- Fuzzing is not configured. No benchmarks have been run, so no performance numbers exist.
+- Fuzzing is not configured. (Benchmarks were added in R1.5: `bench/RESULTS.md`.)
 
 ## R1 known gaps (do not block the gate, tracked for follow-up)
 
-- No ignore file; every `status`/`save` reads all files (no stat cache).
+- Fixed in R1.5: no ignore file and no stat cache (see "R1.5 evidence").
 - The project was renamed ARC → concurv on 2026-11-01 (ADR 0003).
 
 ## Next
 
-R2 is complete (below). Per the V2 audit, R1.5 then R2.5 come next, before R3
-(see `docs/ROADMAP_REVISED.md`). Open R0 work (competitor
+R1, R2 and R1.5 are complete. Next: finish R2.5 (branch-model ADR, smallest
+branch slice), then revise RFC 0003 and start R3 (see `docs/ROADMAP_REVISED.md`). Open R0 work (competitor
 reproduction harness) continues in parallel and does not block R3.
 
 ## R2 evidence (gate passed 2026-11-01)
@@ -107,14 +107,45 @@ Also found and fixed during R2, before merge:
 What the R2 gate does **not** prove: line-level merging (R4), behaviour across
 machines (R3), and power-loss durability beyond the R1 notes above.
 
-## R1.5 progress (gate not passed)
+## R1.5 evidence (gate passed 2026-11-01)
+
+CI run [41366633305](https://github.com/omer-ulucan/concurv/actions/runs/41366633305)
+on `main` @ `19ce0ed`, rustc 1.99.1, `--locked`, `--no-fail-fast`:
+
+| Job | Tests |
+|---|---|
+| ubuntu-latest | **149 passed, 0 failed, 0 ignored** |
+| macos-latest (arm64) | **149 passed, 0 failed, 0 ignored** |
+| windows-latest | **145 passed, 0 failed, 0 ignored** |
+| MSRV 1.89 `cargo check` | pass |
 
 Backlog ids refer to `docs/ROADMAP_REVISED.md` §3.
 
+| Gate item | Tests / evidence |
+|---|---|
+| P0-1…P0-3 Git-compatible ignores (nested, negation, anchors, `**`, escapes), local exclude, tracked-stays-tracked | ADR 0004; `tests/ignore.rs`; `tests/ignore_vs_git.rs` compares against real `git ls-files` (7 cases, incl. nested repositories) |
+| P0-4 ignored files never overwritten/deleted by restore/update/undo/checkout; no `.git` writes | `ignore.rs` (`restore_never_overwrites_an_ignored_file_even_with_force`, `ignored_files_survive_restore_of_their_directory_and_undo`, `update_refuses_to_overwrite_an_ignored_file_in_another_workspace`), `restore_safety.rs::restore_refuses_to_write_into_dot_git` |
+| P0-5 `check-ignore [--json]` | `cli_smoke.rs::check_ignore_command` |
+| P0-6 `status` baseline measured | `crates/concurv-bench`, `bench/RESULTS.md`; CI numbers from the `bench` workflow, run [41365713252](https://github.com/omer-ulucan/concurv/actions/runs/41365713252) |
+| P0-7 stat cache passing the false-clean suite (same size+mtime, mid-scan change, cache corruption) | ADR 0005; `tests/stat_cache.rs` (12 tests on Unix, 10 on Windows: same-size/same-mtime rewrite, change right after save, repeated edits, rename-over, delete+recreate, corrupt/truncated/missing cache, status never writes, `--no-cache`, two workspaces, symlink retarget + mode change, only settled files cached); unit tests for the racy guard, identity-stability rule and every single-bit flip/truncation of the cache encoding; CLI `status_and_diff_accept_no_cache` |
+| P0-8 diff "no newline" and CRLF | `tests/diff_golden.rs` (8 golden cases) |
+| P0-9 macOS case-collision test | `restore_safety.rs::case_fold_collisions_follow_the_platform` (refused on macOS/Windows, restored on Linux) |
+| CI green on 3 OSes | run above |
+
+Measured effect (CI runners, 10k files / 84.5 MiB, p50): clean `status`
+212 → 103 ms on Linux and 350 → 100 ms on macOS with the cache; Windows
+always hashes, by design. A no-op `save` of 10k files went from 46.0 s to
+1.7 s on the reference Windows machine (hash before write).
+
+What the R1.5 gate does **not** prove: the stat cache on filesystems that do
+not maintain `ctime` (ADR 0005 residual risk; use `--no-cache`); ignore
+compatibility beyond the tested cases (one known divergence: Git matches a
+reversed range `[z-a]`, concurv does not).
+
+## R2.5 progress (gate not passed)
+
 | Item | State | Evidence |
 |---|---|---|
-| P0-1…P0-5 ignore engine, local exclude, tracked-stays-tracked, ignored-file safety, `check-ignore` | **done** (local; CI pending) | ADR 0004; `ignore.rs` (11 tests), `ignore_vs_git.rs` (7 differential cases vs real Git), `restore_safety.rs::restore_refuses_to_write_into_dot_git`, `cli_smoke.rs::check_ignore_command`; 122 tests pass on Windows |
-| P0-6 `status` benchmark baseline | not started | — |
-| P0-7 safe stat cache | not started (blocked on P0-6 measurement) | — |
-| P0-8 diff "no newline"/CRLF tests | not started | — |
-| P0-9 macOS case-collision test | not started | — |
+| P1-1 hunk-level 3-way merge reusing the conflict model | **done** | ADR 0006; `textmerge.rs` unit + property tests (identity, idempotence, symmetry); `tests/hunk_merge.rs` (5 cases); CI run [41366628647](https://github.com/omer-ulucan/concurv/actions/runs/41366628647) on `feat/r2.5-hunk-merge` @ `2046fdc`: Linux 162, macOS 162, Windows 158 passed, 0 failed |
+| P1-2 branch-model ADR | not started | — |
+| Smallest branch slice (create/list/switch-by-workspace) | not started | — |
