@@ -51,6 +51,7 @@ struct FaultState {
     target: Option<(FaultPoint, u64, FaultMode)>,
     hits: HashMap<FaultPoint, u64>,
     triggered: bool,
+    transient: bool,
 }
 
 /// Fault-injection handle. The default handle never fails and costs one
@@ -87,6 +88,18 @@ impl Faults {
         }))))
     }
 
+    /// Fail only the `nth` hit of `point`; later I/O succeeds again. Models a
+    /// transient error (e.g. one file that cannot be written) in a process
+    /// that keeps running, as opposed to [`Faults::fail_at`], which models a
+    /// process that died.
+    pub fn fail_once_at(point: FaultPoint, nth: u64, mode: FaultMode) -> Self {
+        Self(Some(Arc::new(Mutex::new(FaultState {
+            target: Some((point, nth, mode)),
+            transient: true,
+            ..FaultState::default()
+        }))))
+    }
+
     fn with<R>(&self, f: impl FnOnce(&mut FaultState) -> R) -> Option<R> {
         self.0
             .as_ref()
@@ -106,7 +119,7 @@ impl Faults {
 
     fn decide(&self, point: FaultPoint) -> io::Result<WriteDecision> {
         let r = self.with(|s| {
-            if s.triggered {
+            if s.triggered && !s.transient {
                 return Err(injected(point));
             }
             let n = s.hits.entry(point).or_insert(0);

@@ -8,8 +8,8 @@ use clap::{Parser, Subcommand};
 use concurv_core::{ConcurvError, ErrorCode, Result};
 use concurv_workspace::{
     Change, Repo, RepoOptions, RestoreOptions, StatusOptions, UpdateKind, UpdateOptions,
-    WorkspaceInfo, abort_merge, branches, diff_with, log, op_log, publish, restore, save,
-    status_with, undo, update_from, update_with, verify, workspaces,
+    WorkspaceInfo, abort_merge, branches, diff_with, log, merge_branch, op_log, publish, restore,
+    save, status_with, undo, update_with, verify, workspaces,
 };
 use serde_json::{Value, json};
 
@@ -106,12 +106,10 @@ enum Cmd {
     },
     /// Reverse the most recent operation of this workspace (never shared state).
     Undo,
-    /// Bring this workspace's branch (or `--from` another branch) into this workspace
-    /// (fast-forward or three-way merge).
+    /// Bring the branch this workspace tracks into it (fast-forward or three-way merge).
     Update {
-        /// Merge this branch instead of the tracked one; `publish` then moves the
-        /// tracked branch.
-        #[arg(long)]
+        /// Internal: set by `merge`.
+        #[arg(skip)]
         from: Option<String>,
         /// Write conflicts into the working copy and record a pending merge
         /// instead of refusing (resolve, then `concurv save`).
@@ -119,6 +117,20 @@ enum Cmd {
         allow_conflicts: bool,
         /// Give up a pending merge: restore the working copy to the head
         /// (edits are kept in a backup snapshot).
+        #[arg(long)]
+        abort: bool,
+    },
+    /// Merge another branch into this workspace (same rules as `update`); `publish`
+    /// then moves the tracked branch.
+    Merge {
+        /// Branch to merge.
+        #[arg(required_unless_present = "abort")]
+        branch: Option<String>,
+        /// Write conflicts into the working copy and record a pending merge
+        /// instead of refusing (resolve, then `concurv save`).
+        #[arg(long)]
+        allow_conflicts: bool,
+        /// Give up a pending merge (same as `update --abort`).
         #[arg(long)]
         abort: bool,
     },
@@ -173,6 +185,10 @@ enum BranchCmd {
         /// Snapshot id prefix or branch name to start from.
         #[arg(long)]
         at: Option<String>,
+        /// Also make this workspace track the new branch (created at its head; no
+        /// files change). Keeps unpublished saves on a branch.
+        #[arg(long, conflicts_with = "at")]
+        switch: bool,
     },
     /// List branches and the workspaces tracking them.
     List,
@@ -224,6 +240,7 @@ impl Cmd {
                 cmd: BranchCmd::Switch { .. },
             } => "branch switch",
             Cmd::Update { .. } => "update",
+            Cmd::Merge { .. } => "merge",
             Cmd::Undo => "undo",
             Cmd::Git {
                 cmd: GitCmd::Export { .. },
@@ -301,12 +318,25 @@ fn opts() -> RepoOptions {
 }
 
 fn run(cli: Cli) -> Result<Output> {
+    // `merge <branch>` runs the integration path of `update` with another source.
+    let cmd = match cli.cmd {
+        Cmd::Merge {
+            branch,
+            allow_conflicts,
+            abort,
+        } => Cmd::Update {
+            from: branch,
+            allow_conflicts,
+            abort,
+        },
+        other => other,
+    };
     let cwd = match cli.dir {
         Some(d) => d,
         None => std::env::current_dir()
             .map_err(|e| ConcurvError::io(e, "read current directory", "."))?,
     };
-    match cli.cmd {
+    match cmd {
         Cmd::Init => {
             let repo = Repo::init(&cwd, opts())?;
             ok(
@@ -465,6 +495,7 @@ fn run(cli: Cli) -> Result<Output> {
                 human,
             )
         }
+        Cmd::Merge { .. } => Err(ConcurvError::internal("merge is dispatched as update")),
         Cmd::Branch { cmd } => {
             let repo = Repo::discover(&cwd, opts())?;
             cmd_branch(&repo, cmd)
@@ -605,7 +636,7 @@ fn run(cli: Cli) -> Result<Output> {
             if allow_conflicts || from.is_some() {
                 return Err(ConcurvError::new(
                     ErrorCode::InvalidArgument,
-                    "--abort cannot be combined with --allow-conflicts or --from",
+                    "--abort cannot be combined with --allow-conflicts or a branch to merge",
                 ));
             }
             let repo = Repo::discover(&cwd, opts())?;
@@ -639,7 +670,7 @@ fn run(cli: Cli) -> Result<Output> {
             let repo = Repo::discover(&cwd, opts())?;
             let how = UpdateOptions { allow_conflicts };
             let o = match from.as_deref() {
-                Some(b) => update_from(&repo, b, how)?,
+                Some(b) => merge_branch(&repo, b, how)?,
                 None => update_with(&repo, how)?,
             };
             let mut human = match o.kind {
@@ -763,10 +794,17 @@ fn cmd_status(repo: &Repo, how: StatusOptions) -> Result<Output> {
                 .to_owned())
     );
     if let Some(m) = &st.interrupted_restore {
-        human.push_str(&format!(
-            "WARNING: a restore to {} was interrupted; re-run `concurv restore --snapshot {} --force` to finish it.\n",
-            m.target, m.target
-        ));
+        match (&m.branch, m.origin) {
+            (Some(b), Some(o)) => human.push_str(&format!(
+                "WARNING: a switch to branch `{b}` was interrupted; every file holds its old or new content.\n\
+                 \x20        Finish it with `concurv branch switch {b}`, or go back with \
+                 `concurv restore --snapshot {o} --force`.\n"
+            )),
+            _ => human.push_str(&format!(
+                "WARNING: a restore to {} was interrupted; re-run `concurv restore --snapshot {} --force` to finish it.\n",
+                m.target, m.target
+            )),
+        }
         if let Some(b) = m.backup {
             human.push_str(&format!(
                 "         Pre-restore working copy is preserved in snapshot {b}.\n"
@@ -834,6 +872,8 @@ fn cmd_status(repo: &Repo, how: StatusOptions) -> Result<Output> {
             "interrupted_restore": st.interrupted_restore.map(|m| json!({
                 "target": m.target.to_hex(),
                 "backup": m.backup.map(|b| b.to_hex()),
+                "origin": m.origin.map(|o| o.to_hex()),
+                "branch": m.branch,
             })),
             "merge": merge,
         }),
@@ -1090,7 +1130,7 @@ fn cmd_branch(repo: &Repo, cmd: BranchCmd) -> Result<Output> {
                 .collect();
             ok(json!({ "branches": list }), human)
         }
-        BranchCmd::Create { name, at } => {
+        BranchCmd::Create { name, at, switch } => {
             let at = match at {
                 None => None,
                 Some(a) => {
@@ -1104,11 +1144,12 @@ fn cmd_branch(repo: &Repo, cmd: BranchCmd) -> Result<Output> {
                     })
                 }
             };
-            let o = branches::create(repo, &name, at)?;
+            let o = branches::create(repo, &name, branches::CreateOptions { at, switch })?;
             ok(
                 json!({
                     "branch": o.name,
                     "head": o.head.to_hex(),
+                    "switched": o.switched,
                     "operation": o.operation.to_hex(),
                 }),
                 format!(
@@ -1126,7 +1167,12 @@ fn cmd_branch(repo: &Repo, cmd: BranchCmd) -> Result<Output> {
             let human = match o.operation {
                 None => format!("Already on `{}`.", o.to),
                 Some(_) => format!(
-                    "Switched from `{}` to `{}` at {} ({} written, {} deleted).",
+                    "{} from `{}` to `{}` at {} ({} written, {} deleted).",
+                    if o.resumed {
+                        "Finished the interrupted switch"
+                    } else {
+                        "Switched"
+                    },
                     o.from.as_deref().unwrap_or("(none)"),
                     o.to,
                     &o.head.to_hex()[..12],
@@ -1141,6 +1187,7 @@ fn cmd_branch(repo: &Repo, cmd: BranchCmd) -> Result<Output> {
                     "head": o.head.to_hex(),
                     "written": o.written,
                     "deleted": o.deleted,
+                    "resumed": o.resumed,
                     "operation": o.operation.map(|s| s.to_hex()),
                 }),
                 human,

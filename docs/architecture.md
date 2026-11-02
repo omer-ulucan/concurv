@@ -39,8 +39,11 @@ concurv-cli ──► concurv-workspace ──► concurv-ops ──► concurv-
   commits cannot erase each other, and the op log stays linear.
 - **Branches are shared pointers, workspaces are private work.** Every
   workspace tracks one branch; branch creation and publication are CAS
-  operations under the repository lock; `update --from` moves work between
-  branches (ADR 0007).
+  operations under the repository lock; `merge <branch>` moves work between
+  branches, and only `publish` moves a branch. `branch switch` is a
+  transactional checkout (rollback on failure, resumable after a crash),
+  and in every checkout a path already at its target content is not
+  unsaved work (ADR 0007).
 - **Conservative merge, exact merge base.** Files merge at file level;
   text files changed on both sides merge line by line only if no hunks
   overlap or touch (ADR 0006). Everything else is a conflict, and ambiguous

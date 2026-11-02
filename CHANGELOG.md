@@ -6,11 +6,30 @@ version 1 and the CLI/JSON contract are not frozen until 0.1.0 (see ADR 0003).
 ## [Unreleased]
 
 ### Added (R2.5, ADR 0007)
-- **Named branches**: `branch create [--at]`, `branch list`, `branch switch`;
-  `workspace add --branch`; `update --from <branch>` merges another branch;
-  `git export --from <branch>`. `branch switch` refuses unsaved changes,
-  pending merges and saves that would be left on no branch; `undo` reverses
-  a switch. New operation kinds `branch-create`, `branch-switch`.
+- **Named branches**: `branch create [--at | --switch]`, `branch list`,
+  `branch switch`; `workspace add --branch`; `git export --from <branch>`.
+- **`concurv merge <branch>`** integrates another branch (same rules as
+  `update`; publishes nothing). `update` integrates only the tracked branch.
+- `branch create --switch` keeps unpublished saves on a new branch in one
+  operation, without touching files.
+- **Transactional `branch switch`**: refuses unsaved changes, colliding
+  untracked or ignored files, pending merges and saves that would be left
+  on no branch; keeps non-colliding untracked files; rolls back on I/O
+  failure; an interrupted switch is finished by running it again (`status`
+  reports it). `undo` reverses a switch and a merge.
+- Branch names: Git's ref-name rules exactly (tested against
+  `git check-ref-format`), a portability policy (ASCII, Windows-safe,
+  reserved `refs`/`remote`/`remotes`), and namespace-collision checks
+  (case, `x` vs `x/y`).
+- R3 groundwork: `reconcile::plan` encodes the per-branch reconciliation
+  rules of RFC 0003 §5 (not wired to any command).
+- New operation kinds `branch-create`, `branch-switch`, `merge`.
+
+### Changed (R2.5)
+- A path whose current content already equals the checkout target is no
+  longer counted as unsaved work by restore/update/checkout (nothing is
+  lost by leaving it); this makes interrupted checkouts resumable.
+- The `update --from` option of an unreleased build is replaced by `merge`.
 
 ## [0.1.0-alpha.1] — 2026-11-01
 

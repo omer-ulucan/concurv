@@ -10,13 +10,14 @@ Every command runs in the workspace containing the current directory (or `-C`).
 | `concurv diff [--no-cache]` | unified text diffs (Git style, incl. `\ No newline at end of file`; CRLF kept); binary/large/symlink changes are summarized | no |
 | `concurv save -m <msg>` | durably snapshot the working copy and advance **this workspace's head**. Does not publish | workspace history |
 | `concurv publish` | CAS fast-forward of the branch this workspace tracks (default `main`) to the workspace head | shared branch |
-| `concurv update [--from B] [--allow-conflicts \| --abort]` | bring the tracked branch (or, with `--from`, branch `B`) into this workspace; the tracked branch stays the publish target: fast-forward, or a three-way merge into a new snapshot (file level, plus line-level merge of text files whose edits do not overlap, ADR 0006). `--allow-conflicts`: write conflicts into the working copy and start a pending merge; `--abort`: give a pending merge up | working copy, workspace head |
+| `concurv update [--allow-conflicts \| --abort]` | bring the **tracked** branch into this workspace: fast-forward, or a three-way merge into a new snapshot (file level, plus line-level merge of text files whose edits do not overlap, ADR 0006). `--allow-conflicts`: write conflicts into the working copy and start a pending merge; `--abort`: give a pending merge up | working copy, workspace head |
+| `concurv merge <branch> [--allow-conflicts] \| --abort` | integrate **another** branch with the rules of `update`; the workspace keeps its branch, and only a later `publish` (CAS) publishes the result. Merging the tracked branch is refused (use `update`). `--abort` = `update --abort` (ADR 0007) | working copy, workspace head |
 | `concurv workspace add <path> [--name N] [--branch B]` | create a workspace in a new or empty directory, tracking `B` (default: the current workspace's branch), and check out that branch there | creates workspace |
 | `concurv workspace list` | all workspaces with branch, head and path | no |
-| `concurv branch create <name> [--at <snapshot\|branch>]` | add a branch at this workspace's head (or `--at`); moves no workspace (ADR 0007) | shared branches |
+| `concurv branch create <name> [--at <snapshot\|branch> \| --switch]` | add a branch, by default at this workspace's head (unpublished saves included); `--switch`: there, and this workspace tracks it, in one operation with no file changes. Names: Git's ref-name rules plus a portability policy; no collision with existing branches (ADR 0007 §5). Moves no other workspace or branch | shared branches (+ tracked branch with `--switch`) |
 | `concurv branch list` | branches with head and the workspaces tracking them | no |
-| `concurv branch switch <name>` | track another branch and check out its head; refused if unsaved changes (20), a pending merge (43), an unknown branch (50), or saves on no branch would result (42) | working copy, workspace head and branch |
-| `concurv undo` | reverse this workspace's most recent operation (`save`, `update`, `restore`, `branch switch`); repeat to go further back. Refuses `publish` and `branch create` | workspace head and/or working copy |
+| `concurv branch switch <name>` | track another branch and check out its head, transactionally. Untracked files that do not collide stay. Refused, with nothing changed: unsaved changes, or untracked/ignored files that would be overwritten (20); a pending merge (43); an unknown branch (50); saves that would be on no branch (42). A failed switch is rolled back; an interrupted one is finished by running it again | working copy, workspace head and branch |
+| `concurv undo` | reverse this workspace's most recent operation (`save`, `update`, `merge`, `restore`, `branch switch`); repeat to go further back. Refuses `publish` and `branch create` | workspace head and/or working copy |
 | `concurv log [-n N]` | first-parent snapshot history of this workspace's head | no |
 | `concurv restore --snapshot <id> [--force]` | make working files equal to the snapshot; history unchanged | working copy (+ backup snapshot, operation) |
 | `concurv check-ignore <path>…` | explain whether each path is ignored (`.gitignore`, `.concurv/exclude`) or tracked, and by which rule; reports unusable patterns | no |
@@ -57,24 +58,24 @@ changes behaviour, not the JSON shape.)
 - `init`: `root`, `branch`
 - `status`: `branch`, `head` (hex or null), `clean`, `changes[]`, `merge` (null, or `{conflict, theirs, conflicts[]: {path, kind, resolved, markers_remaining, remaining_side_files[]}}`)
   (`path`, `kind` ∈ `added|deleted|modified|type_changed`, `old_blob`, `new_blob`),
-  `interrupted_restore` (null or `{target, backup}`)
+  `interrupted_restore` (null or `{target, backup, origin, branch}`; `origin` and `branch` are set for an interrupted `branch switch`: finish it with `branch switch <branch>`)
 - `diff`: `files[]` (`path`, `kind`, `unified` or null, `note` or null)
 - `save`: `created`, `snapshot`, `operation`, `changes[]`
 - `publish`: `branch`, `from` (previous branch head or null), `to`, `published` (false if already there), `operation`
-- `update`: `branch` (the branch integrated), `result` ∈ `up_to_date|fast_forward|merged|conflicted|aborted`, `conflict` (pending-merge id or null), `conflicts[]` (`path`, `kind` ∈ `both_modified|both_added|delete_modify|file_directory`, `markers`, `side_files[]`), `content_merged[]` (paths merged line by line), for `aborted` also `backup`, `head`, `written`, `deleted`, `operation`
+- `update`, `merge`: `branch` (the branch integrated), `result` ∈ `up_to_date|fast_forward|merged|conflicted|aborted`, `conflict` (pending-merge id or null), `conflicts[]` (`path`, `kind` ∈ `both_modified|both_added|delete_modify|file_directory`, `markers`, `side_files[]`), `content_merged[]` (paths merged line by line), for `aborted` also `backup`, `head`, `written`, `deleted`, `operation`
 - `git export`: `branch`, `tip` (Git commit), `previous` (Git branch before, or null), `exported` (new commits), `reused` (already present), `updated`
 - `git import`: `branch`, `git_tip`, `tip` (snapshot now at `main`), `commits`, `written`
-- `undo`: `undone` (operation id), `undone_kind` ∈ `save|update|restore|branch-switch`, `undone_description`, `head` (workspace head after), `files_restored_to` (snapshot or null if files were untouched), `written`, `deleted`, `operation`
-- `branch create`: `branch`, `head`, `operation`
+- `undo`: `undone` (operation id), `undone_kind` ∈ `save|update|merge|restore|branch-switch`, `undone_description`, `head` (workspace head after), `files_restored_to` (snapshot or null if files were untouched), `written`, `deleted`, `operation`
+- `branch create`: `branch`, `head`, `switched`, `operation`
 - `branch list`: `branches[]` (`name`, `head`, `workspaces[]` (names), `current`)
-- `branch switch`: `from` (or null), `branch`, `head`, `written`, `deleted`, `operation` (null if already on it)
+- `branch switch`: `from` (or null), `branch`, `head`, `written`, `deleted`, `resumed` (finished an interrupted switch), `operation` (null if already on it)
 - `workspace add`: `workspace` (as below), `written`
 - `workspace list`: `workspaces[]` (`id`, `name`, `branch`, `head`, `root` (null if unknown on this device), `primary`, `current`)
 - `log`: `snapshots[]` (`snapshot`, `parents[]`, `tree`, `change_id`, `author`, `timestamp_ms`, `message`)
 - `restore`: `target`, `backup`, `written`, `deleted`, `operation`
 - `check-ignore`: `paths[]` (`input`, `path`, `is_dir`, `tracked`, `ignored`, `rule` (null or `{source, pattern, negated}`), `excluded_parent` (null or a directory)), `unusable_patterns[]` (`source`, `line`, `pattern`, `reason`)
 - `verify`: `full`, `operations`, `conflicts`, `snapshots`, `trees`, `blobs`, `unreachable`, `problems[]` (`code`, `subject`, `message`), `notes[]`
-- `op log`: `operations[]` (`operation`, `parents[]`, `kind` ∈ `init|save|restore|workspace-add|publish|update|undo|merge-abort|git-import|branch-create|branch-switch`, `description`, `timestamp_ms`, `device`, `workspace` (null for `init`), `backup` (null unless `restore --force` replaced unsaved work), `undoes` (for `undo`: the reversed operation), `checked_out` (snapshot the working copy was set to, or null), `head` (the **current** workspace's head after the operation, or null), `branches` (object: name → snapshot id))
+- `op log`: `operations[]` (`operation`, `parents[]`, `kind` ∈ `init|save|restore|workspace-add|publish|update|undo|merge-abort|git-import|branch-create|branch-switch|merge`, `description`, `timestamp_ms`, `device`, `workspace` (null for `init`), `backup` (null unless `restore --force` replaced unsaved work), `undoes` (for `undo`: the reversed operation), `checked_out` (snapshot the working copy was set to, or null), `head` (the **current** workspace's head after the operation, or null), `branches` (object: name → snapshot id))
 
 ## Error codes and exit codes
 
@@ -86,7 +87,7 @@ changes behaviour, not the JSON shape.)
 | 10 | `CONCURV_NOT_A_REPO` | no repository found, or a workspace whose repository is gone |
 | 11 | `CONCURV_ALREADY_INITIALIZED` | `init` on existing repo |
 | 12 | `CONCURV_UNSUPPORTED_FORMAT` | unknown object/repository format version |
-| 20 | `CONCURV_DIRTY_WORKSPACE` | restore/update/undo/branch switch would discard unsaved changes, or would overwrite an ignored untracked file (also with `--force`) |
+| 20 | `CONCURV_DIRTY_WORKSPACE` | restore/update/merge/undo/branch switch would discard unsaved changes, or would overwrite an ignored untracked file (also with `--force`); `branch switch` would overwrite or remove an untracked file |
 | 21 | `CONCURV_CONCURRENT_MODIFICATION` | a file changed while concurv was reading/replacing it |
 | 22 | `CONCURV_INVALID_PATH` | name violates concurv or platform path rules (incl. a `.git` entry on restore); nested workspace |
 | 23 | `CONCURV_UNSUPPORTED_FILE_TYPE` | FIFO/socket/device, or link on Windows; `git import` of something concurv cannot represent (submodule, `.concurv` path, non-UTF-8 message) |
@@ -96,7 +97,7 @@ changes behaviour, not the JSON shape.)
 | 40 | `CONCURV_LOCKED` | a repository or workspace lock stayed busy for the whole wait |
 | 41 | `CONCURV_STALE_HEAD` | op head or workspace head moved during compare-and-swap |
 | 42 | `CONCURV_DIVERGED` | `publish` refused: the branch has work this workspace has not integrated (run `update`); `git export` refused: the Git branch has commits outside the exported branch's history; `branch switch` refused: saves in this workspace are on neither the old nor the new branch |
-| 43 | `CONCURV_CONFLICT` | `update` refused: conflicting changes (without `--allow-conflicts`), file/directory conflict, ambiguous merge base, or a merge already pending; `save` refused: unresolved conflicts; `branch switch` refused during a pending merge. Nothing modified |
-| 50 | `CONCURV_NOT_FOUND` | id/prefix not found or not a snapshot; workspace not registered; nothing to undo; unknown branch (`branch switch`, `update --from`, `workspace add --branch`, `git export --from`) |
+| 43 | `CONCURV_CONFLICT` | `update`/`merge` refused: conflicting changes (without `--allow-conflicts`), file/directory conflict, ambiguous merge base, or a merge already pending; `save` refused: unresolved conflicts; `branch switch` and `branch create --switch` refused during a pending merge. Nothing modified |
+| 50 | `CONCURV_NOT_FOUND` | id/prefix not found or not a snapshot; workspace not registered; nothing to undo; unknown branch (`branch switch`, `merge`, `workspace add --branch`, `git export --from`) |
 | 51 | `CONCURV_AMBIGUOUS_ID` | prefix matches several objects |
 | 60 | `CONCURV_EXTERNAL_TOOL` | `git` is not installed or a git command failed |

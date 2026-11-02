@@ -295,6 +295,7 @@ pub fn add_on(
                 undoes: None,
                 set_merge: None,
                 set_branch: None,
+                transactional: false,
             },
         )?;
         written = out.written;

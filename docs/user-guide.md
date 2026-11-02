@@ -237,10 +237,12 @@ tested with 2, 5 and 10 concurrent writers, and with processes killed mid-comman
 
 ## 4a. Branches
 
-A **branch** is a shared, named line of work (`main` is the first one). A
-**workspace** always tracks exactly one branch: `publish` moves that branch
-and `update` brings it in. Several workspaces can track the same branch.
-Rules and rationale: `docs/adr/0007-branch-model.md`.
+A **branch** is a shared, named reference to a snapshot (`main` is the
+first one). A **workspace** is your private copy: files, your own head and
+any merge in progress. Every workspace **tracks** exactly one branch.
+`publish` moves that branch (compare-and-swap: refused if someone else moved
+it first), and `update` brings it in. Several workspaces can track the same
+branch. Rules and rationale: `docs/adr/0007-branch-model.md`.
 
 ```console
 $ concurv branch create feature/login         # at this workspace's head; nothing else moves
@@ -249,30 +251,74 @@ $ cd ../login && concurv save -m "login form" && concurv publish   # moves featu
 $ concurv branch list                         # every branch, its head, who tracks it
 ```
 
-Bring a branch into another one with `update --from`, then publish as usual:
+**Two commands for integrating:**
+
+| Command | Brings in | Then |
+|---|---|---|
+| `concurv update` | the branch this workspace **tracks** (what others published to it) | `publish` |
+| `concurv merge <branch>` | **another** branch, e.g. a finished feature into `main` | `publish` (to your own branch) |
+
+Both use the same merge rules (section 4) and need a clean working copy.
+Neither publishes anything by itself.
 
 ```console
 $ cd ~/code/project                           # tracks main
-$ concurv update --from feature/login         # same merge rules as `update`
+$ concurv merge feature/login                 # conflicts: --allow-conflicts, or merge --abort
 $ concurv publish                             # main now contains the feature
 ```
 
-Or move the current workspace to another branch:
+**Unpublished saves.** If you saved work on `main` but decide it belongs on
+its own branch, put a branch there and move to it in one step. No files
+change, and `main` stays where it was:
+
+```console
+$ concurv branch create experiment --switch
+```
+
+**Switching a workspace to another branch:**
 
 ```console
 $ concurv branch switch feature/login         # checks out that branch's head
 $ concurv undo                                # back to the previous branch and files
 ```
 
-`branch switch` never loses work. It refuses, with nothing changed, if you
-have unsaved changes (exit 20), a pending merge (exit 43), or saves that are
-on neither the old nor the new branch (exit 42), because those would end up
-on no branch. In that case publish them first, or keep them on a new branch:
-`concurv branch create keep-this`, then switch. Branch names use ASCII
-letters, digits and `._-/`, so they export to Git unchanged:
-`concurv git export ../mirror.git --from feature/login`. Deleting and
-renaming branches is not supported yet. `undo` cannot reverse
-`branch create`: branches are shared, and someone may already be using it.
+`branch switch` never loses work. Untracked files that don't collide with
+the other branch stay where they are. The switch refuses, with nothing
+changed, if:
+- a tracked file has unsaved changes, or an untracked or ignored file would
+  be overwritten or removed (exit 20);
+- a merge is in progress (exit 43);
+- your saves would end up on no branch (exit 42). Publish them first, or use
+  `branch create <name> --switch`.
+
+If a file can't be written halfway through, the working copy is put back as
+it was. If the process is killed, `concurv status` reports an interrupted
+switch. Every file then holds its old or its new content, so nothing is
+lost: run the same `concurv branch switch <name>` again to finish, or
+`concurv restore --snapshot <origin> --force` (shown by `status`) to go back.
+
+**Branch names** follow Git's rules, so they export unchanged
+(`concurv git export ../mirror.git --from feature/login`). concurv is
+stricter in a few places so names work on every OS:
+- ASCII only;
+- none of `< > " |`;
+- no Windows device names such as `con`;
+- no leading `-`, and not `HEAD` or `@`;
+- the first parts `refs`, `remote` and `remotes` are reserved;
+- no two branches that differ only in case, and not both `x` and `x/y`.
+
+Not supported yet: deleting and renaming branches, protected branches,
+tags. `undo` cannot reverse `branch create`: branches are shared, and
+someone may already be using it.
+
+**Words used in this guide.** Your *workspace state* (files, head, merge in
+progress) is private. A *branch* here is a reference shared by all
+workspaces of the repository; on one machine it is also the published head.
+With multi-machine sync (R3, not built yet), a relay will hold the
+authoritative published heads. Fetched heads will appear as read-only
+*remote-tracking* references (`remote/<relay>/<branch>`). They never
+overwrite your branches, and divergent work is merged by you before it is
+published (`docs/rfcs/0003-sync-protocol.md` §5).
 
 ## 5. Going back to an earlier snapshot
 

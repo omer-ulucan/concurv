@@ -183,3 +183,97 @@ fn killed_processes_never_lose_acknowledged_saves() {
     );
     assert!(killed > 0, "the test must actually kill processes");
 }
+
+/// ADR 0007 §3: `branch switch` processes killed at random points. After
+/// each kill, the documented recovery (`status`, then the same `branch
+/// switch` again) must give a consistent workspace: tracking one branch,
+/// files equal to that branch's head, the untracked file intact, and the
+/// repository verifying.
+#[test]
+fn killed_branch_switches_are_finished_by_running_them_again() {
+    const FILES: usize = 300;
+    let outer = tempfile::tempdir().unwrap();
+    let a = outer.path().join("a");
+    fs::create_dir(&a).unwrap();
+    assert_eq!(run(&a, &["init"]).0, 0);
+    for i in 0..FILES {
+        fs::create_dir_all(a.join(format!("d{}", i % 10))).unwrap();
+        fs::write(
+            a.join(format!("d{}/f{i}.txt", i % 10)),
+            format!("main {i}\n"),
+        )
+        .unwrap();
+    }
+    assert_eq!(run(&a, &["save", "-m", "main"]).0, 0);
+    assert_eq!(run(&a, &["publish"]).0, 0);
+    assert_eq!(run(&a, &["branch", "create", "feature", "--switch"]).0, 0);
+    for i in 0..FILES {
+        fs::write(
+            a.join(format!("d{}/f{i}.txt", i % 10)),
+            format!("feature {i}\n"),
+        )
+        .unwrap();
+        if i % 7 == 0 {
+            fs::write(a.join(format!("d{}/extra{i}.txt", i % 10)), "extra\n").unwrap();
+        }
+    }
+    assert_eq!(run(&a, &["save", "-m", "feature"]).0, 0);
+    assert_eq!(run(&a, &["publish"]).0, 0);
+    fs::write(a.join("notes.txt"), "untracked notes").unwrap();
+    // Calibrate: kill anywhere within the duration of one full switch.
+    let t = std::time::Instant::now();
+    assert_eq!(run(&a, &["branch", "switch", "main"]).0, 0);
+    let span = (t.elapsed().as_millis() as u64 * 5 / 4).max(20);
+
+    let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+    let (mut killed, mut resumed) = (0, 0);
+    for round in 0..16 {
+        let (_, st) = run(&a, &["status"]);
+        let on = st["data"]["branch"].as_str().unwrap().to_owned();
+        let to = if on == "main" { "feature" } else { "main" };
+        let mut child = cmd(&a, &["branch", "switch", to]).spawn().unwrap();
+        sleep(rng.next(span));
+        if child.try_wait().unwrap().is_none() {
+            let _ = child.kill();
+            killed += 1;
+        }
+        let _ = child.wait_with_output().unwrap();
+
+        // Documented recovery.
+        let (_, st) = run(&a, &["status"]);
+        if let Some(b) = st["data"]["interrupted_restore"]["branch"].as_str() {
+            let (code, v) = run(&a, &["branch", "switch", b]);
+            assert_eq!(code, 0, "round {round}: resuming failed: {v}");
+            assert_eq!(v["data"]["resumed"], true, "round {round}: {v}");
+            resumed += 1;
+        }
+        let (code, st) = run(&a, &["status"]);
+        assert_eq!(code, 0);
+        assert!(
+            st["data"]["interrupted_restore"].is_null(),
+            "round {round}: {st}"
+        );
+        let changes = st["data"]["changes"].as_array().unwrap();
+        assert_eq!(changes.len(), 1, "round {round}: only notes.txt: {st}");
+        assert_eq!(changes[0]["path"], "notes.txt");
+        assert_eq!(
+            fs::read_to_string(a.join("notes.txt")).unwrap(),
+            "untracked notes"
+        );
+        let on = st["data"]["branch"].as_str().unwrap();
+        let sample = fs::read_to_string(a.join("d3/f123.txt")).unwrap();
+        assert_eq!(sample, format!("{on} 123\n"), "round {round}");
+        assert_eq!(
+            a.join("d0/extra0.txt").exists(),
+            on == "feature",
+            "round {round}"
+        );
+        let (code, v) = run(&a, &["verify", "--full"]);
+        assert_eq!(code, 0, "round {round}: {v}");
+    }
+    eprintln!(
+        "switch span {span} ms; processes killed: {killed}, interrupted switches resumed: {resumed}"
+    );
+    assert!(killed > 0, "the test must actually kill processes");
+    assert!(resumed > 0, "some kill must land inside a switch");
+}

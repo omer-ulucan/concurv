@@ -73,7 +73,7 @@ pub fn undo(repo: &Repo) -> Result<UndoOutcome> {
     let ws_id = repo.workspace_id();
     let (target_id, target) = undo_target(repo)?;
     match target.kind.as_str() {
-        "save" | "update" | "restore" | "branch-switch" => {}
+        "save" | "update" | "merge" | "restore" | "branch-switch" => {}
         "branch-create" => {
             return Err(refuse(
                 "branch-create",
@@ -128,7 +128,7 @@ pub fn undo(repo: &Repo) -> Result<UndoOutcome> {
         "save" => None,
         // An update or branch switch moved files and head from `before.head`
         // to `after.head`.
-        "update" | "branch-switch" => {
+        "update" | "merge" | "branch-switch" => {
             let b = before.head.ok_or_else(|| {
                 refuse(&target.kind, "it was the first checkout of this workspace")
             })?;
@@ -171,6 +171,7 @@ pub fn undo(repo: &Repo) -> Result<UndoOutcome> {
                     set_merge: Some(before.merge),
                     // Undoing a branch switch also restores the tracked branch.
                     set_branch: (target.kind == "branch-switch").then(|| before.branch.clone()),
+                    transactional: target.kind == "branch-switch",
                 },
             )?;
             Ok(UndoOutcome {

@@ -205,8 +205,10 @@ files can still break the program together. The intended workflow is
 - **R2-I2** A commit changes only the committing workspace's view entry and,
   for `publish`, the branch it publishes. Every other view entry is copied
   from the op head current at commit time.
-- **R2-I3** `main` moves only by `publish`, only forward (the old head is an
-  ancestor of the new one), and only under the repository lock with a CAS.
+- **R2-I3** `main` (since R2.5: every branch) moves only by `publish`, only
+  forward (the old head is an ancestor of the new one), and only under the
+  repository lock with a CAS. `branch create` only inserts a new reference.
+  The branch invariants B1–B5 are in ADR 0007 §6 and §12 below.
 - **R2-I4** A failed or killed save, update or publish leaves every
   previously acknowledged snapshot reachable and every view entry valid.
 - **R2-I5** `update` and `publish` never discard unsaved working-copy data:
@@ -314,3 +316,37 @@ While a merge is pending:
 Limits: markers cover the **whole file**. Hunk-level, line-by-line merging is
 R4. Side files and markers never reach a snapshot, because `save` refuses
 until they are gone.
+
+## 12. Branches (R2.5, ADR 0007)
+
+The view's `branches` map holds any number of named references. Every
+workspace's `branch` field names the one it tracks; `publish` and `update`
+use it. New operation kinds: `branch-create` (inserts a reference, and with
+`--switch` also sets the creating workspace's `branch`), `branch-switch`
+(checkout plus a change of the tracked branch in one operation) and `merge`
+(the integration of §7 with another branch as the source).
+
+**Kinds of state.** These terms are used consistently from here on:
+
+- *Workspace state*: files, workspace head, pending merge. Private to one
+  workspace.
+- *Local branch reference*: `view.branches[b]`, shared by all workspaces of
+  the repository. Before R3, this is also the authoritative published head.
+- *Remote-tracking reference* (R3): the last relay head observed by fetch,
+  stored apart from `branches` (RFC 0003 §5).
+- *Authoritative published head* (R3): the relay's head of a branch, moved
+  only by its CAS.
+
+**Switch protocol.** `branch switch` uses the checkout of RFC 0002 §3.4 in
+transactional mode:
+1. Refuse dirty tracked files, colliding untracked or ignored files, a
+   pending merge, and a head that would be on no branch (ADR 0007 §3).
+2. Write the marker with `origin` (the old head) and `branch`.
+3. Apply. Non-colliding untracked files are part of the expected result, so
+   they are never touched.
+4. Verify by rescanning, then commit `{head := target, branch := b}`.
+
+A failure before the commit point rolls the files back. Content the switch
+did not write is never touched by the rollback. After a crash, repeating the
+switch resumes at the marker's target. In every checkout, a path whose
+current content equals its target content is not unsaved work.
