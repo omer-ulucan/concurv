@@ -229,7 +229,7 @@ fn symlink_retarget_and_mode_change_are_detected() {
         changes(&repo),
         [
             ("link".to_owned(), ChangeKind::Modified),
-            ("run".to_owned(), ChangeKind::Modified),
+            ("run".to_owned(), ChangeKind::TypeChanged),
         ]
     );
 }
