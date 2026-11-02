@@ -13,10 +13,11 @@ objects come in later slices.
 - Many writers (humans, agents, scripts) work at the same time. Every
   acknowledged save survives contention, retries and forced termination.
 - One logical branch (`main`) advances only through an explicit,
-  compare-and-swap-protected **publish**.
+  compare-and-swap-protected **publish**. (R2.5 adds further named branches
+  under the same rule; see ADR 0007.)
 
-Non-goals for R2: line-level merging (R4), test gates and attestations (R4),
-cross-machine sync (R3).
+Non-goals for R2: line-level merging (added in R2.5, ADR 0006), test gates
+and attestations (R4), cross-machine sync (R3).
 
 ## 2. Save versus publish (behaviour change from R1)
 

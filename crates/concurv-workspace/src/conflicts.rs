@@ -362,6 +362,7 @@ pub fn abort_merge(repo: &Repo) -> Result<RestoreOutcome> {
             expected: Some(conflict.worktree),
             set_merge: Some(None),
             undoes: None,
+            set_branch: None,
         },
     )
 }

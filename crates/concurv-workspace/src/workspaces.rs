@@ -95,6 +95,25 @@ fn canon(p: &Path) -> Result<PathBuf> {
 /// Create a new workspace at `path` on the same branch, and check out the
 /// branch head there.
 pub fn add(repo: &Repo, path: &Path, name: Option<&str>) -> Result<AddOutcome> {
+    add_on(repo, path, name, None)
+}
+
+/// [`add`], tracking `branch` instead of the current workspace's branch
+/// (ADR 0007). The branch must exist.
+pub fn add_on(
+    repo: &Repo,
+    path: &Path,
+    name: Option<&str>,
+    branch: Option<&str>,
+) -> Result<AddOutcome> {
+    if let Some(b) = branch
+        && !repo.current()?.1.view.branches.contains_key(b)
+    {
+        return Err(ConcurvError::new(
+            ErrorCode::NotFound,
+            format!("no branch named `{b}` (see `concurv branch list`); nothing was created"),
+        ));
+    }
     // Target directory: absent (created) or an empty directory.
     match fs::symlink_metadata(path) {
         Ok(m) if m.is_dir() => {
@@ -201,6 +220,7 @@ pub fn add(repo: &Repo, path: &Path, name: Option<&str>) -> Result<AddOutcome> {
             "the workspace path is not valid UTF-8",
         )
     })?;
+    let requested = branch;
     let branch;
     let main_head;
     {
@@ -212,7 +232,9 @@ pub fn add(repo: &Repo, path: &Path, name: Option<&str>) -> Result<AddOutcome> {
                 format!("a workspace named `{name}` already exists"),
             ));
         }
-        branch = current.branch.clone();
+        branch = requested
+            .map(str::to_owned)
+            .or_else(|| current.branch.clone());
         main_head = branch
             .as_ref()
             .and_then(|b| op.view.branches.get(b).copied());
@@ -272,6 +294,7 @@ pub fn add(repo: &Repo, path: &Path, name: Option<&str>) -> Result<AddOutcome> {
                 expected: None,
                 undoes: None,
                 set_merge: None,
+                set_branch: None,
             },
         )?;
         written = out.written;

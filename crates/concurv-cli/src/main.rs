@@ -8,8 +8,8 @@ use clap::{Parser, Subcommand};
 use concurv_core::{ConcurvError, ErrorCode, Result};
 use concurv_workspace::{
     Change, Repo, RepoOptions, RestoreOptions, StatusOptions, UpdateKind, UpdateOptions,
-    WorkspaceInfo, abort_merge, diff_with, log, op_log, publish, restore, save, status_with, undo,
-    update_with, verify, workspaces,
+    WorkspaceInfo, abort_merge, branches, diff_with, log, op_log, publish, restore, save,
+    status_with, undo, update_from, update_with, verify, workspaces,
 };
 use serde_json::{Value, json};
 
@@ -92,8 +92,13 @@ enum Cmd {
         #[command(subcommand)]
         cmd: WorkspaceCmd,
     },
-    /// Move the shared branch (`main`) forward to this workspace's head (CAS).
+    /// Move this workspace's branch forward to the workspace head (CAS).
     Publish,
+    /// Create, list and switch branches (ADR 0007).
+    Branch {
+        #[command(subcommand)]
+        cmd: BranchCmd,
+    },
     /// Exchange history with a Git repository (requires `git` on PATH).
     Git {
         #[command(subcommand)]
@@ -101,8 +106,13 @@ enum Cmd {
     },
     /// Reverse the most recent operation of this workspace (never shared state).
     Undo,
-    /// Bring the shared branch into this workspace (fast-forward or file-level merge).
+    /// Bring this workspace's branch (or `--from` another branch) into this workspace
+    /// (fast-forward or three-way merge).
     Update {
+        /// Merge this branch instead of the tracked one; `publish` then moves the
+        /// tracked branch.
+        #[arg(long)]
+        from: Option<String>,
         /// Write conflicts into the working copy and record a pending merge
         /// instead of refusing (resolve, then `concurv save`).
         #[arg(long)]
@@ -116,13 +126,16 @@ enum Cmd {
 
 #[derive(Subcommand)]
 enum GitCmd {
-    /// Write `main`'s history into a Git repository and move a Git branch to it (CAS).
+    /// Write a branch's history into a Git repository and move a Git branch to it (CAS).
     Export {
         /// Path of the Git repository (bare or not).
         repo: PathBuf,
-        /// Git branch to update.
+        /// concurv branch to export.
         #[arg(long, default_value = "main")]
-        branch: String,
+        from: String,
+        /// Git branch to update (default: the same name as `--from`).
+        #[arg(long)]
+        branch: Option<String>,
     },
     /// Import a Git branch into this fresh repository and check it out.
     Import {
@@ -136,16 +149,38 @@ enum GitCmd {
 
 #[derive(Subcommand)]
 enum WorkspaceCmd {
-    /// Create a new workspace in an empty or new directory and check out `main` there.
+    /// Create a new workspace in an empty or new directory and check out its branch there.
     Add {
         /// Directory for the new workspace.
         path: PathBuf,
         /// Workspace name (default: the directory name).
         #[arg(long)]
         name: Option<String>,
+        /// Branch the new workspace tracks (default: the current workspace's).
+        #[arg(long)]
+        branch: Option<String>,
     },
     /// List all workspaces of this repository.
     List,
+}
+
+#[derive(Subcommand)]
+enum BranchCmd {
+    /// Create a branch at this workspace's head (or `--at` a snapshot or branch).
+    Create {
+        /// Branch name (ASCII letters, digits and `._-/`).
+        name: String,
+        /// Snapshot id prefix or branch name to start from.
+        #[arg(long)]
+        at: Option<String>,
+    },
+    /// List branches and the workspaces tracking them.
+    List,
+    /// Make this workspace track another branch and check out its head.
+    Switch {
+        /// Branch name.
+        name: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -179,6 +214,15 @@ impl Cmd {
                 cmd: WorkspaceCmd::List,
             } => "workspace list",
             Cmd::Publish => "publish",
+            Cmd::Branch {
+                cmd: BranchCmd::Create { .. },
+            } => "branch create",
+            Cmd::Branch {
+                cmd: BranchCmd::List,
+            } => "branch list",
+            Cmd::Branch {
+                cmd: BranchCmd::Switch { .. },
+            } => "branch switch",
             Cmd::Update { .. } => "update",
             Cmd::Undo => "undo",
             Cmd::Git {
@@ -368,7 +412,7 @@ fn run(cli: Cli) -> Result<Output> {
             cmd_op_log(&repo, limit)
         }
         Cmd::Workspace {
-            cmd: WorkspaceCmd::Add { path, name },
+            cmd: WorkspaceCmd::Add { path, name, branch },
         } => {
             let repo = Repo::discover(&cwd, opts())?;
             let path = if path.is_absolute() {
@@ -376,7 +420,7 @@ fn run(cli: Cli) -> Result<Output> {
             } else {
                 cwd.join(path)
             };
-            let o = workspaces::add(&repo, &path, name.as_deref())?;
+            let o = workspaces::add_on(&repo, &path, name.as_deref(), branch.as_deref())?;
             let root = o.info.root.as_ref().map(|r| r.display().to_string());
             let human = format!(
                 "Created workspace `{}` at {}{}",
@@ -405,9 +449,10 @@ fn run(cli: Cli) -> Result<Output> {
             let mut human = String::new();
             for w in &all {
                 human.push_str(&format!(
-                    "{} {:<16} head {:<12}  {}\n",
+                    "{} {:<16} on {:<16} head {:<12}  {}\n",
                     if w.current { "*" } else { " " },
                     w.name,
+                    w.branch.as_deref().unwrap_or("(none)"),
                     w.head
                         .map_or("(none)".to_owned(), |h| h.to_hex()[..12].to_owned()),
                     w.root
@@ -419,6 +464,10 @@ fn run(cli: Cli) -> Result<Output> {
                 json!({ "workspaces": all.iter().map(workspace_json).collect::<Vec<_>>() }),
                 human,
             )
+        }
+        Cmd::Branch { cmd } => {
+            let repo = Repo::discover(&cwd, opts())?;
+            cmd_branch(&repo, cmd)
         }
         Cmd::Publish => {
             let repo = Repo::discover(&cwd, opts())?;
@@ -448,6 +497,7 @@ fn run(cli: Cli) -> Result<Output> {
             cmd:
                 GitCmd::Export {
                     repo: target,
+                    from,
                     branch,
                 },
         } => {
@@ -458,7 +508,8 @@ fn run(cli: Cli) -> Result<Output> {
                 cwd.join(target)
             };
             let git = concurv_git::GitRepo::open(&target)?;
-            let o = concurv_git::export(&repo, &git, &branch)?;
+            let branch = branch.unwrap_or_else(|| from.clone());
+            let o = concurv_git::export_from(&repo, &git, &from, &branch)?;
             let human = if o.updated {
                 format!(
                     "Exported to Git: `{}` is now {} ({} new commit(s), {} already present).",
@@ -549,11 +600,12 @@ fn run(cli: Cli) -> Result<Output> {
         Cmd::Update {
             allow_conflicts,
             abort: true,
+            from,
         } => {
-            if allow_conflicts {
+            if allow_conflicts || from.is_some() {
                 return Err(ConcurvError::new(
                     ErrorCode::InvalidArgument,
-                    "--abort and --allow-conflicts cannot be combined",
+                    "--abort cannot be combined with --allow-conflicts or --from",
                 ));
             }
             let repo = Repo::discover(&cwd, opts())?;
@@ -582,9 +634,14 @@ fn run(cli: Cli) -> Result<Output> {
         Cmd::Update {
             allow_conflicts,
             abort: false,
+            from,
         } => {
             let repo = Repo::discover(&cwd, opts())?;
-            let o = update_with(&repo, UpdateOptions { allow_conflicts })?;
+            let how = UpdateOptions { allow_conflicts };
+            let o = match from.as_deref() {
+                Some(b) => update_from(&repo, b, how)?,
+                None => update_with(&repo, how)?,
+            };
             let mut human = match o.kind {
                 UpdateKind::UpToDate => format!("Already up to date with `{}`.", o.branch),
                 UpdateKind::FastForward => format!(
@@ -997,6 +1054,99 @@ fn cmd_check_ignore(repo: &Repo, cwd: &std::path::Path, inputs: &[String]) -> Re
         json!({ "paths": arr, "unusable_patterns": warnings }),
         human,
     )
+}
+
+fn cmd_branch(repo: &Repo, cmd: BranchCmd) -> Result<Output> {
+    match cmd {
+        BranchCmd::List => {
+            let all = branches::list(repo)?;
+            let mut human = String::new();
+            for b in &all {
+                human.push_str(&format!(
+                    "{} {:<24} {}  {}\n",
+                    if b.current { "*" } else { " " },
+                    b.name,
+                    &b.head.to_hex()[..12],
+                    if b.workspaces.is_empty() {
+                        "(no workspace)".to_owned()
+                    } else {
+                        format!("workspaces: {}", b.workspaces.join(", "))
+                    }
+                ));
+            }
+            if all.is_empty() {
+                human.push_str("No branches yet: `concurv publish` creates the first one.\n");
+            }
+            let list: Vec<Value> = all
+                .iter()
+                .map(|b| {
+                    json!({
+                        "name": b.name,
+                        "head": b.head.to_hex(),
+                        "workspaces": b.workspaces,
+                        "current": b.current,
+                    })
+                })
+                .collect();
+            ok(json!({ "branches": list }), human)
+        }
+        BranchCmd::Create { name, at } => {
+            let at = match at {
+                None => None,
+                Some(a) => {
+                    let named = branches::list(repo)?
+                        .into_iter()
+                        .find(|b| b.name == a)
+                        .map(|b| b.head);
+                    Some(match named {
+                        Some(h) => h,
+                        None => repo.resolve_snapshot(&a)?,
+                    })
+                }
+            };
+            let o = branches::create(repo, &name, at)?;
+            ok(
+                json!({
+                    "branch": o.name,
+                    "head": o.head.to_hex(),
+                    "operation": o.operation.to_hex(),
+                }),
+                format!(
+                    "Created branch `{}` at {}. Work on it with `concurv branch switch {}` or \
+                     `concurv workspace add <dir> --branch {}`.",
+                    o.name,
+                    &o.head.to_hex()[..12],
+                    o.name,
+                    o.name
+                ),
+            )
+        }
+        BranchCmd::Switch { name } => {
+            let o = branches::switch(repo, &name)?;
+            let human = match o.operation {
+                None => format!("Already on `{}`.", o.to),
+                Some(_) => format!(
+                    "Switched from `{}` to `{}` at {} ({} written, {} deleted).",
+                    o.from.as_deref().unwrap_or("(none)"),
+                    o.to,
+                    &o.head.to_hex()[..12],
+                    o.written,
+                    o.deleted
+                ),
+            };
+            ok(
+                json!({
+                    "from": o.from,
+                    "branch": o.to,
+                    "head": o.head.to_hex(),
+                    "written": o.written,
+                    "deleted": o.deleted,
+                    "operation": o.operation.map(|s| s.to_hex()),
+                }),
+                human,
+            )
+        }
+    }
 }
 
 #[cfg(test)]

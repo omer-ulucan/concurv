@@ -73,7 +73,13 @@ pub fn undo(repo: &Repo) -> Result<UndoOutcome> {
     let ws_id = repo.workspace_id();
     let (target_id, target) = undo_target(repo)?;
     match target.kind.as_str() {
-        "save" | "update" | "restore" => {}
+        "save" | "update" | "restore" | "branch-switch" => {}
+        "branch-create" => {
+            return Err(refuse(
+                "branch-create",
+                "branches are shared and others may already use it; deleting branches is not \n                 supported yet",
+            ));
+        }
         "publish" => {
             return Err(refuse(
                 "publish",
@@ -120,11 +126,12 @@ pub fn undo(repo: &Repo) -> Result<UndoOutcome> {
     let files: Option<(SnapshotId, Option<SnapshotId>, bool)> = match target.kind.as_str() {
         // A save changed only the head: files stay as they are.
         "save" => None,
-        // An update moved files and head from `before.head` to `after.head`.
-        "update" => {
-            let b = before
-                .head
-                .ok_or_else(|| refuse("update", "it was the first checkout of this workspace"))?;
+        // An update or branch switch moved files and head from `before.head`
+        // to `after.head`.
+        "update" | "branch-switch" => {
+            let b = before.head.ok_or_else(|| {
+                refuse(&target.kind, "it was the first checkout of this workspace")
+            })?;
             // The working copy must still be what the update wrote: the new
             // head, or the conflict tree of a pending merge.
             Some((b, target.checked_out, true))
@@ -162,6 +169,8 @@ pub fn undo(repo: &Repo) -> Result<UndoOutcome> {
                     // Restores the pending-merge state too (e.g. undoing a
                     // conflicted update clears it).
                     set_merge: Some(before.merge),
+                    // Undoing a branch switch also restores the tracked branch.
+                    set_branch: (target.kind == "branch-switch").then(|| before.branch.clone()),
                 },
             )?;
             Ok(UndoOutcome {

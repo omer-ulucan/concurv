@@ -7,8 +7,8 @@ use std::path::Path;
 use std::process::Command;
 
 use concurv_core::{ErrorCode, SnapshotId};
-use concurv_git::{GitRepo, export, import};
-use concurv_workspace::{Repo, RepoOptions, publish, save, update, verify, workspaces};
+use concurv_git::{GitRepo, export, export_from, import};
+use concurv_workspace::{Repo, RepoOptions, branches, publish, save, update, verify, workspaces};
 
 fn opts() -> RepoOptions {
     RepoOptions {
@@ -335,5 +335,30 @@ fn import_refuses_what_concurv_cannot_represent() {
     assert_eq!(
         GitRepo::open(not_git.path()).unwrap_err().code,
         ErrorCode::InvalidArgument
+    );
+}
+
+#[test]
+fn export_of_a_feature_branch_shares_history_with_main() {
+    let outer = tempfile::tempdir().unwrap();
+    let a = concurv_history(outer.path());
+    let g = bare(&outer.path().join("mirror.git"));
+    export(&a, &g, "main").unwrap();
+    branches::create(&a, "feature/x", None).unwrap();
+    branches::switch(&a, "feature/x").unwrap();
+    write(a.root(), &[("feature.txt", b"F\n")]);
+    save(&a, "feature work").unwrap();
+    publish(&a).unwrap();
+    let o = export_from(&a, &g, "feature/x", "feature/x").unwrap();
+    assert!(o.updated);
+    assert_eq!(o.exported, 1, "main's commits are reused");
+    assert_eq!(
+        git(g.path(), &["rev-parse", "feature/x~1"]),
+        git(g.path(), &["rev-parse", "main"])
+    );
+    assert_eq!(git(g.path(), &["show", "feature/x:feature.txt"]), "F");
+    assert_eq!(
+        export_from(&a, &g, "nope", "nope").unwrap_err().code,
+        ErrorCode::NotFound
     );
 }

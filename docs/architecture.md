@@ -37,6 +37,10 @@ concurv-cli ──► concurv-workspace ──► concurv-ops ──► concurv-
 - **Commits apply to the current view.** A commit copies every other
   workspace's entry from the op head current at commit time, so concurrent
   commits cannot erase each other, and the op log stays linear.
+- **Branches are shared pointers, workspaces are private work.** Every
+  workspace tracks one branch; branch creation and publication are CAS
+  operations under the repository lock; `update --from` moves work between
+  branches (ADR 0007).
 - **Conservative merge, exact merge base.** Files merge at file level;
   text files changed on both sides merge line by line only if no hunks
   overlap or touch (ADR 0006). Everything else is a conflict, and ambiguous

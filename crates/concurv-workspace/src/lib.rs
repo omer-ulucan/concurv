@@ -2,6 +2,7 @@
 //! working-copy scanning, `save`, `status`/`diff`, safe `restore`,
 //! `publish`/`update` with file-level merge, history and `verify`.
 
+pub mod branches;
 pub mod conflicts;
 pub mod graph;
 pub mod ignore;
@@ -20,7 +21,8 @@ pub mod worktree;
 
 pub use conflicts::{ConflictStatus, abort_merge, conflict_status, pending_merge};
 pub use integrate::{
-    PublishOutcome, UpdateKind, UpdateOptions, UpdateOutcome, publish, update, update_with,
+    PublishOutcome, UpdateKind, UpdateOptions, UpdateOutcome, publish, update, update_from,
+    update_with,
 };
 pub use merge::{ConflictKind, MergeConflict, PartialMerge};
 pub use repo::{DEFAULT_BRANCH, DEFAULT_WORKSPACE, Repo, RepoOptions};
