@@ -61,7 +61,7 @@ completion evidence.
 | Id | Item | Milestone | Acceptance test | Failure / rollback | Evidence |
 |---|---|---|---|---|---|
 | P1-1 | Hunk-level 3-way merge reusing the conflict model; markers per hunk | R2.5 | disjoint hunks merge; adjacent/overlapping conflict; identical edits; EOF insert; no final newline; CRLF; binary → whole-file conflict; crash during materialization; Git round trip | any doubt → conflict, never a silent pick | tests |
-| P1-2 | Branch model ADR (named branches vs workspaces, switch semantics, publish targets, sync implications) | R2.5 | ADR accepted by the owner | — | ADR |
+| P1-2 | Branch model ADR (named branches vs workspaces, switch semantics, publish targets, sync implications) | R2.5 | ADR accepted by the owner (done: ADR 0007, accepted under the owner's delegation) | — | ADR |
 | P1-3 | Minimal branches: `branch create/list`, workspace on a branch, publish to it | R2.5 | tests for isolation and CAS per branch | refuse ambiguous operations | tests |
 | P1-4 | RFC 0003 revision (wire schema, device identity, ACLs, TLS, negotiation, quarantine, resume, replay defense) | R3 prep | RFC review | — | RFC |
 | P1-5 | Fuzz targets for decoders and the fast-export parser | R1.5–R2.5 | `cargo fuzz` runs recorded (not just configured) | — | corpus + run log |

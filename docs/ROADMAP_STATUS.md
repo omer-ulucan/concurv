@@ -3,7 +3,7 @@
 Legend: `not started` · `in progress` · `gate passed` · `blocked`.
 A stage is `gate passed` only with the evidence listed next to it.
 The plan itself (stages, gates, backlog, acceptance tests) lives in
-**`docs/ROADMAP_REVISED.md`**. Last updated: 2026-11-01 (R1.5 gate; first pre-release v0.1.0-alpha.1).
+**`docs/ROADMAP_REVISED.md`**. Last updated: 2026-11-01 (R2.5 gate).
 
 | Stage | Status | Evidence / blockers |
 |---|---|---|
@@ -11,8 +11,8 @@ The plan itself (stages, gates, backlog, acceptance tests) lives in
 | R1 — Native local VCS kernel | **gate passed** (2026-11-01) | CI run [41350688459](https://github.com/omer-ulucan/concurv/actions/runs/41350688459) on `main` @ `9b8ed23`: all gate checks pass on Linux, macOS and Windows. See evidence below. |
 | R1.5 — Daily VCS usability & safety | **gate passed** (2026-11-01) | CI run [41366633305](https://github.com/omer-ulucan/concurv/actions/runs/41366633305) on `main` @ `19ce0ed`: ignores (ADR 0004), ignored-file safety, `check-ignore`, benchmark, stat cache (ADR 0005), diff and case-collision tests, green on Linux, macOS and Windows. See "R1.5 evidence" below |
 | R2 — Private workspaces + concurrency | **gate passed** (2026-11-01) | CI run [41359891403](https://github.com/omer-ulucan/concurv/actions/runs/41359891403) on `main` @ `0689e96`: all four slices (RFC 0004, ADR 0002) green on Linux, macOS and Windows; 2/5/10 concurrent writers and killed-process tests pass. Git tags not supported (scoped). See "R2 evidence" below. |
-| R2.5 — Local merge & branch semantics | **in progress** | Done: line-level merge in `update` (ADR 0006). Open: branch-model ADR and the smallest branch slice. See "R2.5 progress" below |
-| R3 — Two-PC authenticated sync | not started | design only: RFC 0003 (draft, must be revised first); depends on R2.5 merge |
+| R2.5 — Local merge & branch semantics | **gate passed** (2026-11-01) | CI run [41370038493](https://github.com/omer-ulucan/concurv/actions/runs/41370038493) on `main` @ `8e450c8`: line-level merge (ADR 0006) and named branches (ADR 0007), green on Linux, macOS and Windows. See "R2.5 evidence" below |
+| R3 — Two-PC authenticated sync | not started | design only: RFC 0003 (draft; must be revised for per-branch reconciliation, ADR 0007, before implementation) |
 | R4 — Verified integration | not started | — |
 | R5 — Agent-aware coordination | not started | — |
 | R6 — Developer beta + Git ecosystem | not started | design only: ADR 0002 |
@@ -62,8 +62,8 @@ What the gate does **not** prove (still true, by design of the tests):
 
 ## Next
 
-R1, R2 and R1.5 are complete. Next: finish R2.5 (branch-model ADR, smallest
-branch slice), then revise RFC 0003 and start R3 (see `docs/ROADMAP_REVISED.md`). Open R0 work (competitor
+R0 (harness) remains open; R1, R1.5, R2 and R2.5 are complete. Next: revise
+RFC 0003 (per-branch reconciliation, ADR 0007) and start R3 (see `docs/ROADMAP_REVISED.md`). Open R0 work (competitor
 reproduction harness) continues in parallel and does not block R3.
 
 ## R2 evidence (gate passed 2026-11-01)
@@ -142,10 +142,25 @@ not maintain `ctime` (ADR 0005 residual risk; use `--no-cache`); ignore
 compatibility beyond the tested cases (one known divergence: Git matches a
 reversed range `[z-a]`, concurv does not).
 
-## R2.5 progress (gate not passed)
+## R2.5 evidence (gate passed 2026-11-01)
 
-| Item | State | Evidence |
-|---|---|---|
-| P1-1 hunk-level 3-way merge reusing the conflict model | **done** | ADR 0006; `textmerge.rs` unit + property tests (identity, idempotence, symmetry); `tests/hunk_merge.rs` (5 cases); CI run [41366628647](https://github.com/omer-ulucan/concurv/actions/runs/41366628647) on `feat/r2.5-hunk-merge` @ `2046fdc`: Linux 162, macOS 162, Windows 158 passed, 0 failed |
-| P1-2 branch-model ADR | not started | — |
-| Smallest branch slice (create/list/switch-by-workspace) | not started | — |
+CI run [41370038493](https://github.com/omer-ulucan/concurv/actions/runs/41370038493)
+on `main` @ `8e450c8`, rustc 1.99.1, `--locked`, `--no-fail-fast`:
+
+| Job | Tests |
+|---|---|
+| ubuntu-latest | **177 passed, 0 failed, 0 ignored** |
+| macos-latest (arm64) | **177 passed, 0 failed, 0 ignored** |
+| windows-latest | **173 passed, 0 failed, 0 ignored** |
+| MSRV 1.89 `cargo check` | pass |
+
+| Gate item | Tests / evidence |
+|---|---|
+| Hunk-level 3-way merge: disjoint same-file edits merge, overlap conflicts, reusing the conflict model and existing commands | ADR 0006; `textmerge.rs` unit + property tests (one side unchanged → other side, same change → that change, symmetry); `tests/hunk_merge.rs` (disjoint edits merge and publish, overlap refused with nothing changed, mixed merge records only real conflicts under `--allow-conflicts`, binary never merged, CRLF/no-final-newline byte-exact) |
+| Branch-model ADR accepted | ADR 0007, accepted under the owner's delegation ("finish R2 completely"); the owner may revise it before 0.1.0 |
+| Smallest branch slice (create/list/switch-by-workspace) | `branch create/list/switch`, `workspace add --branch`, `update --from`, `git export --from`; `tests/branches.rs` (12 tests incl. per-branch CAS isolation, switch-never-loses-work, undo of a switch, 5 concurrent creates with one winner, 4 concurrent publishes to different branches), `bridge.rs::export_of_a_feature_branch_shares_history_with_main`, `cli_smoke.rs::branch_commands` |
+| CI green on 3 OSes | run above |
+
+What the R2.5 gate does **not** prove: merges across machines (R3), and that
+a clean textual merge builds or passes tests (R4). Not implemented: branch
+delete/rename, protected branches (R4), tags (R6).

@@ -11,9 +11,9 @@ working name).
 
 **Current state:** first pre-release, **v0.1.0-alpha.1**
 ([download](https://github.com/omer-ulucan/concurv/releases/tag/v0.1.0-alpha.1)).
-Gates passed: R1 (local kernel), R1.5 (daily usability and safety) and R2
-(workspaces and concurrency). R2.5 (local merge) is in progress. On one
-machine: several private workspaces sharing one `main`, compare-and-swap
+Gates passed: R1 (local kernel), R1.5 (daily usability and safety), R2
+(workspaces and concurrency) and R2.5 (local merge and branches). On one
+machine: several private workspaces on shared named branches, compare-and-swap
 publication, three-way merge with line-level merging of non-overlapping
 edits, recorded conflicts that you resolve and save, workspace-scoped
 `undo`, Git-compatible ignores, and Git export/import. Stress-tested with
@@ -69,6 +69,15 @@ $ concurv update                 # merge what others published (files, and non-o
 $ concurv publish                # exit 42 if main moved again: update and retry
 ```
 
+Branches (ADR 0007):
+
+```console
+$ concurv branch create feature
+$ concurv workspace add ../my-project-feature --branch feature
+$ concurv update --from feature           # (on main) merge the feature, then publish
+$ concurv branch switch feature           # or move this workspace to another branch
+```
+
 Share with Git / GitHub (needs `git` on PATH):
 
 ```console
@@ -103,8 +112,9 @@ Full walkthrough and recovery procedures: **`docs/user-guide.md`**.
 - `status`/`diff` use a stat cache on Linux and macOS (never for snapshots,
   ADR 0005; `--no-cache` to hash everything). Windows always hashes.
   Measurements: `bench/RESULTS.md`.
-- Not implemented yet: rename detection, garbage collection, tags, symlinks
-  on Windows.
+- Not implemented yet: rename detection, garbage collection, tags, branch
+  delete/rename, symlinks on Windows. The released v0.1.0-alpha.1 binaries
+  predate branches; build from `main` to get them.
 - Don't keep repositories in cloud-synced folders (OneDrive, Dropbox).
 
 ## Build and test
@@ -138,6 +148,7 @@ Workspace layout: `crates/concurv-{core,objects,refs,ops,workspace,git,cli,bench
 | `docs/adr/0004-ignore-rules.md` | Git-compatible ignores and the tracked-file model |
 | `docs/adr/0005-stat-cache.md` | the stat cache and why it can never produce a wrong snapshot |
 | `docs/adr/0006-hunk-merge.md` | line-level merge in `update` |
+| `docs/adr/0007-branch-model.md` | named branches vs workspaces, switching, `update --from` |
 | `docs/security/threat-model.md` | threats and mitigation status |
 | `docs/benchmarks/comparison-plan.md` | competitor reproduction plan (no results yet) |
 | `bench/RESULTS.md` | `status`/`save` benchmark results (reproducible with `concurv-bench`) |
