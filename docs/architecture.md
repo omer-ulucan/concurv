@@ -37,8 +37,10 @@ concurv-cli ──► concurv-workspace ──► concurv-ops ──► concurv-
 - **Commits apply to the current view.** A commit copies every other
   workspace's entry from the op head current at commit time, so concurrent
   commits cannot erase each other, and the op log stays linear.
-- **File-level merge only, exact merge base.** Same-file changes and
-  ambiguous (criss-cross) bases are refused, never guessed.
+- **Conservative merge, exact merge base.** Files merge at file level;
+  text files changed on both sides merge line by line only if no hunks
+  overlap or touch (ADR 0006). Everything else is a conflict, and ambiguous
+  (criss-cross) bases are refused, never guessed.
 - **Content is the oracle.** `save`, `restore`, `update`, `undo` and checkout
   hash every file. `status`/`diff` may skip an unchanged file only on Unix,
   through a disposable stat cache that only `save` writes. An entry must match

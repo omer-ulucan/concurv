@@ -181,12 +181,13 @@ blob, or absent) in base, ours (`W`) and theirs (`M`):
 | `o == t` | `o` |
 | `o == b` | `t` (only theirs changed) |
 | `t == b` | `o` (only ours changed) |
-| otherwise | **conflict** |
+| otherwise | **conflict**, except: a regular text file present on all three sides whose edits do not overlap or touch is merged line by line (R2.5, ADR 0006) |
 
 The merged map must also be a valid tree: a path that is a file on one side
 and a directory on the other is a conflict. Any conflict → `CONCURV_CONFLICT`
-(exit 43) listing every conflicting path, and **nothing changes**. Contents
-are never merged within a file in R2.
+(exit 43) listing every conflicting path, and **nothing changes**. In R2,
+contents were never merged within a file. Since R2.5 non-overlapping hunks
+are merged (ADR 0006).
 
 No conflict → a merge snapshot `{tree: merged, parents: [W, M]}` is written,
 the working copy is checked out to it (the restore protocol of RFC 0002 §3.4),

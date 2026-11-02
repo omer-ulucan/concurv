@@ -49,6 +49,13 @@ R2 slices 2a (private workspaces), 2b (undo), 2c (conflict resolution) and 2d
 - Golden tests for diff output (` No newline at end of file`, CRLF, binary)
   and a case-collision restore test that runs on every OS.
 
+### Added (R2.5, ADR 0006)
+- **Line-level merge in `update`**: text files changed on both sides merge
+  when their edits are separated by at least one unchanged line
+  (conservative diff3; CRLF and missing final newline kept byte-exactly).
+  Binary files, symlinks and overlapping or touching edits stay conflicts.
+  `update --json` lists them in `content_merged[]`.
+
 ### Changed (R1.5)
 - `.git/` directories are never scanned, and untracked nested repositories
   are skipped. History saved by earlier builds that captured `.git/` files

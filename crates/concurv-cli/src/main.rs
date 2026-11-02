@@ -585,7 +585,7 @@ fn run(cli: Cli) -> Result<Output> {
         } => {
             let repo = Repo::discover(&cwd, opts())?;
             let o = update_with(&repo, UpdateOptions { allow_conflicts })?;
-            let human = match o.kind {
+            let mut human = match o.kind {
                 UpdateKind::UpToDate => format!("Already up to date with `{}`.", o.branch),
                 UpdateKind::FastForward => format!(
                     "Fast-forwarded to `{}` {} ({} written, {} deleted).",
@@ -596,7 +596,7 @@ fn run(cli: Cli) -> Result<Output> {
                 ),
                 UpdateKind::Merged => format!(
                     "Merged `{}` into this workspace as {} ({} written, {} deleted).\n\
-                     File-level merge only: build and test before `concurv publish`.",
+                     A clean merge is not a tested one: build and test before `concurv publish`.",
                     o.branch,
                     o.head.map_or(String::new(), |h| h.to_hex()),
                     o.written,
@@ -626,6 +626,18 @@ fn run(cli: Cli) -> Result<Output> {
                     s
                 }
             };
+            if !o.content_merged.is_empty() {
+                human.push_str(
+                    "
+Merged line by line (both sides edited different parts):",
+                );
+                for p in &o.content_merged {
+                    human.push_str(&format!(
+                        "
+  {p}"
+                    ));
+                }
+            }
             let conflicts: Vec<Value> = o
                 .conflict
                 .iter()
@@ -649,6 +661,7 @@ fn run(cli: Cli) -> Result<Output> {
                     "operation": o.operation.map(|s| s.to_hex()),
                     "conflict": o.conflict.as_ref().map(|(id, _)| id.to_hex()),
                     "conflicts": conflicts,
+                    "content_merged": o.content_merged.iter().map(ToString::to_string).collect::<Vec<_>>(),
                 }),
                 human,
             )

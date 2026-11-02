@@ -10,7 +10,7 @@ Every command runs in the workspace containing the current directory (or `-C`).
 | `concurv diff [--no-cache]` | unified text diffs (Git style, incl. `\ No newline at end of file`; CRLF kept); binary/large/symlink changes are summarized | no |
 | `concurv save -m <msg>` | durably snapshot the working copy and advance **this workspace's head**. Does not publish | workspace history |
 | `concurv publish` | CAS fast-forward of the workspace's branch (`main`) to the workspace head | shared branch |
-| `concurv update [--allow-conflicts \| --abort]` | bring `main` into this workspace: fast-forward, or file-level merge into a new snapshot. `--allow-conflicts`: write conflicts into the working copy and start a pending merge; `--abort`: give a pending merge up | working copy, workspace head |
+| `concurv update [--allow-conflicts \| --abort]` | bring `main` into this workspace: fast-forward, or a three-way merge into a new snapshot (file level, plus line-level merge of text files whose edits do not overlap, ADR 0006). `--allow-conflicts`: write conflicts into the working copy and start a pending merge; `--abort`: give a pending merge up | working copy, workspace head |
 | `concurv workspace add <path> [--name N]` | create a workspace in a new or empty directory and check out `main` there | creates workspace |
 | `concurv workspace list` | all workspaces with head and path | no |
 | `concurv undo` | reverse this workspace's most recent operation (`save`, `update`, `restore`); repeat to go further back. Refuses `publish` | workspace head and/or working copy |
@@ -58,7 +58,7 @@ changes behaviour, not the JSON shape.)
 - `diff`: `files[]` (`path`, `kind`, `unified` or null, `note` or null)
 - `save`: `created`, `snapshot`, `operation`, `changes[]`
 - `publish`: `branch`, `from` (previous branch head or null), `to`, `published` (false if already there), `operation`
-- `update`: `branch`, `result` ∈ `up_to_date|fast_forward|merged|conflicted|aborted`, `conflict` (pending-merge id or null), `conflicts[]` (`path`, `kind` ∈ `both_modified|both_added|delete_modify|file_directory`, `markers`, `side_files[]`), for `aborted` also `backup`, `head`, `written`, `deleted`, `operation`
+- `update`: `branch`, `result` ∈ `up_to_date|fast_forward|merged|conflicted|aborted`, `conflict` (pending-merge id or null), `conflicts[]` (`path`, `kind` ∈ `both_modified|both_added|delete_modify|file_directory`, `markers`, `side_files[]`), `content_merged[]` (paths merged line by line), for `aborted` also `backup`, `head`, `written`, `deleted`, `operation`
 - `git export`: `branch`, `tip` (Git commit), `previous` (Git branch before, or null), `exported` (new commits), `reused` (already present), `updated`
 - `git import`: `branch`, `git_tip`, `tip` (snapshot now at `main`), `commits`, `written`
 - `undo`: `undone` (operation id), `undone_kind` ∈ `save|update|restore`, `undone_description`, `head` (workspace head after), `files_restored_to` (snapshot or null if files were untouched), `written`, `deleted`, `operation`

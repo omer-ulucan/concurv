@@ -12,6 +12,7 @@ pub mod restore;
 pub mod save;
 pub mod statcache;
 pub mod status;
+pub mod textmerge;
 pub mod undo;
 pub mod verify;
 pub mod workspaces;

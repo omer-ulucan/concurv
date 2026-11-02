@@ -1,5 +1,6 @@
-//! File-level three-way merge (RFC 0004 §7). Contents are never merged
-//! within a file: a path changed differently on both sides is a conflict.
+//! Three-way merge of file maps (RFC 0004 §7). At file level a path changed
+//! differently on both sides is a conflict; [`merge_partial_with`] lets the
+//! caller try a line-level merge of such a path first (ADR 0006).
 
 use std::collections::BTreeSet;
 
@@ -43,8 +44,25 @@ pub fn merge_flat(
     })
 }
 
-/// Merge, keeping both the clean part and the conflicts.
+/// Merge, keeping both the clean part and the conflicts (file level only).
 pub fn merge_partial(base: &FlatTree, ours: &FlatTree, theirs: &FlatTree) -> Result<PartialMerge> {
+    merge_partial_with(base, ours, theirs, &mut |_, _, _, _| Ok(None))
+}
+
+/// Resolver for a path present in all three trees and changed differently
+/// on both sides: `(path, base, ours, theirs)` → a merged state, or `None`
+/// to keep the conflict.
+pub type Resolver<'a> =
+    dyn FnMut(&RepoPath, &FileState, &FileState, &FileState) -> Result<Option<FileState>> + 'a;
+
+/// [`merge_partial`], asking `resolve` before reporting a both-modified
+/// conflict (used for line-level merging, ADR 0006).
+pub fn merge_partial_with(
+    base: &FlatTree,
+    ours: &FlatTree,
+    theirs: &FlatTree,
+    resolve: &mut Resolver<'_>,
+) -> Result<PartialMerge> {
     let paths: BTreeSet<&RepoPath> = base
         .keys()
         .chain(ours.keys())
@@ -54,18 +72,20 @@ pub fn merge_partial(base: &FlatTree, ours: &FlatTree, theirs: &FlatTree) -> Res
     let mut conflicts = Vec::new();
     for path in paths {
         let (b, o, t) = (base.get(path), ours.get(path), theirs.get(path));
-        let pick: Option<Option<&FileState>> = if o == t {
-            Some(o)
+        let pick: Option<Option<FileState>> = if o == t {
+            Some(o.copied())
         } else if o == b {
-            Some(t)
+            Some(t.copied())
         } else if t == b {
-            Some(o)
+            Some(o.copied())
+        } else if let (Some(b), Some(o), Some(t)) = (b, o, t) {
+            resolve(path, b, o, t)?.map(Some)
         } else {
             None
         };
         match pick {
             Some(Some(state)) => {
-                merged.insert(path.clone(), *state);
+                merged.insert(path.clone(), state);
             }
             Some(None) => {}
             None => {
