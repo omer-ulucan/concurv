@@ -6,7 +6,20 @@ sync does not exist yet (see `docs/ROADMAP_STATUS.md`).
 
 ## 1. Install
 
-Requires Rust 1.89 or newer.
+**Prebuilt binaries:** download the archive for your platform from
+<https://github.com/omer-ulucan/concurv/releases> (Linux x86_64 glibc, macOS
+Apple Silicon and Intel, Windows x86_64), verify it with `sha256sum -c
+SHA256SUMS --ignore-missing`, unpack it, and put `concurv` (`concurv.exe`) on
+your `PATH`. The binaries are not code-signed; on macOS, run
+`xattr -d com.apple.quarantine concurv` once if Gatekeeper blocks it.
+
+**From source** (Rust 1.89 or newer):
+
+```console
+$ cargo install --git https://github.com/omer-ulucan/concurv --tag v0.1.0-alpha.1 concurv-cli
+```
+
+Or from a clone:
 
 ```console
 $ git clone https://github.com/omer-ulucan/concurv.git
