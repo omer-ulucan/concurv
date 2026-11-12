@@ -1,6 +1,5 @@
 # concurv
 
-[![ci](https://github.com/omer-ulucan/concurv/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/omer-ulucan/concurv/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/v/release/omer-ulucan/concurv?include_prereleases&sort=semver)](https://github.com/omer-ulucan/concurv/releases)
 
 **concurv** stands for *concurrent, agent-native version control*: a local-first
@@ -128,6 +127,18 @@ $ cargo test --workspace --all-targets
 $ cargo clippy --workspace --all-targets -- -D warnings
 $ cargo fmt --all -- --check
 ```
+
+The full gate (the same steps hosted CI ran: fmt, clippy, every test, release
+build, MSRV check) runs locally on a clean checkout of a commit:
+
+```console
+$ scripts/ci-local.sh [REV]   # Linux, WSL, macOS or Git Bash on Windows
+$ scripts/ci-all.sh [REV]     # from Git Bash: Windows and WSL at once
+```
+
+GitHub Actions workflows are kept but start only manually for now; gate
+evidence since 2026-11-12 comes from these local runs (Windows and Linux;
+macOS is not covered locally).
 
 Workspace layout: `crates/concurv-{core,objects,refs,ops,workspace,git,cli,bench}`
 (see `docs/architecture.md`).

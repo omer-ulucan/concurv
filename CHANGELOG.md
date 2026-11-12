@@ -31,6 +31,12 @@ version 1 and the CLI/JSON contract are not frozen until 0.1.0 (see ADR 0003).
   lost by leaving it); this makes interrupted checkouts resumable.
 - The `update --from` option of an unreleased build is replaced by `merge`.
 
+### Changed (project)
+- The CI gate runs locally (`scripts/ci-local.sh`, `scripts/ci-all.sh`:
+  Windows and WSL); the GitHub workflows start only manually for now.
+- The kill-recovery test calibrates its kill moments to the machine, so it
+  kills processes mid-command on fast machines too.
+
 ## [0.1.0-alpha.1] — 2026-11-01
 
 First public pre-release (`docs/releases/v0.1.0-alpha.1.md`). No license is
