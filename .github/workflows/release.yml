@@ -52,7 +52,7 @@ jobs:
             [ -f "$bin.exe" ] && bin="$bin.exe"
             cp "$bin" "dist/$name/"
           done
-          cp README.md CHANGELOG.md "dist/$name/"
+          cp README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE THIRD-PARTY-LICENSES.md "dist/$name/"
           cd dist
           if [ "${{ matrix.ext }}" = zip ]; then
             7z a -bd "$name.zip" "$name" > /dev/null

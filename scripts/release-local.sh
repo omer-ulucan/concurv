@@ -29,11 +29,18 @@ echo "== Windows x86_64 ($tag = $sha)"
 git clone -q "$repo" "$work/src"
 git -C "$work/src" -c advice.detachedHead=false checkout -q --detach "$sha"
 (cd "$work/src" && cargo build --release --locked -p concurv-cli --target x86_64-pc-windows-msvc)
+# The notices shipped in the archives must match Cargo.lock.
+bash "$work/src/scripts/third-party-licenses.sh" "$work/third-party.md" >/dev/null
+if ! cmp -s "$work/third-party.md" "$work/src/THIRD-PARTY-LICENSES.md"; then
+  echo "THIRD-PARTY-LICENSES.md is out of date: run scripts/third-party-licenses.sh and commit it" >&2
+  exit 1
+fi
 name="concurv-$tag-x86_64-pc-windows-msvc"
 mkdir "$work/$name"
 cp "$work/src/target/x86_64-pc-windows-msvc/release/concurv.exe" \
   "$work/src/target/x86_64-pc-windows-msvc/release/concurvd.exe" \
-  "$work/src/README.md" "$work/src/CHANGELOG.md" "$work/$name/"
+  "$work/src/README.md" "$work/src/CHANGELOG.md" "$work/src/LICENSE-MIT" \
+  "$work/src/LICENSE-APACHE" "$work/src/THIRD-PARTY-LICENSES.md" "$work/$name/"
 (cd "$work" && /c/Windows/System32/tar.exe -a -c -f "$name.zip" "$name")
 mv "$work/$name.zip" "$out/"
 "$work/$name/concurv.exe" --version
@@ -55,7 +62,8 @@ MSYS_NO_PATHCONV=1 wsl.exe -d "$distro" --exec bash -lc '
   n="concurv-$tag-x86_64-unknown-linux-musl"
   bin="$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release"
   mkdir "$w/$n"
-  cp "$bin/concurv" "$bin/concurvd" README.md CHANGELOG.md "$w/$n/"
+  cp "$bin/concurv" "$bin/concurvd" README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE \
+    THIRD-PARTY-LICENSES.md "$w/$n/"
   file "$w/$n/concurv" || true
   "$w/$n/concurv" --version
   tar -C "$w" -czf "$out/$n.tar.gz" "$n"

@@ -1,6 +1,7 @@
 # concurv
 
-[![release](https://img.shields.io/github/v/release/omer-ulucan/concurv?include_prereleases&sort=semver)](https://github.com/omer-ulucan/concurv/releases)
+[![release](https://img.shields.io/github/v/release/omer-ulucan/concurv?sort=semver)](https://github.com/omer-ulucan/concurv/releases)
+[![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 
 **concurv** stands for *concurrent, agent-native version control*: a local-first
 VCS in Rust. The goal is for humans and AI agents on different machines to
@@ -8,8 +9,9 @@ contribute to one shared branch without ever silently losing acknowledged work
 (see `docs/ROADMAP_REVISED.md`; "ARC" was the project's earlier
 working name).
 
-**Current state:** pre-release **v0.1.0-alpha.4**
-([download](https://github.com/omer-ulucan/concurv/releases/tag/v0.1.0-alpha.4)).
+**Current release:** **v0.1.0**, the first stable release
+([download](https://github.com/omer-ulucan/concurv/releases/tag/v0.1.0)); what it promises
+about your data, scripts and platforms is in `docs/compatibility.md`.
 
 - **One machine:** several private workspaces on shared named branches,
   compare-and-swap publication, three-way merge with line-level merging of
@@ -32,29 +34,25 @@ working name).
   that keep commit ids), configuration files, shell completions,
   contributor and security documents.
 
-Gates passed: R1, R1.5, R2, R3, R4 and R5 (since R3 on Windows and Linux;
-macOS last ran at R2.5). R2.5 awaits the owner's final acceptance of the
-branch model (ADR 0007); R6 awaits a license and macOS release builds.
+Gates passed: R1, R1.5, R2, R2.5, R3, R4 and R5 (since R3 on Windows and
+Linux; macOS last ran at R2.5). R6 is complete except macOS release builds.
 Stress-tested with concurrent writers, killed processes (including the
 relay) and simulated disconnects at every byte of a transfer; see
 `docs/ROADMAP_STATUS.md`. Compared side by side with Git on seven scenarios
-(`bench/results/`, `docs/benchmarks/comparison-plan.md`). **Not yet:** a license (the owner's decision),
-macOS release builds.
-
-> **Alpha:** the on-disk format and the CLI/JSON contract may still change
-> before 0.1.0. **No license has been chosen yet**: until one is added, the
-> code and binaries are published for evaluation only, with no license granted.
+(`bench/results/`, `docs/benchmarks/comparison-plan.md`). **Not yet:** macOS release
+builds (Windows x86_64 and Linux x86_64 are the supported platforms; macOS
+builds from source, see `docs/compatibility.md`).
 
 ## Install
 
 Download the archive for your platform from the
 [latest release](https://github.com/omer-ulucan/concurv/releases) (Linux
 x86_64, static; Windows x86_64), check it against `SHA256SUMS`, and put
-`concurv` and `concurvd` on your `PATH`. There is no macOS binary for
-alpha.4; on a Mac (or anywhere), build from source with Rust 1.89+:
+`concurv` and `concurvd` on your `PATH`. There is no macOS binary; on a Mac
+(or anywhere), build from source with Rust 1.89+:
 
 ```console
-$ cargo install --git https://github.com/omer-ulucan/concurv --tag v0.1.0-alpha.4 concurv-cli
+$ cargo install --git https://github.com/omer-ulucan/concurv --tag v0.1.0 concurv-cli
 ```
 
 Shell completion: `concurv completions bash|zsh|fish|powershell|elvish`
@@ -188,6 +186,8 @@ Workspace layout: `crates/concurv-{core,objects,refs,ops,workspace,git,sync,cli,
 | Document | Contents |
 |---|---|
 | `docs/user-guide.md` | install, workflow, restore and backups, troubleshooting, platform notes |
+| `docs/compatibility.md` | what 0.1.0 promises: versions, formats, JSON and exit codes, protocol, supported platforms |
+| `docs/operations.md` | running a relay as a service, backups and restores, upgrades, health, automation |
 | `docs/cli.md` | CLI contract: commands, JSON schema, error and exit codes |
 | `docs/architecture.md` | crate map, key design decisions, `save` data flow |
 | `docs/ROADMAP_REVISED.md` | the plan: stages R0–R7 (incl. R1.5, R2.5), gates, backlog |
@@ -212,3 +212,20 @@ Workspace layout: `crates/concurv-{core,objects,refs,ops,workspace,git,sync,cli,
 | `docs/releases/` | release notes |
 | `CHANGELOG.md` | changes since the start of the project |
 | `CONTRIBUTING.md`, `SECURITY.md` | how to contribute (rules every change follows), how to report a vulnerability privately |
+| `LICENSE-MIT`, `LICENSE-APACHE`, `THIRD-PARTY-LICENSES.md` | the license, and the notices of every crate in the binaries |
+
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0 (`LICENSE-APACHE` or
+  <https://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license (`LICENSE-MIT` or <https://opensource.org/licenses/MIT>)
+
+at your option. The binaries also contain third-party crates; their
+notices are in `THIRD-PARTY-LICENSES.md`, shipped in every release archive.
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in the work by you, as defined in the Apache-2.0
+license, shall be dual licensed as above, without any additional terms or
+conditions.

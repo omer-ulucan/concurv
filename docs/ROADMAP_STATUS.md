@@ -3,7 +3,7 @@
 Legend: `not started` · `in progress` · `gate passed` · `blocked`.
 A stage is `gate passed` only with the evidence listed next to it.
 The plan itself (stages, gates, backlog, acceptance tests) lives in
-**`docs/ROADMAP_REVISED.md`**. Last updated: 2026-11-12 (R6 progress).
+**`docs/ROADMAP_REVISED.md`**. Last updated: 2026-11-12 (v0.1.0).
 
 | Stage | Status | Evidence / blockers |
 |---|---|---|
@@ -11,11 +11,11 @@ The plan itself (stages, gates, backlog, acceptance tests) lives in
 | R1 — Native local VCS kernel | **gate passed** (2026-11-01) | CI run [41350688459](https://github.com/omer-ulucan/concurv/actions/runs/41350688459) on `main` @ `9b8ed23`: all gate checks pass on Linux, macOS and Windows. See evidence below. |
 | R1.5 — Daily VCS usability & safety | **gate passed** (2026-11-01) | CI run [41366633305](https://github.com/omer-ulucan/concurv/actions/runs/41366633305) on `main` @ `19ce0ed`: ignores (ADR 0004), ignored-file safety, `check-ignore`, benchmark, stat cache (ADR 0005), diff and case-collision tests, green on Linux, macOS and Windows. See "R1.5 evidence" below |
 | R2 — Private workspaces + concurrency | **gate passed** (2026-11-01) | CI run [41359891403](https://github.com/omer-ulucan/concurv/actions/runs/41359891403) on `main` @ `0689e96`: all four slices (RFC 0004, ADR 0002) green on Linux, macOS and Windows; 2/5/10 concurrent writers and killed-process tests pass. Git tags not supported (scoped). See "R2 evidence" below. |
-| R2.5 — Local merge & branch semantics | **in progress** (gate re-opened 2026-11-01) | Line-level merge (ADR 0006) verified. Branch model: the owner approved ADR 0007 **in principle** and requested refinements; they are implemented and tested (see "R2.5 branch-model refinements" below). Remaining gate item: the owner's final acceptance of ADR 0007 |
+| R2.5 — Local merge & branch semantics | **gate passed** (2026-11-12) | Line-level merge (ADR 0006) verified. Branch model: the owner approved ADR 0007 in principle (2026-11-01), the requested refinements were implemented and tested (see "R2.5 branch-model refinements" below), and the owner accepted it as final on 2026-11-12 |
 | R3 — Two-PC authenticated sync | **gate passed** (2026-11-12, Windows and Linux) | Local CI gate on `3f85c0b`: Windows 216 passed, Linux 220 passed; relay `concurvd`, pinned TLS, devices and scopes, fetch/push/clone, two-process harness, disconnect, malformed-object, auth, crash/restart tests (RFC 0003 v1). macOS not run. See "R3 evidence" below |
 | R4 — Verified integration | **gate passed** (2026-11-12, Windows and Linux) | Local CI gate on `5a4863b`: Windows 227 passed, Linux 231 passed; protected branches, `concurv check`, attestations bound to candidate, branch, policy version, checks and OS, at the relay too (RFC 0005). macOS not run. See "R4 evidence" below |
 | R5 — Agent-aware coordination | **gate passed** (2026-11-12, Windows and Linux) | Local CI gate on `8b0bbe3`: Windows 235 passed, Linux 239 passed; versioned JSON events, advisory intents with TTL (also through the relay), overlap warnings at four levels with measured false-positive and false-negative rates, no LLM (RFC 0006). macOS not run. See "R5 evidence" below |
-| R6 — Developer beta + Git ecosystem | **in progress** (2026-11-12) | Done and gated (local CI on `37b64d8`: Windows 248 passed, Linux 252 passed): Git tags (ADR 0008, repository format 4), import into existing history, configuration files, shell completions, CONTRIBUTING/SECURITY/code of conduct/templates; remote workflow is R3. **Open gate items:** the owner-approved LICENSE; release builds for macOS (Windows and Linux are built locally). See "R6 progress" below |
+| R6 — Developer beta + Git ecosystem | **in progress** (2026-11-12) | Done and gated (local CI on `37b64d8`: Windows 248 passed, Linux 252 passed): Git tags (ADR 0008, repository format 4), import into existing history, configuration files, shell completions, CONTRIBUTING/SECURITY/code of conduct/templates; remote workflow is R3. License MIT OR Apache-2.0 chosen by the owner (2026-11-12). **Open gate item:** release builds for macOS (Windows and Linux are built locally). See "R6 progress" below |
 | R7 — Advanced VCS | not started | — |
 
 ## How evidence is produced (since 2026-11-12)
@@ -83,10 +83,10 @@ What the gate does **not** prove (still true, by design of the tests):
 
 ## Next
 
-R1, R1.5, R2, R3, R4 and R5 are complete; R2.5 awaits the owner's final
-acceptance of ADR 0007; R0 needs one competitor run besides Git (the harness exists). R6 is
-implemented except for its two owner- or hardware-bound items: the LICENSE
-(the owner's decision) and macOS release builds (hosted CI or a Mac). After
+R1, R1.5, R2, R2.5, R3, R4 and R5 are complete, and v0.1.0 is the first
+stable release (license MIT OR Apache-2.0, chosen by the owner on
+2026-11-12). R0 needs one competitor run besides Git (the harness exists).
+R6 is complete except macOS release builds (hosted CI or a Mac). After
 that: R7 items, each against a measured baseline.
 macOS evidence needs hosted CI or a Mac running `scripts/ci-local.sh`.
 
@@ -215,8 +215,8 @@ run proves both happened on every OS.
 
 **Verdict:** every refinement is implemented and its invariants (ADR 0007
 §6, B1–B5) are verified by the tests above on all three platforms. ADR 0007
-is *approved in principle*; marking it fully accepted, and with it the
-R2.5 gate, is the owner's decision.
+was *approved in principle*; the owner accepted it as final on 2026-11-12,
+which closed the R2.5 gate.
 
 ## R3 evidence (gate passed 2026-11-12, Windows and Linux)
 
@@ -328,7 +328,7 @@ practice (no user study); dependency detection beyond lexical uses (calls
 through tables, dynamic dispatch, other languages' import forms); clock
 skew between devices for intent expiry; macOS.
 
-## R6 progress (2026-11-12; gate not passed: LICENSE and macOS open)
+## R6 progress (2026-11-12; gate not passed: macOS release builds open)
 
 Local CI gate on `feat/r6-beta` @ `37b64d8`, rustc 1.99.1, `--locked`,
 `--no-fail-fast`: Windows 11 **248 passed**, Linux (WSL 2) **252 passed**,
@@ -347,7 +347,7 @@ CONTRIBUTING/SECURITY, owner-approved LICENSE."*
 | Remote workflow | done (R3) | relay sync, see "R3 evidence" |
 | Completion / config | done | `config_cli.rs`: author precedence (environment, repository, user), configured default remote, refusals of unknown keys, invalid values and malformed files (nothing written, every command stopped), completions for bash, zsh, fish, PowerShell and elvish |
 | CONTRIBUTING / SECURITY | done | `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, issue and pull request templates |
-| Owner-approved LICENSE | **open** | the owner's decision; no license metadata is asserted |
+| Owner-approved LICENSE | done (2026-11-12) | the owner chose MIT OR Apache-2.0: `LICENSE-MIT`, `LICENSE-APACHE`, license metadata in every crate, third-party notices (`THIRD-PARTY-LICENSES.md`, generated from `Cargo.lock`, shipped in every archive and checked by the release script) |
 
 Found by the gate: the CLI smoke test still expected `git import` to refuse
 a non-empty repository (the old rule); it now checks that a repeated

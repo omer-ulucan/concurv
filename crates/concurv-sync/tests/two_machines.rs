@@ -381,6 +381,15 @@ fn a_rewound_relay_is_reported_and_never_followed() {
         ErrorCode::Diverged
     );
     assert_eq!(env.head("main"), Some(v1));
+    // The documented recovery (docs/operations.md): forget the heads seen at
+    // the relay, keep the local branches, push the newer work again.
+    concurv_sync::remote::remove(&b, "origin").unwrap();
+    assert_eq!(local_branch(&b, "main"), Some(v2), "local branches stay");
+    concurv_sync::remote::add(&b, "origin", &env.url, &env.fingerprint, &env.bob).unwrap();
+    push(&b, "origin", None, &sync_opts()).unwrap();
+    assert_eq!(env.head("main"), Some(v2));
+    let f = fetch(&a, "origin", &sync_opts()).unwrap();
+    assert_eq!(branch_action(&f, "main"), BranchAction::UpToDate);
 }
 
 /// Simulated disconnects at every point of a push: the push either

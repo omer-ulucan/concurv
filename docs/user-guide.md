@@ -11,15 +11,15 @@ Stage status and evidence: `docs/ROADMAP_STATUS.md`.
 **Prebuilt binaries:** download the archive for your platform from
 <https://github.com/omer-ulucan/concurv/releases>, verify it with
 `sha256sum -c SHA256SUMS --ignore-missing`, unpack it, and put `concurv` and
-`concurvd` (`.exe` on Windows) on your `PATH`. v0.1.0-alpha.4 ships Linux
-x86_64 (static, any distribution) and Windows x86_64 (as did alpha.2 and alpha.3); v0.1.0-alpha.1 also had
+`concurvd` (`.exe` on Windows) on your `PATH`. v0.1.0 ships Linux
+x86_64 (static, any distribution) and Windows x86_64, the supported platforms (`docs/compatibility.md`); v0.1.0-alpha.1 also had
 macOS builds. The binaries are not code-signed; on macOS, run
 `xattr -d com.apple.quarantine concurv` once if Gatekeeper blocks it.
 
 **From source** (Rust 1.89 or newer; installs `concurv` and `concurvd`):
 
 ```console
-$ cargo install --git https://github.com/omer-ulucan/concurv --tag v0.1.0-alpha.4 concurv-cli
+$ cargo install --git https://github.com/omer-ulucan/concurv --tag v0.1.0 concurv-cli
 ```
 
 Or from a clone:
@@ -29,7 +29,7 @@ $ git clone https://github.com/omer-ulucan/concurv.git
 $ cd concurv
 $ cargo install --path crates/concurv-cli    # installs `concurv` and `concurvd` into ~/.cargo/bin
 $ concurv --version
-concurv 0.1.0-alpha.4
+concurv 0.1.0
 ```
 
 Or build without installing: `cargo build --release` puts the binaries at

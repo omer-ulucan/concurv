@@ -1,9 +1,36 @@
 # Changelog
 
-All notable changes to concurv. Releases before 0.1.0 are alphas: format
-version 1 and the CLI/JSON contract are not frozen until 0.1.0 (see ADR 0003).
+All notable changes to concurv. From 0.1.0 the project follows Semantic
+Versioning and the promises in `docs/compatibility.md`; releases before
+0.1.0 were alphas.
 
 ## [Unreleased]
+
+## [0.1.0] — 2026-11-12
+
+First stable release (`docs/releases/v0.1.0.md`). The features are those of
+0.1.0-alpha.4; this release adds the license and the commitments that make
+it usable in production.
+
+### Added
+- **License: MIT OR Apache-2.0** (`LICENSE-MIT`, `LICENSE-APACHE`; the
+  owner's choice), license metadata in every crate, and
+  `THIRD-PARTY-LICENSES.md` with the notices of every crate compiled into
+  the binaries (`scripts/third-party-licenses.sh`). Release archives
+  contain all three; the release script refuses notices that no longer
+  match `Cargo.lock`.
+- `docs/compatibility.md`: what 0.1.0 promises (Semantic Versioning, formats
+  1 to 4 readable by every later release, JSON version 1, exit codes,
+  protocol version 1, supported platforms: Windows x86_64 and Linux x86_64).
+- `docs/operations.md`: running a relay as a service, network exposure,
+  tokens, backups and restores (with a tested recovery after restoring an
+  old relay backup), upgrades, health checks, automation.
+
+### Changed
+- The branch model (ADR 0007) is accepted as final by the owner; the R2.5
+  gate is closed.
+- `CONTRIBUTING.md` accepts pull requests (contributions are dual licensed
+  like the project); `SECURITY.md` supports the latest release only.
 
 ## [0.1.0-alpha.4] — 2026-11-12
 
