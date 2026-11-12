@@ -14,7 +14,7 @@ sha=$(git -C "$repo" rev-parse --verify "${1:-HEAD}^{commit}") || exit 2
 distro=${CONCURV_WSL_DISTRO:-Ubuntu}
 out=$(mktemp -d)
 
-winrepo=$(cygpath -w "$repo")
+winrepo=$(cygpath -m "$repo")
 wslrepo=$(wsl.exe -d "$distro" -- wslpath -a "$winrepo" | tr -d '\r')
 if [ -z "$wslrepo" ]; then
   echo "ci-all: WSL distribution $distro is not available" >&2
