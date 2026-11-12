@@ -527,3 +527,54 @@ fn disconnects_during_fetch_change_nothing() {
     eprintln!("fetch completed with a budget of {total:?} bytes after {idx} cuts");
     assert!(idx > 5);
 }
+
+/// Adding a remote upgrades the repository to format 2 (RFC 0001 §7):
+/// secondary workspaces keep opening, fetch and update work from them, and
+/// undo after a fetch leaves the remote-tracking references alone.
+#[test]
+fn format_upgrade_keeps_secondary_workspaces_working() {
+    let env = Env::new();
+    let a = env.clone("a", &env.alice);
+    write(&a, "README", "base\n");
+    save_publish(&a, "base");
+    push(&a, "origin", None, &sync_opts()).unwrap();
+
+    let root = env.dir.path().join("plain");
+    std::fs::create_dir_all(&root).unwrap();
+    let p = concurv_workspace::Repo::init(&root, opts(concurv_objects::Faults::none())).unwrap();
+    assert!(!p.supports_remotes().unwrap());
+    assert_eq!(
+        std::fs::read_to_string(root.join(".concurv/format")).unwrap(),
+        "concurv-repo-format 1\n"
+    );
+    let second = env.dir.path().join("second");
+    concurv_workspace::workspaces::add(&p, &second, None).unwrap();
+    concurv_sync::remote::add(&p, "origin", &env.url, &env.fingerprint, &env.bob).unwrap();
+    assert!(p.supports_remotes().unwrap());
+    assert_eq!(
+        std::fs::read_to_string(root.join(".concurv/format")).unwrap(),
+        "concurv-repo-format 2\n"
+    );
+    // The secondary workspace opens and syncs.
+    let s = concurv_workspace::Repo::open(&second, opts(concurv_objects::Faults::none())).unwrap();
+    write(&s, "local.txt", "secondary\n");
+    let saved = concurv_workspace::save(&s, "local")
+        .unwrap()
+        .snapshot
+        .unwrap();
+    let f = fetch(&s, "origin", &sync_opts()).unwrap();
+    assert_eq!(branch_action(&f, "main"), BranchAction::Created);
+    assert_eq!(update(&s).unwrap().kind, UpdateKind::Merged);
+    assert_eq!(read(&s, "README"), "base\n");
+    // Undo reverses the workspace's update only; the fetch stays.
+    let tracked = tracking(&s, "main");
+    concurv_workspace::undo(&s).unwrap();
+    assert_eq!(s.head_snapshot().unwrap(), Some(saved));
+    assert_eq!(tracking(&s, "main"), tracked);
+    assert_eq!(local_branch(&p, "main"), tracked);
+    // A second remote add is refused; listing shows the one remote.
+    assert!(concurv_sync::remote::add(&p, "origin", &env.url, &env.fingerprint, &env.bob).is_err());
+    assert_eq!(concurv_sync::remote::list(&s).unwrap().len(), 1);
+    verify(&p);
+    verify(&s);
+}
