@@ -3,7 +3,7 @@
 Legend: `not started` · `in progress` · `gate passed` · `blocked`.
 A stage is `gate passed` only with the evidence listed next to it.
 The plan itself (stages, gates, backlog, acceptance tests) lives in
-**`docs/ROADMAP_REVISED.md`**. Last updated: 2026-11-01 (R2.5 branch-model refinements).
+**`docs/ROADMAP_REVISED.md`**. Last updated: 2026-11-12 (local CI gate).
 
 | Stage | Status | Evidence / blockers |
 |---|---|---|
@@ -17,6 +17,27 @@ The plan itself (stages, gates, backlog, acceptance tests) lives in
 | R5 — Agent-aware coordination | not started | — |
 | R6 — Developer beta + Git ecosystem | not started | design only: ADR 0002 |
 | R7 — Advanced VCS | not started | — |
+
+## How evidence is produced (since 2026-11-12)
+
+GitHub Actions is not used for now (its workflows start only manually).
+Gate evidence comes from the **local CI gate**, `scripts/ci-all.sh`: the
+steps of `.github/workflows/ci.yml` (fmt, clippy `-D warnings`, every test
+with `--no-fail-fast`, release build, MSRV 1.89 `cargo check`, all
+`--locked`) on a fresh clone of the commit, in parallel on Windows 11
+(NTFS) and in WSL 2 (Ubuntu 26.04, ext4), with the same rustc on both.
+Each run records the commit, host and toolchain in its summary. **macOS is
+not covered** by the local gate; the last macOS evidence is the hosted run
+of 2026-11-02 (`79caf3f`). Evidence older than this section comes from
+hosted CI runs, linked where cited.
+
+First local runs: `main` @ `96e1102` and the local-CI commits
+`3b8d516` and `0bf5bb6`, all PASS with rustc 1.99.1 on both sides (Windows
+191 tests, WSL 195; 0 failed, 0 ignored). The first WSL run found that
+`killed_processes_never_lose_acknowledged_saves` killed no process on a
+fast machine (its fixed kill window was longer than the commands), so the
+test failed its own check without testing anything; its kill moments are
+now calibrated to measured command durations.
 
 ## R1 evidence
 

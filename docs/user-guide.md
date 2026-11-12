@@ -514,7 +514,7 @@ if started in `<dir>`.
 
 | | Linux | macOS | Windows |
 |---|---|---|---|
-| Tested (CI on every push) | yes (x86_64) | yes (Apple Silicon, APFS) | yes (NTFS) |
+| Tested | every change, local gate in WSL (x86_64) | hosted CI until 2026-11-02 (Apple Silicon, APFS); not covered by the local gate | every change, local gate (NTFS) |
 | Executable bit | recorded | recorded | not available; a file keeps the kind recorded in the head |
 | Symlinks | versioned as links, never followed | same | rejected (symlinks and junctions) |
 | Directory fsync after rename | yes | yes | not available; relies on NTFS journaling |

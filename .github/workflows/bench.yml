@@ -3,14 +3,9 @@ name: bench
 # Status/save benchmarks (bench/RESULTS.md). Shared CI runners are noisy:
 # use the numbers for before/after comparisons on the same runner type, not
 # as absolute claims.
+# Manual only while GitHub Actions is not used (see ci.yml).
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - crates/concurv-bench/**
-      - crates/concurv-workspace/src/statcache.rs
-      - crates/concurv-workspace/src/worktree.rs
-      - .github/workflows/bench.yml
 
 env:
   CARGO_TERM_COLOR: always

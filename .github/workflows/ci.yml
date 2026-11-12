@@ -1,8 +1,11 @@
 name: ci
 
+# Manual only: GitHub Actions is not used for now. The same gate runs
+# locally with scripts/ci-local.sh (Linux/WSL, macOS, Git Bash on Windows)
+# and scripts/ci-all.sh (Windows + WSL at once). Restore the `push` and
+# `pull_request` triggers when hosted CI is available again.
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
