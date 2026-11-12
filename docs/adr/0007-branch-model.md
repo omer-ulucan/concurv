@@ -4,7 +4,8 @@ Status: **Approved in principle by the owner (2026-11-01); refinements
 implemented and verified** (CI run 41375647699 on `main` @ `79caf3f`; see
 `docs/ROADMAP_STATUS.md`, R2.5).
 Final acceptance is the owner's decision. Sections 7 and 8 describe sync,
-implemented by R3 (RFC 0003, 2026-11-12).
+implemented by R3 (RFC 0003, 2026-11-12); section 9 (delete and rename)
+was added on 2026-11-12 for the owner's refinement 8.
 
 ## Context
 
@@ -101,7 +102,8 @@ reconciliation rules, more tests, and documentation of the reference kinds.
 6. **Invariants.**
    - **B1 Reachability:** no branch command makes a snapshot that was a
      workspace head or branch head unreachable from the current workspace
-     heads and branch heads.
+     heads and branch heads (since `branch delete`, item 9: or from a tag or
+     remote-tracking reference).
    - **B2 Forward-only:** a branch reference is created at a complete,
      verified snapshot and afterwards moves only by a fast-forward
      compare-and-swap (`publish`, and since R3 the fast-forward of `fetch`
@@ -132,17 +134,40 @@ reconciliation rules, more tests, and documentation of the reference kinds.
    | Kind | Where | Moved by | Shared? |
    |---|---|---|---|
    | Workspace state: files, workspace head, pending merge | the workspace directory and its view entry | `save`, `update`, `merge`, `restore`, `undo`, `branch switch` in that workspace | never (private; not synced, RFC 0003 §5) |
-   | Local branch reference `view.branches[b]` | this repository's operation view | `branch create` (insert), `publish` (CAS fast-forward), `fetch` (fast-forward only, or insert of a new name) | by every workspace of this repository |
+   | Local branch reference `view.branches[b]` | this repository's operation view | `branch create` (insert), `publish` (CAS fast-forward), `fetch` (fast-forward only, or insert of a name never seen at the relay), `branch delete` and `branch rename` (item 9) | by every workspace of this repository |
    | Remote-tracking reference `remote/<remote>/<b>` (R3) | a separate map in the view (`View::remotes`, repository format 2), never in `branches` | only `fetch` and `push` | read-only locally; `merge` can integrate it |
    | Authoritative published head | the relay (RFC 0003 §1) | only the relay's CAS `Publish` | the source of truth across machines |
 
    Before R3 there is no relay. Each repository's local branch references
    are the authoritative published heads for all of its workspaces.
 
-9. **Future (not implemented, roadmap):** deleting and renaming branches
-   (policy for workspaces that track them, and for sync), protected branches
-   (R4 gates) and tags (R6, with the Git tag mapping). Remote-tracking
-   references were added by R3 (item 7).
+9. **Deleting and renaming (implemented 2026-11-12, backlog P2-8).**
+   Protected branches came with R4 (RFC 0005) and tags with R6 (ADR 0008);
+   remote-tracking references with R3 (item 7).
+   - `branch delete <b>` removes only the name. Refused, with nothing
+     changed, if a workspace tracks `b` (switch it first), if the policy
+     in `b`'s head protects `b` (exit 44: a protected branch moves only by
+     checked publication, so it can neither be removed nor vacated and
+     re-created elsewhere), or if `b`'s head is contained in no other
+     reference (exit 42). Invariant B1 therefore counts tags and
+     remote-tracking references as references too: deleting a branch whose
+     work only a tag keeps is allowed; deleting the only reference to work
+     is not (tag it or merge it first). The operation log records the old
+     head, which the output prints.
+   - `branch rename <old> <new>` moves the name: the head does not move
+     (B2) and every workspace tracking `old` tracks `new` in the same
+     operation (no file changes). `new` passes the rules of new names
+     (item 5) against all other branches, so a change of case only is
+     allowed. Protected branches cannot be renamed (same reason).
+   - `undo` refuses both (shared references, as for `branch-create`).
+   - **Sync.** Both are local. A relay keeps its branches (deleting at the
+     relay is not supported yet). A `fetch` creates a local branch only for
+     a relay branch it has never seen: a branch whose remote-tracking
+     reference exists but whose local reference does not was deleted or
+     renamed here, so only `remote/<relay>/<b>` follows the relay (action
+     `not_local`). `branch create <b> --at remote/<relay>/<b>` brings it
+     back. After a rename, `push --branch <new>` publishes the new name at
+     the relay; the old one stays there.
 
 ## Consequences
 

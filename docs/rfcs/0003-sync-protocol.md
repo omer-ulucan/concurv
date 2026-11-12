@@ -93,7 +93,7 @@ machines (ADR 0007 §8):
 | Kind | Stored | Moved by |
 |---|---|---|
 | Workspace state (files, workspace head, pending merge) | the workspace | local commands in that workspace; **never synced** |
-| Local branch reference `b` | the client's view, `branches` | local `publish` (CAS fast-forward), `fetch` fast-forward |
+| Local branch reference `b` | the client's view, `branches` | local `publish` (CAS fast-forward), `fetch` fast-forward, local `branch create`/`delete`/`rename` (ADR 0007 §9) |
 | Remote-tracking reference `remote/<r>/<b>` | the client's view, the separate map `remotes` (RFC 0001 §3.4), with the relay's `seq` | only `fetch` and `push` |
 | Authoritative published head of `b` | the relay's `state.json` | only the relay's CAS `publish` (§6) |
 
@@ -113,10 +113,14 @@ reference before the fetch, `R` the relay's head (implemented by
    rest). Remote-tracking references keep the relay's names.
 1. **Fetched history is preserved.** Objects are verified and adopted
    (§7), then `T := R`, whatever the relation of `L` and `R`.
-2. **Local references move only forward.** If `L` is missing or an ancestor
-   of `R`, `L := R` (`created` / `fast_forwarded`). Otherwise `L` stays
-   (`local_ahead`, `diverged`). A workspace integrates only through
-   `update` or `merge`; fetch never changes files or workspace heads.
+2. **Local references move only forward.** If `L` is an ancestor of `R`,
+   `L := R` (`fast_forwarded`); if `L` is missing and `T` was missing too
+   (a branch new to this repository), `L := R` (`created`). If `L` is
+   missing but `T` existed, the branch was deleted or renamed here (ADR
+   0007 §9): `L` is not recreated (`not_local`; `branch create <b> --at
+   remote/<r>/<b>` brings it back). Otherwise `L` stays (`local_ahead`,
+   `diverged`). A workspace integrates only through `update` or `merge`;
+   fetch never changes files or workspace heads.
 3. **No implicit publication.** `push` offers `publish {expected: R,
    proposed: L}` only if `R` is missing or an ancestor of `L`. If they
    diverged, nothing is published (`CONCURV_DIVERGED`, exit 42): a user or
@@ -136,6 +140,8 @@ reference before the fetch, `R` the relay's head (implemented by
    references, so no acknowledged snapshot becomes unreachable (ADR 0007
    B1). Fetch and push only add or move references forward. `remote
    remove` drops a remote's tracking references but no local branch.
+   (`branch delete` refuses to drop the only reference to a snapshot, ADR
+   0007 §9.)
 
 ## 6. Publish (relay side)
 

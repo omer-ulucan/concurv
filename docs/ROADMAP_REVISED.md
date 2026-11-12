@@ -80,7 +80,7 @@ completion evidence.
 | P2-5 | Filesystem watcher for `status` | R7 |
 | P2-6 | Agent identity, intent, JSONL events | R5 (done 2026-11-12: RFC 0006; identity = author and workspace name) |
 | P2-7 | Candidate test gates, attestations, sandbox | R4 (done 2026-11-12: RFC 0005; sandbox "none" stated explicitly, isolation open) |
-| P2-8 | Branch delete and rename (policy for workspaces tracking them; sync semantics; refuse while tracked or unmerged) | R3 |
+| P2-8 | Branch delete and rename (policy for workspaces tracking them; sync semantics; refuse while tracked or unmerged) | R3 (done 2026-11-12: ADR 0007 §9; local only, a relay keeps its branches) |
 | P2-9 | Protected branches (publication only through R4 gates) | R4 (done 2026-11-12: `protect` in the branch head's policy, locally and at the relay) |
 | P2-10 | Remote-tracking references in the view (`remote/<relay>/<b>`, separate from `branches`) and wiring `reconcile::plan` into fetch | R3 (done 2026-11-12: `View::remotes`, repository format 2) |
 

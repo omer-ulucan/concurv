@@ -69,7 +69,8 @@ pub fn list(repo: &Repo) -> Result<Vec<TagInfo>> {
         .collect())
 }
 
-/// Resolve `--at`: a branch name, then a tag name, then a snapshot id
+/// Resolve `--at`: a branch name, then a tag name, then a remote-tracking
+/// reference `remote/<remote>/<branch>`, then a snapshot id
 /// prefix (ADR 0008 §2). A name that is a branch and a tag at different
 /// snapshots is refused as ambiguous.
 pub fn resolve(repo: &Repo, s: &str) -> Result<SnapshotId> {
@@ -84,7 +85,16 @@ pub fn resolve(repo: &Repo, s: &str) -> Result<SnapshotId> {
             ),
         )),
         (Some(h), _) | (None, Some(h)) => Ok(h),
-        (None, None) => repo.resolve_snapshot(s),
+        (None, None) => {
+            // `remote/<remote>/<branch>`: a remote-tracking reference (no
+            // branch or tag can start with `remote/`, ADR 0007 §5).
+            if let Some((r, b)) = s.strip_prefix("remote/").and_then(|x| x.split_once('/'))
+                && let Some(h) = op.view.remotes.get(r).and_then(|m| m.get(b))
+            {
+                return Ok(h.head);
+            }
+            repo.resolve_snapshot(s)
+        }
     }
 }
 

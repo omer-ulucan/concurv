@@ -62,6 +62,9 @@ pub enum BranchAction {
     InvalidName,
     /// A local branch would collide with an existing name; not created.
     NameCollision,
+    /// The relay has the branch, but this repository deleted or renamed its
+    /// local branch: only the remote-tracking reference moves.
+    NotLocal,
 }
 
 impl BranchAction {
@@ -77,6 +80,7 @@ impl BranchAction {
             Self::Vanished => "vanished",
             Self::InvalidName => "invalid_name",
             Self::NameCollision => "name_collision",
+            Self::NotLocal => "not_local",
         }
     }
 }
@@ -364,7 +368,16 @@ pub fn fetch(repo: &Repo, remote_name: &str, opts: &SyncOptions) -> Result<Fetch
             Relation::RemoteAhead | Relation::RemoteOnly => BranchAction::FastForwarded,
         };
         if let Some(ff) = plan.fast_forward_local {
-            if local.is_none() {
+            if local.is_none() && tracked.is_some() {
+                // Seen at the relay before and missing here: deleted or
+                // renamed on this repository (or refused earlier). Only the
+                // remote-tracking reference follows the relay.
+                rep.action = BranchAction::NotLocal;
+                rep.note = Some(format!(
+                    "no local branch (deleted or renamed here); recreate it with \
+                     `concurv branch create {b} --at remote/{remote_name}/{b}`"
+                ));
+            } else if local.is_none() {
                 let existing: Vec<&String> = view.branches.keys().collect();
                 match refname::check_new(b, &existing) {
                     Ok(()) => {

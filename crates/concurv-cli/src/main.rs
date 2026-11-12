@@ -343,6 +343,19 @@ enum BranchCmd {
         /// Branch name.
         name: String,
     },
+    /// Delete a branch nobody tracks whose head another branch, tag, workspace
+    /// or remote-tracking reference still contains (the snapshots stay).
+    Delete {
+        /// Branch name.
+        name: String,
+    },
+    /// Rename a branch; workspaces tracking it follow (no file changes).
+    Rename {
+        /// Current name.
+        old: String,
+        /// New name.
+        new: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -435,6 +448,12 @@ impl Cmd {
             Cmd::Branch {
                 cmd: BranchCmd::Switch { .. },
             } => "branch switch",
+            Cmd::Branch {
+                cmd: BranchCmd::Delete { .. },
+            } => "branch delete",
+            Cmd::Branch {
+                cmd: BranchCmd::Rename { .. },
+            } => "branch rename",
             Cmd::Update { .. } => "update",
             Cmd::Merge { .. } => "merge",
             Cmd::Undo => "undo",
@@ -637,6 +656,10 @@ fn fetch_output(o: &concurv_sync::FetchOutcome) -> (Value, String) {
             concurv_sync::BranchAction::NameCollision => {
                 "not created: name collides with a local branch".to_owned()
             }
+            concurv_sync::BranchAction::NotLocal => format!(
+                "no local branch (deleted or renamed here); `remote/{}/{}` updated",
+                o.remote, r.branch
+            ),
         };
         human.push_str(&format!("  {}: {what}\n", r.branch));
         arr.push(json!({
@@ -2034,6 +2057,46 @@ fn cmd_branch(repo: &Repo, cmd: BranchCmd) -> Result<Output> {
                     o.name,
                     o.name
                 ),
+            )
+        }
+        BranchCmd::Delete { name } => {
+            let o = branches::delete(repo, &name)?;
+            ok(
+                json!({
+                    "branch": o.name,
+                    "head": o.head.to_hex(),
+                    "operation": o.operation.to_hex(),
+                }),
+                format!(
+                    "Deleted branch `{}` (it was at {}; the snapshots stay). To restore it: \
+                     `concurv branch create {} --at {}`.",
+                    o.name, o.head, o.name, o.head
+                ),
+            )
+        }
+        BranchCmd::Rename { old, new } => {
+            let o = branches::rename(repo, &old, &new)?;
+            let mut human = format!(
+                "Renamed branch `{}` to `{}` (at {}).",
+                o.name,
+                new,
+                &o.head.to_hex()[..12]
+            );
+            if !o.workspaces.is_empty() {
+                human.push_str(&format!(
+                    "\nWorkspace(s) now tracking `{new}`: {}.",
+                    o.workspaces.join(", ")
+                ));
+            }
+            ok(
+                json!({
+                    "branch": o.name,
+                    "new_name": o.new_name,
+                    "head": o.head.to_hex(),
+                    "workspaces": o.workspaces,
+                    "operation": o.operation.to_hex(),
+                }),
+                human,
             )
         }
         BranchCmd::Switch { name } => {

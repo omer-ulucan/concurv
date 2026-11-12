@@ -36,7 +36,7 @@ branch model (ADR 0007); R6 awaits a license and macOS release builds.
 Stress-tested with concurrent writers, killed processes (including the
 relay) and simulated disconnects at every byte of a transfer; see
 `docs/ROADMAP_STATUS.md`. **Not yet:** a license (the owner's decision),
-macOS release builds, tags at the relay, branch delete/rename.
+macOS release builds, tags at the relay.
 
 > **Alpha:** the on-disk format and the CLI/JSON contract may still change
 > before 0.1.0. **No license has been chosen yet**: until one is added, the
@@ -151,9 +151,9 @@ Full walkthrough and recovery procedures: **`docs/user-guide.md`**.
   refused until you merge it. Everything received is verified and checked
   for completeness before it is stored; a relay whose history went
   backwards is reported, not followed. A retried push never publishes twice.
-- Not implemented yet: rename detection, garbage collection, branch
-  delete/rename, tags at the relay, symlinks on Windows, several
-  repositories per relay.
+- Not implemented yet: rename detection, garbage collection, tags at the
+  relay, deleting branches at the relay (`branch delete` is local),
+  symlinks on Windows, several repositories per relay.
 - Don't keep repositories in cloud-synced folders (OneDrive, Dropbox).
 
 ## Build and test
