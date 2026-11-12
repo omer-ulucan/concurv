@@ -123,7 +123,7 @@ fn relay_publish_survives_a_failure_at_every_write() {
     .unwrap();
     drop(relay);
 
-    let (mut cases, mut committed_then_failed, mut rolled_back) = (0, 0, 0);
+    let (mut cases, mut committed_then_failed, mut rolled_back, mut untriggered) = (0, 0, 0, 0);
     for transient in [false, true] {
         for point in ALL_FAULT_POINTS {
             for nth in 1..=rec.hits(point) {
@@ -145,7 +145,13 @@ fn relay_publish_survives_a_failure_at_every_write() {
                 )
                 .unwrap();
                 let r = publish_next(&relay, &tok, &store, base, next, &rid);
-                assert!(faults.triggered(), "{point:?}#{nth}: fault must fire");
+                if !faults.triggered() {
+                    // This run had fewer write steps than the counting run
+                    // (random ids decide whether a fan-out directory is new).
+                    r.unwrap();
+                    untriggered += 1;
+                    continue;
+                }
                 assert!(r.is_err(), "{point:?}#{nth}: the failure is reported");
                 // Crash: a new process opens the relay. Transient: the same
                 // process goes on.
@@ -176,9 +182,10 @@ fn relay_publish_survives_a_failure_at_every_write() {
         }
     }
     eprintln!(
-        "{cases} injected failures: {rolled_back} left the old head, {committed_then_failed} failed after the commit point"
+        "{cases} cases: {rolled_back} left the old head, {committed_then_failed} failed after the commit point, {untriggered} had no such write step"
     );
     assert!(cases > 20 && rolled_back > 0 && committed_then_failed > 0);
+    assert!(untriggered * 10 < cases, "most cases must inject a failure");
 }
 
 #[test]
@@ -200,7 +207,7 @@ fn client_fetch_survives_a_failure_at_every_write() {
     let probe = Repo::open(probe.root(), opts(rec.clone())).unwrap();
     fetch(&probe, "origin", &sync_opts()).unwrap();
 
-    let (mut cases, mut fetched_anyway) = (0, 0);
+    let (mut cases, mut fetched_anyway, mut untriggered) = (0, 0, 0);
     for transient in [false, true] {
         for point in ALL_FAULT_POINTS {
             for nth in 1..=rec.hits(point) {
@@ -213,7 +220,13 @@ fn client_fetch_survives_a_failure_at_every_write() {
                 };
                 let faulty = Repo::open(c.root(), opts(faults.clone())).unwrap();
                 let r = fetch(&faulty, "origin", &sync_opts());
-                assert!(faults.triggered(), "{point:?}#{nth}");
+                if !faults.triggered() {
+                    // Fewer write steps than the counting run (random ids
+                    // decide whether a fan-out directory is new).
+                    r.unwrap();
+                    untriggered += 1;
+                    continue;
+                }
                 assert!(r.is_err(), "{point:?}#{nth}: the failure is reported");
                 let c = if transient {
                     faulty
@@ -237,6 +250,9 @@ fn client_fetch_survives_a_failure_at_every_write() {
             }
         }
     }
-    eprintln!("{cases} injected failures during fetch; {fetched_anyway} after the commit point");
+    eprintln!(
+        "{cases} fetch cases: {fetched_anyway} failed after the commit point, {untriggered} had no such write step"
+    );
     assert!(cases > 20);
+    assert!(untriggered * 10 < cases, "most cases must inject a failure");
 }
