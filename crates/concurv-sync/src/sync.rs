@@ -224,6 +224,21 @@ fn connect(repo: &Repo, cfg: &RemoteConfig, opts: &SyncOptions) -> Result<Connec
     Connection::open(&cfg.url, &cfg.fingerprint, &token, &opts.connect)
 }
 
+/// Exchange advisory intents with the relay (RFC 0006 §2), last in a
+/// session. Advisory: a failure (for example an older relay) is ignored.
+fn sync_intents(repo: &Repo, conn: &mut Connection, remote: &str) {
+    let me = repo.device_id().to_hex();
+    let submit = conn.welcome().scopes.iter().any(|s| s == "write").then(|| {
+        concurv_workspace::coord::local_intents(repo)
+            .into_iter()
+            .filter(|i| i.device == me)
+            .collect()
+    });
+    if let Ok(all) = conn.intents(&me, submit) {
+        let _ = concurv_workspace::coord::store_remote_intents(repo, remote, &all);
+    }
+}
+
 /// Download the relay's published heads and the objects they need, then,
 /// in one operation, record them as remote-tracking references and
 /// fast-forward local branches that are strictly behind (RFC 0003 §5).
@@ -287,6 +302,7 @@ pub fn fetch(repo: &Repo, remote_name: &str, opts: &SyncOptions) -> Result<Fetch
             store.adopt(&staging.store, id)?;
         }
     }
+    sync_intents(repo, &mut conn, remote_name);
     conn.close();
 
     let lock = repo.lock()?;
@@ -438,6 +454,7 @@ fn push_once(
     if let Some((expected, attestation)) = *sent {
         match conn.publish(request_id, branch, expected, local, attestation) {
             Ok(r) => {
+                sync_intents(repo, &mut conn, &cfg.name);
                 conn.close();
                 return Ok(Attempt {
                     result: PushResult::Pushed,
@@ -483,11 +500,13 @@ fn push_once(
     };
     match plan.relation {
         Relation::UpToDate => {
+            sync_intents(repo, &mut conn, &cfg.name);
             conn.close();
             return Ok(attempt);
         }
         Relation::RemoteAhead => {
             attempt.result = PushResult::Behind;
+            sync_intents(repo, &mut conn, &cfg.name);
             conn.close();
             return Ok(attempt);
         }
@@ -545,6 +564,7 @@ fn push_once(
     }
     *sent = Some((attempt.from, attestation));
     let reply = conn.publish(request_id, branch, attempt.from, local, attestation)?;
+    sync_intents(repo, &mut conn, &cfg.name);
     conn.close();
     attempt.result = PushResult::Pushed;
     attempt.seq = Some(reply.seq);
