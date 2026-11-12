@@ -19,6 +19,8 @@
 #   CONCURV_CI_DIR     scratch and log directory
 #   CONCURV_CI_MSRV    MSRV toolchain (default: rust-version from Cargo.toml)
 #   CONCURV_CI_SKIP    space-separated steps to skip (fmt clippy test release msrv)
+#   CONCURV_CI_TOOLCHAIN  rustup toolchain for every step but msrv (default: the
+#                      default toolchain)
 set -u
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
@@ -52,6 +54,9 @@ cd "$src" || exit 1
 
 msrv=${CONCURV_CI_MSRV:-$(sed -n 's/^rust-version *= *"\(.*\)"/\1/p' Cargo.toml | head -n1)}
 skip=" ${CONCURV_CI_SKIP:-} "
+tc=${CONCURV_CI_TOOLCHAIN:+"+$CONCURV_CI_TOOLCHAIN"}
+cargo() { command cargo ${tc:+"$tc"} "$@"; }
+rustc() { command rustc ${tc:+"$tc"} "$@"; }
 
 {
   echo "concurv local CI"

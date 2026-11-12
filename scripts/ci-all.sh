@@ -21,6 +21,14 @@ if [ -z "$wslrepo" ]; then
   exit 2
 fi
 
+# Same compiler on both sides when possible (lints differ between releases):
+# the WSL default toolchain's version, if Windows has it installed.
+ver=$(wsl.exe -d "$distro" -- bash -lc 'rustc --version' | tr -d '\r' | awk '{print $2}')
+if [ -z "${CONCURV_CI_TOOLCHAIN:-}" ] && [ -n "$ver" ] &&
+  rustup run "$ver" rustc --version >/dev/null 2>&1; then
+  export CONCURV_CI_TOOLCHAIN=$ver
+fi
+
 echo "ci-all: $sha on Windows and WSL ($distro); output in $out"
 bash "$repo/scripts/ci-local.sh" "$sha" >"$out/windows.txt" 2>&1 &
 win=$!
