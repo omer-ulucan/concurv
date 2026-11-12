@@ -1,11 +1,12 @@
 name: release
 
-# Builds release binaries for a pushed `v*` tag after the full gate passes on
+# Builds release binaries for a `v*` tag after the full gate passes on
 # every platform, then publishes a GitHub release with checksums. Tags
 # containing `-` (e.g. v0.1.0-alpha.1) are marked as pre-releases.
+# Manual only while GitHub Actions is not used: run it on a tag ref
+# ("Use workflow from: <tag>"). Releases are otherwise built locally.
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
