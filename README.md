@@ -8,16 +8,18 @@ contribute to one shared branch without ever silently losing acknowledged work
 (see `docs/ROADMAP_REVISED.md`; "ARC" was the project's earlier
 working name).
 
-**Current state:** pre-release **v0.1.0-alpha.3**
-([download](https://github.com/omer-ulucan/concurv/releases/tag/v0.1.0-alpha.3)).
+**Current state:** pre-release **v0.1.0-alpha.4**
+([download](https://github.com/omer-ulucan/concurv/releases/tag/v0.1.0-alpha.4)).
 
 - **One machine:** several private workspaces on shared named branches,
   compare-and-swap publication, three-way merge with line-level merging of
   non-overlapping edits, recorded conflicts that you resolve and save,
-  workspace-scoped `undo`, Git-compatible ignores.
+  workspace-scoped `undo`, Git-compatible ignores, branch delete and rename, and
+  `workspace remove` (each refused when it would leave work on no reference).
 - **Across machines:** a self-hosted relay (`concurvd`) holds the published
   branches; `concurv clone | fetch | push` exchange work over pinned TLS
-  without ever publishing or overwriting anything implicitly.
+  without ever publishing or overwriting anything implicitly;
+  tags travel through the relay too (create-only).
 - **Protected branches** (R4): a branch can require a passing, recorded
   check of exactly the snapshot about to be published (`concurv check`,
   RFC 0005).
@@ -35,7 +37,8 @@ macOS last ran at R2.5). R2.5 awaits the owner's final acceptance of the
 branch model (ADR 0007); R6 awaits a license and macOS release builds.
 Stress-tested with concurrent writers, killed processes (including the
 relay) and simulated disconnects at every byte of a transfer; see
-`docs/ROADMAP_STATUS.md`. **Not yet:** a license (the owner's decision),
+`docs/ROADMAP_STATUS.md`. Compared side by side with Git on seven scenarios
+(`bench/results/`, `docs/benchmarks/comparison-plan.md`). **Not yet:** a license (the owner's decision),
 macOS release builds.
 
 > **Alpha:** the on-disk format and the CLI/JSON contract may still change
@@ -48,10 +51,10 @@ Download the archive for your platform from the
 [latest release](https://github.com/omer-ulucan/concurv/releases) (Linux
 x86_64, static; Windows x86_64), check it against `SHA256SUMS`, and put
 `concurv` and `concurvd` on your `PATH`. There is no macOS binary for
-alpha.3; on a Mac (or anywhere), build from source with Rust 1.89+:
+alpha.4; on a Mac (or anywhere), build from source with Rust 1.89+:
 
 ```console
-$ cargo install --git https://github.com/omer-ulucan/concurv --tag v0.1.0-alpha.3 concurv-cli
+$ cargo install --git https://github.com/omer-ulucan/concurv --tag v0.1.0-alpha.4 concurv-cli
 ```
 
 Shell completion: `concurv completions bash|zsh|fish|powershell|elvish`
