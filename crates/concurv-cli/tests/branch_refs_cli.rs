@@ -84,3 +84,34 @@ fn delete_and_rename_through_the_cli() {
     let (_, v, _) = run(&a, &["--json", "verify", "--full"]);
     assert_eq!(v["ok"], true);
 }
+
+/// `workspace remove` through the CLI (backlog P1-8).
+#[test]
+fn workspace_remove_through_the_cli() {
+    let t = tempfile::tempdir().unwrap();
+    let a = t.path().join("a");
+    fs::create_dir(&a).unwrap();
+    assert_eq!(run(&a, &["init"]).0, 0);
+    fs::write(a.join("f.txt"), "1\n").unwrap();
+    assert_eq!(run(&a, &["save", "-m", "one"]).0, 0);
+    assert_eq!(run(&a, &["publish"]).0, 0);
+    let w = t.path().join("w");
+    assert_eq!(run(&a, &["workspace", "add", w.to_str().unwrap()]).0, 0);
+    assert_eq!(run(&a, &["workspace", "remove", "default"]).0, 2);
+    assert_eq!(run(&w, &["workspace", "remove", "w"]).0, 2);
+    assert_eq!(run(&a, &["workspace", "remove", "nope"]).0, 50);
+    fs::write(w.join("g.txt"), "unsaved\n").unwrap();
+    assert_eq!(run(&a, &["workspace", "remove", "w"]).0, 20);
+    assert_eq!(run(&w, &["save", "-m", "work"]).0, 0);
+    assert_eq!(run(&a, &["workspace", "remove", "w"]).0, 42);
+    assert_eq!(run(&w, &["publish"]).0, 0);
+    let (code, v, out) = run(&a, &["--json", "workspace", "remove", "w"]);
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(v["data"]["workspace"]["name"], "w");
+    assert_eq!(v["data"]["directory_checked"], true);
+    assert!(w.join("g.txt").is_file(), "the files stay");
+    let (code, _, out) = run(&w, &["status"]);
+    assert_eq!(code, 50, "{out}");
+    let (_, v, _) = run(&a, &["--json", "workspace", "list"]);
+    assert_eq!(v["data"]["workspaces"].as_array().unwrap().len(), 1);
+}

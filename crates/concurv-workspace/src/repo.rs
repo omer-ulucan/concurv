@@ -518,7 +518,7 @@ impl Repo {
             .ok_or_else(|| {
                 ConcurvError::new(
                     ErrorCode::NotFound,
-                    "this workspace is not registered in the repository (was it created by a different repository?)",
+                    "this workspace is not registered in the repository (it was removed with `concurv workspace remove`, or belongs to another repository); its files are plain files now",
                 )
             })?;
         Ok((id, op, ws))

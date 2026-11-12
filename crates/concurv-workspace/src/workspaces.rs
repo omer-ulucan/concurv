@@ -314,3 +314,140 @@ pub fn add_on(
         written,
     })
 }
+
+/// Result of `workspace remove`.
+#[derive(Debug)]
+pub struct RemoveOutcome {
+    /// The workspace as it was.
+    pub info: WorkspaceInfo,
+    /// Whether its directory was found (and checked for unsaved changes).
+    pub directory_checked: bool,
+    /// Operation recorded.
+    pub operation: concurv_core::OperationId,
+}
+
+/// Unregister workspace `name` (backlog P1-8). Its directory and files stay
+/// on disk untouched; only the repository forgets the workspace. Refused,
+/// with nothing changed: the primary workspace or the one this command runs
+/// in (`CONCURV_INVALID_ARGUMENT`); a pending merge there (`CONCURV_CONFLICT`);
+/// saves in it that no branch, tag, other workspace or remote-tracking
+/// reference contains (`CONCURV_DIVERGED`: publish them, or keep them with
+/// `branch create`/`tag create --at <head>`); unsaved changes in its
+/// directory, when that directory still exists (`CONCURV_DIRTY_WORKSPACE`).
+/// The workspace lock of the removed workspace is held throughout, so no
+/// command runs there meanwhile.
+pub fn remove(repo: &Repo, name: &str) -> Result<RemoveOutcome> {
+    let info = list(repo)?
+        .into_iter()
+        .find(|w| w.name == name)
+        .ok_or_else(|| {
+            ConcurvError::new(
+                ErrorCode::NotFound,
+                format!("no workspace named `{name}` (see `concurv workspace list`)"),
+            )
+        })?;
+    if info.primary {
+        return Err(ConcurvError::new(
+            ErrorCode::InvalidArgument,
+            "the primary workspace holds the repository and cannot be removed",
+        ));
+    }
+    if info.current {
+        return Err(ConcurvError::new(
+            ErrorCode::InvalidArgument,
+            "a workspace cannot remove itself: run `concurv workspace remove` from another workspace",
+        ));
+    }
+    // Lock the workspace being removed, if its directory is still there and
+    // still belongs to it; then check its files.
+    let other = info.root.as_ref().and_then(|root| {
+        Repo::open(root, repo.options().clone())
+            .ok()
+            .filter(|o| o.workspace_id() == info.id)
+    });
+    let _other_lock = match &other {
+        Some(o) => Some(o.workspace_lock()?),
+        None => None,
+    };
+    if let Some(o) = &other {
+        let st = crate::status::status(o)?;
+        if !st.changes.is_empty() || st.interrupted_restore.is_some() {
+            return Err(ConcurvError::new(
+                ErrorCode::DirtyWorkspace,
+                format!(
+                    "workspace `{name}` has {} unsaved change(s){} in `{}`; save or restore them \
+                     first. Nothing was changed",
+                    st.changes.len(),
+                    if st.interrupted_restore.is_some() {
+                        " and an interrupted restore"
+                    } else {
+                        ""
+                    },
+                    o.root().display()
+                ),
+            ));
+        }
+    }
+    let lock = repo.lock()?;
+    let (op_id, op, _) = repo.current()?;
+    let Some(ws) = op.view.workspaces.get(&info.id).cloned() else {
+        return Err(ConcurvError::new(
+            ErrorCode::StaleHead,
+            format!("workspace `{name}` was removed meanwhile; nothing was changed"),
+        ));
+    };
+    if ws.merge.is_some() {
+        return Err(ConcurvError::new(
+            ErrorCode::Conflict,
+            format!(
+                "a merge is pending in workspace `{name}`: finish it (`concurv save`) or give it up \
+                 (`concurv update --abort`) there first. Nothing was changed"
+            ),
+        ));
+    }
+    if let Some(h) = ws.head
+        && !crate::branches::kept_elsewhere(
+            repo,
+            &op.view,
+            crate::branches::Except::Workspace(info.id),
+            h,
+        )?
+    {
+        return Err(ConcurvError::new(
+            ErrorCode::Diverged,
+            format!(
+                "workspace `{name}` has saves that no branch, tag, other workspace or \
+                 remote-tracking reference contains; publish them there, or keep them with \
+                 `concurv tag create <tag> --at {h}`. Nothing was changed"
+            ),
+        ));
+    }
+    let mut view = op.view.clone();
+    view.workspaces.remove(&info.id);
+    let new_op = Operation {
+        parents: vec![op_id],
+        timestamp_ms: repo.now_ms(),
+        device_id: repo.device_id(),
+        workspace_id: Some(repo.workspace_id()),
+        kind: "workspace-remove".into(),
+        description: format!(
+            "remove workspace {name}{}",
+            info.root
+                .as_ref()
+                .map(|r| format!(" ({})", r.display()))
+                .unwrap_or_default()
+        ),
+        backup: None,
+        undoes: None,
+        checked_out: None,
+        view,
+    };
+    let operation = repo.oplog().commit(&lock, &op_id, &new_op)?;
+    // The locator is a cache of the directory's path; forget it.
+    let _ = fs::remove_file(repo.locator_path(&info.id));
+    Ok(RemoveOutcome {
+        directory_checked: other.is_some(),
+        info,
+        operation,
+    })
+}

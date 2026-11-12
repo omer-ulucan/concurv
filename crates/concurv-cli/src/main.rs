@@ -324,6 +324,12 @@ enum WorkspaceCmd {
     },
     /// List all workspaces of this repository.
     List,
+    /// Unregister another workspace (its files stay). Refused with unsaved
+    /// changes, a pending merge, or saves no other reference contains.
+    Remove {
+        /// Workspace name.
+        name: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -441,6 +447,9 @@ impl Cmd {
             Cmd::Workspace {
                 cmd: WorkspaceCmd::List,
             } => "workspace list",
+            Cmd::Workspace {
+                cmd: WorkspaceCmd::Remove { .. },
+            } => "workspace remove",
             Cmd::Publish { .. } => "publish",
             Cmd::Check { .. } => "check",
             Cmd::Branch {
@@ -907,6 +916,32 @@ fn run(cli: Cli) -> Result<Output> {
             }
             ok(
                 json!({ "workspaces": all.iter().map(workspace_json).collect::<Vec<_>>() }),
+                human,
+            )
+        }
+        Cmd::Workspace {
+            cmd: WorkspaceCmd::Remove { name },
+        } => {
+            let repo = discover(&cwd)?;
+            let o = workspaces::remove(&repo, &name)?;
+            let human = format!(
+                "Removed workspace `{}` from the repository.{}",
+                o.info.name,
+                match &o.info.root {
+                    Some(r) if o.directory_checked => format!(
+                        " Its directory `{}` was left as it is (plain files now); delete it when \
+                         you no longer need it.",
+                        r.display()
+                    ),
+                    _ => " Its directory was not found.".to_owned(),
+                }
+            );
+            ok(
+                json!({
+                    "workspace": workspace_json(&o.info),
+                    "directory_checked": o.directory_checked,
+                    "operation": o.operation.to_hex(),
+                }),
                 human,
             )
         }

@@ -12,6 +12,13 @@ version 1 and the CLI/JSON contract are not frozen until 0.1.0 (see ADR 0003).
   tag, workspace or remote-tracking reference contains); only the name
   goes and the head is printed. Rename moves the workspaces tracking the
   branch in the same operation. `undo` refuses both.
+- **`concurv workspace remove <name>`** (backlog P1-8): unregisters another
+  workspace; its directory and files stay. Refused for the primary or
+  current workspace, with unsaved changes (20), a pending merge (43) or
+  saves no other reference contains (42). `undo` refuses it.
+- Comparison harness (R0): `bench/scenarios/` scripts for concurv, Git and
+  jj; concurv and Git results for five scenarios on Windows and Linux in
+  `bench/results/`.
 - `--at` (`branch create`, `tag create`) also accepts a remote-tracking
   reference, `remote/<remote>/<branch>`.
 - **Tags at the relay** (ADR 0008 §7): `concurv push --tags` creates this

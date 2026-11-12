@@ -158,6 +158,20 @@ $ concurv workspace list
 A new workspace must be a new or empty directory, and must not be inside
 another workspace (or contain one). It starts with a checkout of `main`.
 
+When a task is done, unregister its workspace from another one:
+
+```console
+$ concurv workspace remove agent-a        # refused while it has unsaved or unpublished work
+```
+
+Nothing on disk is deleted: the directory keeps its files (they are plain
+files afterwards) until you delete it. Removal is refused for the primary
+workspace and the one you run it in; with unsaved changes or a pending
+merge there (exit 20 or 43); and with saves that no branch, tag or other
+workspace contains (exit 42: publish them, or `concurv tag create <tag>
+--at <head>`). If you already deleted the directory, removal still works
+as long as no saves would be lost.
+
 The cycle in each workspace:
 
 ```console
