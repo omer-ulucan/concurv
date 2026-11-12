@@ -1,7 +1,8 @@
 # concurv threat model
 
-Scope: the local kernel (R1–R2.5), sync (R3), verified integration (R4) and
-agent coordination (R5), all implemented. Each row lists the mitigation **and
+Scope: the local kernel (R1–R2.5), sync (R3), verified integration (R4),
+agent coordination (R5) and the R6 additions (tags, configuration, Git
+import into existing history), all implemented. Each row lists the mitigation **and
 whether it is implemented**.
 
 ## Assets
@@ -39,6 +40,7 @@ tokens (R3).
 | T21 | **Resource exhaustion of the relay or client** (many connections, slow clients, huge or endless uploads, huge packs) | at most 64 connections, idle timeout 120 s, messages ≤ 1 MiB, ≤ 10,000 objects per upload batch, blob size limit (default 4 GiB) checked before reading, structured objects ≤ 64 MiB, ≤ 1024 wants / 4096 haves per fetch; a client accepts at most 10,000,000 objects per pack. Not yet: per-device byte quotas, rate limits | R3 implemented (limits tested in `hostile.rs`); quotas open |
 | T22 | **Forged, stale or misapplied attestations** (an attestation for another candidate, branch, policy version or OS; a result that contradicts the exit codes; a candidate that rewrites its own policy) | the policy comes from the branch's current head, never the candidate; attestations bind candidate, branch, policy blob, checks and OS, and are verified on every use; the decoder rejects a result that disagrees with the exit codes; at the relay only attestations vouched for by `attest` devices count. A runner can still lie about having run the checks: authenticity is device authentication, signatures are R7 | R4 implemented + tested (`verified_integration.rs`, `protected.rs`) |
 | T23 | **Misleading or flooding intents; leaking through events** (a device declares intents for others, floods the relay, or events expose secrets) | intents are advisory only: no command refuses work because of one, so a false intent can at most cause a warning; each relay device can replace only the intents it submitted itself; at most 256 per submission and 4096 at the relay, validated (ids, sizes, names), expired ones dropped; events contain ids, names and the descriptions users wrote, never file contents, tokens or environment variables | R5 implemented + tested (`coordination.rs`) |
+| T24 | **Configuration or tags used to mislead** (a planted configuration redirecting pushes or changing the author; a tag silently re-pointed at other code; a Git tag overwritten by an export) | configuration only supplies defaults (`author`, `remote`): it never relaxes a check, a refusal or a policy, and `.concurv/` is never versioned, so no repository, clone or fetch can bring configuration with it; unknown keys and malformed files are errors; tags never move (create refuses existing names, delete is recorded in the operation log with the old target, `undo` refuses both); `git export --tags` only creates missing Git tags in one transaction with the branch and refuses when Git has the name elsewhere; `git import --tags` refuses a concurv tag of the same name elsewhere | R6 implemented + tested (`config_cli.rs`, `tags.rs`, `git_ecosystem.rs`) |
 
 ## Out of scope
 

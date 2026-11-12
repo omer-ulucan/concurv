@@ -326,6 +326,7 @@ fn sample_operation() -> Operation {
             branches,
             workspaces,
             remotes: BTreeMap::new(),
+            tags: BTreeMap::new(),
         },
     }
 }

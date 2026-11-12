@@ -555,10 +555,15 @@ pub struct View {
     /// repository format 2). A separate map: never part of `branches`.
     /// Every remote listed has at least one branch.
     pub remotes: BTreeMap<String, BTreeMap<String, RemoteHead>>,
+    /// Tag name → snapshot (since R6, repository format 4; ADR 0008). A
+    /// separate namespace from `branches`; tags do not move.
+    pub tags: BTreeMap<String, SnapshotId>,
 }
 
 /// Tag of the view extension that carries [`View::remotes`] (RFC 0001 §3.4).
 const VIEW_EXT_REMOTES: u8 = 1;
+/// Tag of the view extension that carries [`View::tags`] (RFC 0001 §3.4).
+const VIEW_EXT_TAGS: u8 = 2;
 
 /// Validate a remote name: the rules of workspace names (1–64 characters
 /// of `[A-Za-z0-9._-]`, not starting with `.` or `-`).
@@ -732,6 +737,16 @@ impl Operation {
                 }
             }
         }
+        // Extension (since R6): tags, likewise present only when non-empty.
+        if !self.view.tags.is_empty() {
+            w.u8(VIEW_EXT_TAGS);
+            w.count(self.view.tags.len(), MAX_TREE_ENTRIES, "tags")?;
+            for (name, target) in &self.view.tags {
+                validate_branch_name(name)?;
+                w.string(name)?;
+                w.id(&target.object_id());
+            }
+        }
         Ok(w.0)
     }
 
@@ -815,12 +830,19 @@ impl Operation {
         }
         check_unique_names(view.workspaces.values().map(|w| w.name.as_str()))
             .map_err(|e| corrupt(e.message))?;
-        if !r.at_end() {
+        // Extensions: each at most once, in increasing tag order.
+        let mut last_ext = 0u8;
+        while !r.at_end() {
             let tag = r.u8()?;
-            if tag != VIEW_EXT_REMOTES {
-                return Err(corrupt(format!("unknown view extension {tag}")));
+            if tag <= last_ext {
+                return Err(corrupt("view extensions repeated or out of order"));
             }
-            view.remotes = decode_remotes(&mut r)?;
+            match tag {
+                VIEW_EXT_REMOTES => view.remotes = decode_remotes(&mut r)?,
+                VIEW_EXT_TAGS => view.tags = decode_tags(&mut r)?,
+                _ => return Err(corrupt(format!("unknown view extension {tag}"))),
+            }
+            last_ext = tag;
         }
         r.finish()?;
         Ok(Self {
@@ -880,6 +902,30 @@ fn decode_remotes(r: &mut Reader<'_>) -> Result<BTreeMap<String, BTreeMap<String
         remotes.insert(remote, branches);
     }
     Ok(remotes)
+}
+
+/// Decode the tags extension: non-empty, strictly sorted, valid names.
+fn decode_tags(r: &mut Reader<'_>) -> Result<BTreeMap<String, SnapshotId>> {
+    let n = r.count(MAX_TREE_ENTRIES, "tags")?;
+    if n == 0 {
+        return Err(corrupt("empty tags extension"));
+    }
+    let mut tags = BTreeMap::new();
+    let mut last: Option<String> = None;
+    for _ in 0..n {
+        let name = r.string()?;
+        validate_branch_name(&name).map_err(|e| corrupt(e.message))?;
+        if last
+            .as_ref()
+            .is_some_and(|l| l.as_bytes() >= name.as_bytes())
+        {
+            return Err(corrupt("tags are not strictly sorted"));
+        }
+        let target = SnapshotId::from_object_id(r.id()?);
+        last = Some(name.clone());
+        tags.insert(name, target);
+    }
+    Ok(tags)
 }
 
 // ---------------------------------------------------------------------------

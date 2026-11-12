@@ -28,8 +28,12 @@ relay) and simulated disconnects at every byte of a transfer; see
 about to be published (`concurv check`, RFC 0005), and **agent coordination**
 (R5): advisory intents, warnings about overlapping or dependent work (a
 signature changed on another machine warns before you publish code using
-it), and the operation log as JSON events (RFC 0006). **Not yet:** the
-developer beta (R6).
+it), and the operation log as JSON events (RFC 0006). From the developer
+beta (R6): **tags**, Git export and import of tags, **import into existing
+history** (repeated Git → concurv → Git round trips that keep commit ids),
+configuration files, shell completions, and contributor and security
+documents. **Not yet:** a license (the owner's decision), macOS release
+builds, relay-side tags, branch delete/rename.
 
 > **Alpha:** the on-disk format and the CLI/JSON contract may still change
 > before 0.1.0. **No license has been chosen yet**: until one is added, the
@@ -104,8 +108,10 @@ Share with Git / GitHub (needs `git` on PATH):
 
 ```console
 $ git init --bare ../my-project-mirror.git
-$ concurv git export ../my-project-mirror.git   # main's history as Git commits
-$ concurv git import ../some-git-repo          # (in a fresh repo) start from a Git branch
+$ concurv tag create v1.0                        # a name that never moves (ADR 0008)
+$ concurv git export ../my-project-mirror.git --tags   # main's history (and tags) as Git commits
+$ concurv git import ../some-git-repo --tags     # start from Git, or bring in new Git commits later
+$ concurv git import ../some-git-repo --into git-main  # Git diverged? import beside, then `concurv merge git-main`
 ```
 
 `restore` never rewrites history. It only changes working files, and
@@ -139,8 +145,9 @@ Full walkthrough and recovery procedures: **`docs/user-guide.md`**.
   refused until you merge it. Everything received is verified and checked
   for completeness before it is stored; a relay whose history went
   backwards is reported, not followed. A retried push never publishes twice.
-- Not implemented yet: rename detection, garbage collection, tags, branch
-  delete/rename, symlinks on Windows, several repositories per relay.
+- Not implemented yet: rename detection, garbage collection, branch
+  delete/rename, tags at the relay, symlinks on Windows, several
+  repositories per relay.
 - Don't keep repositories in cloud-synced folders (OneDrive, Dropbox).
 
 ## Build and test
@@ -189,8 +196,10 @@ Workspace layout: `crates/concurv-{core,objects,refs,ops,workspace,git,sync,cli,
 | `docs/adr/0005-stat-cache.md` | the stat cache and why it can never produce a wrong snapshot |
 | `docs/adr/0006-hunk-merge.md` | line-level merge in `update` |
 | `docs/adr/0007-branch-model.md` | branches vs workspaces, naming, transactional switch, `merge`, reference kinds, R3 reconciliation rules |
+| `docs/adr/0008-tags.md` | tags: model, names, format 4, Git export and import of tags |
 | `docs/security/threat-model.md` | threats and mitigation status |
 | `docs/benchmarks/comparison-plan.md` | competitor reproduction plan (no results yet) |
 | `bench/RESULTS.md` | `status`/`save` benchmark results (reproducible with `concurv-bench`) |
 | `docs/releases/` | release notes |
 | `CHANGELOG.md` | changes since the start of the project |
+| `CONTRIBUTING.md`, `SECURITY.md` | how to contribute (rules every change follows), how to report a vulnerability privately |

@@ -274,9 +274,10 @@ fn import_of_a_native_git_repository() {
     assert_eq!(second.1.message, "second\n\nbody text");
     assert!(verify(&c, true).ok());
 
-    // Importing again into the same (now non-empty) repository is refused.
-    let e = import(&c, &GitRepo::open(&src).unwrap(), "main").unwrap_err();
-    assert_eq!(e.code, ErrorCode::InvalidArgument);
+    // Importing again (R6: into existing history) finds nothing new.
+    let again = import(&c, &GitRepo::open(&src).unwrap(), "main").unwrap();
+    assert_eq!(again.commits, 0);
+    assert!(!again.published);
 }
 
 #[test]

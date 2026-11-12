@@ -54,6 +54,17 @@ mutable `op_head` file** (the Jujutsu "view" design).
   needed: `concurv remote add` (and `clone`) replaces `.concurv/format`
   atomically under the repository lock. Downgrading is not supported:
   builds before R3 refuse a format-2 repository (`CONCURV_UNSUPPORTED_FORMAT`).
+- **Migration note, repository format 3 (R4, 2026-11-12).** The store may
+  contain attestation objects (kind 6, RFC 0005); upgraded in place by the
+  first `concurv check`, no rewrite. Builds before R4 refuse it.
+- **Migration note, repository format 4 (R6, 2026-11-12).** Operations may
+  carry a second view extension, tags (tag byte 2, after the remotes
+  extension; RFC 0001 §3.4, ADR 0008). Object magic and all ids are
+  unchanged; operations without tags keep their exact bytes, so no rewrite
+  is needed: the first `concurv tag create` (or a `git import --tags` that
+  creates a tag) replaces `.concurv/format` atomically under the repository
+  lock. Builds before R6 refuse a format-4 repository
+  (`CONCURV_UNSUPPORTED_FORMAT`); deleting every tag does not downgrade it.
 
 ## Consequences
 

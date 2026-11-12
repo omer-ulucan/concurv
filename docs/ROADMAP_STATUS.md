@@ -3,7 +3,7 @@
 Legend: `not started` · `in progress` · `gate passed` · `blocked`.
 A stage is `gate passed` only with the evidence listed next to it.
 The plan itself (stages, gates, backlog, acceptance tests) lives in
-**`docs/ROADMAP_REVISED.md`**. Last updated: 2026-11-12 (R5 agent coordination).
+**`docs/ROADMAP_REVISED.md`**. Last updated: 2026-11-12 (R6 progress).
 
 | Stage | Status | Evidence / blockers |
 |---|---|---|
@@ -15,7 +15,7 @@ The plan itself (stages, gates, backlog, acceptance tests) lives in
 | R3 — Two-PC authenticated sync | **gate passed** (2026-11-12, Windows and Linux) | Local CI gate on `3f85c0b`: Windows 216 passed, Linux 220 passed; relay `concurvd`, pinned TLS, devices and scopes, fetch/push/clone, two-process harness, disconnect, malformed-object, auth, crash/restart tests (RFC 0003 v1). macOS not run. See "R3 evidence" below |
 | R4 — Verified integration | **gate passed** (2026-11-12, Windows and Linux) | Local CI gate on `5a4863b`: Windows 227 passed, Linux 231 passed; protected branches, `concurv check`, attestations bound to candidate, branch, policy version, checks and OS, at the relay too (RFC 0005). macOS not run. See "R4 evidence" below |
 | R5 — Agent-aware coordination | **gate passed** (2026-11-12, Windows and Linux) | Local CI gate on `8b0bbe3`: Windows 235 passed, Linux 239 passed; versioned JSON events, advisory intents with TTL (also through the relay), overlap warnings at four levels with measured false-positive and false-negative rates, no LLM (RFC 0006). macOS not run. See "R5 evidence" below |
-| R6 — Developer beta + Git ecosystem | not started | design only: ADR 0002 |
+| R6 — Developer beta + Git ecosystem | **in progress** (2026-11-12) | Done and gated (local CI on `37b64d8`: Windows 248 passed, Linux 252 passed): Git tags (ADR 0008, repository format 4), import into existing history, configuration files, shell completions, CONTRIBUTING/SECURITY/code of conduct/templates; remote workflow is R3. **Open gate items:** the owner-approved LICENSE; release builds for macOS (Windows and Linux are built locally). See "R6 progress" below |
 | R7 — Advanced VCS | not started | — |
 
 ## How evidence is produced (since 2026-11-12)
@@ -84,9 +84,10 @@ What the gate does **not** prove (still true, by design of the tests):
 ## Next
 
 R1, R1.5, R2, R3, R4 and R5 are complete; R2.5 awaits the owner's final
-acceptance of ADR 0007; R0 (competitor harness) remains open. Next: R6, the
-developer beta (Git tags, import into existing history, configuration,
-completions, contributor documents; the LICENSE is the owner's decision).
+acceptance of ADR 0007; R0 (competitor harness) remains open. R6 is
+implemented except for its two owner- or hardware-bound items: the LICENSE
+(the owner's decision) and macOS release builds (hosted CI or a Mac). After
+that: R7 items, each against a measured baseline.
 macOS evidence needs hosted CI or a Mac running `scripts/ci-local.sh`.
 
 ## R2 evidence (gate passed 2026-11-01)
@@ -326,3 +327,32 @@ What the R5 gate does **not** prove: that the warnings help agents in
 practice (no user study); dependency detection beyond lexical uses (calls
 through tables, dynamic dispatch, other languages' import forms); clock
 skew between devices for intent expiry; macOS.
+
+## R6 progress (2026-11-12; gate not passed: LICENSE and macOS open)
+
+Local CI gate on `feat/r6-beta` @ `37b64d8`, rustc 1.99.1, `--locked`,
+`--no-fail-fast`: Windows 11 **248 passed**, Linux (WSL 2) **252 passed**,
+0 failed, 0 ignored; fmt, clippy `-D warnings`, release build and MSRV 1.89
+check pass on both. macOS not run.
+
+Gate statement (roadmap §2): *"Release pipeline (3 OSes), Git tags, import
+into existing history, remote workflow, completion/config,
+CONTRIBUTING/SECURITY, owner-approved LICENSE."*
+
+| Item | Status | Tests and evidence |
+|---|---|---|
+| Release pipeline (3 OSes) | **partial** | `scripts/release-local.sh` builds Windows x86_64 and static Linux x86_64 archives with `SHA256SUMS` from a fresh clone of the tag (used for v0.1.0-alpha.2). macOS needs hosted CI or a Mac |
+| Git tags | done | ADR 0008; `concurv-workspace/tests/tags.rs` (names, `--at` resolution and ambiguity, format 4 upgrade, undo refusal, 5 concurrent creates with one winner, tags kept by other operations); `concurv-objects/tests/transfer.rs::tags_extension_round_trips_and_has_one_canonical_form` (documented layout, both extensions, every non-canonical form refused); `concurv-git/tests/git_ecosystem.rs::tags_are_exported_in_one_transaction_with_the_branch` (a conflicting Git tag moves neither branch nor tags); CLI `tags_cli.rs` |
+| Import into existing history | done | `import_into_existing_history_round_trips_incrementally` (only new commits imported; Git → concurv → Git keeps commit ids; a dirty workspace is never touched), `diverged_histories_are_refused_or_imported_beside` (refused into a diverged branch, imported `--into` another and merged, a conflicting tag refuses); CLI `tags_cli.rs`, `cli_smoke.rs` |
+| Remote workflow | done (R3) | relay sync, see "R3 evidence" |
+| Completion / config | done | `config_cli.rs`: author precedence (environment, repository, user), configured default remote, refusals of unknown keys, invalid values and malformed files (nothing written, every command stopped), completions for bash, zsh, fish, PowerShell and elvish |
+| CONTRIBUTING / SECURITY | done | `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, issue and pull request templates |
+| Owner-approved LICENSE | **open** | the owner's decision; no license metadata is asserted |
+
+Found by the gate: the CLI smoke test still expected `git import` to refuse
+a non-empty repository (the old rule); it now checks that a repeated
+import finds nothing new.
+
+What R6 does **not** provide yet: tags at the relay (tags travel through
+Git or are created per machine), annotated or signed tags, branch
+delete/rename, macOS release builds.

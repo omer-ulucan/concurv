@@ -1,9 +1,10 @@
 # concurv user guide
 
-This guide covers what the current build actually does: a single-machine VCS
-with several private workspaces sharing named branches (`main` first).
-Cross-machine
-sync does not exist yet (see `docs/ROADMAP_STATUS.md`).
+This guide covers what the current build actually does: several private
+workspaces sharing named branches (`main` first) on one machine, sync
+between machines through a relay you run (§8a), protected branches (§8b),
+coordination between agents (§8c), tags (§4b) and the Git bridge (§9).
+Stage status and evidence: `docs/ROADMAP_STATUS.md`.
 
 ## 1. Install
 
@@ -309,18 +310,42 @@ stricter in a few places so names work on every OS:
 - the first parts `refs`, `remote` and `remotes` are reserved;
 - no two branches that differ only in case, and not both `x` and `x/y`.
 
-Not supported yet: deleting and renaming branches, protected branches,
-tags. `undo` cannot reverse `branch create`: branches are shared, and
+Not supported yet: deleting and renaming branches. (Protected branches:
+§8b.) `undo` cannot reverse `branch create`: branches are shared, and
 someone may already be using it.
 
 **Words used in this guide.** Your *workspace state* (files, head, merge in
 progress) is private. A *branch* here is a reference shared by all
 workspaces of the repository; on one machine it is also the published head.
-With multi-machine sync (R3, not built yet), a relay will hold the
-authoritative published heads. Fetched heads will appear as read-only
-*remote-tracking* references (`remote/<relay>/<branch>`). They never
-overwrite your branches, and divergent work is merged by you before it is
-published (`docs/rfcs/0003-sync-protocol.md` §5).
+Across machines (§8a), a relay holds the authoritative published heads, and
+fetched heads appear as read-only *remote-tracking* references
+(`remote/<relay>/<branch>`). They never overwrite your branches, and
+divergent work is merged by you before it is published
+(`docs/rfcs/0003-sync-protocol.md` §5).
+
+## 4b. Tags
+
+A tag gives a snapshot a name that never moves, for example a release
+(ADR 0008):
+
+```console
+$ concurv tag create v1.0                 # at this workspace's head
+$ concurv tag create v0.9 --at main       # or a branch, another tag, a snapshot id
+$ concurv tag list
+$ concurv branch create hotfix --at v1.0  # tags work wherever --at does
+$ concurv tag delete v0.9                 # prints where it was; the snapshot stays
+```
+
+- A name that exists is refused; tags are never moved. To re-point one,
+  delete it and create it again (both steps are in the operation log).
+- Names follow the branch-name rules above; a tag may have the same name as
+  a branch, but then `--at` refuses to guess (exit 51).
+- `undo` refuses tag operations, as for `branch create`.
+- The first tag upgrades the repository to **format 4**; builds older than
+  this one cannot open it afterwards.
+- Tags travel to and from Git with `git export --tags` and `git import
+  --tags` (§9). Relays do not exchange tags yet: create them on each
+  machine, or go through Git.
 
 ## 5. Going back to an earlier snapshot
 
@@ -567,8 +592,8 @@ indirectly (through tables or strings), which a lexical rule cannot see.
 
 ## 9. Working with Git and GitHub
 
-concurv can write its history into a Git repository, and start from an
-existing Git branch. Both require `git` on your `PATH`.
+concurv can write its history into a Git repository, and import Git history,
+once or repeatedly. Both require `git` on your `PATH`.
 
 **Export** `main` to Git, for example to push it to GitHub:
 
@@ -582,31 +607,56 @@ $ git -C ../project-mirror.git push git@github.com:you/project.git main
   included) is exported. Unpublished saves in workspaces are not.
 - Exporting again only adds new commits. The same snapshot always becomes the
   same Git commit, so repeated exports are safe.
-- `--branch B` exports to Git branch `B` instead of `main`.
+- `--branch B` exports to Git branch `B` instead of `main`; `--from C`
+  exports concurv branch `C`.
+- `--tags` also writes your tags (§4b) that name snapshots of that history,
+  as lightweight Git tags, together with the branch: either everything
+  lands or nothing does.
 - If the Git branch has commits that concurv doesn't know (someone committed
   in Git directly), export **refuses** with exit 42 and changes nothing in Git.
-  Export to a different branch, or bring those changes into concurv by hand.
+  Import them first (below), or export to a different branch. A Git tag with
+  the same name at another commit also refuses the export.
 
-**Import** a Git branch to start a new concurv repository:
+**Import** a Git branch, to start a repository or to bring in what others
+committed in Git:
 
 ```console
 $ mkdir project && cd project && concurv init
-$ concurv git import ../existing-git-repo          # --branch B for another branch
+$ concurv git import ../existing-git-repo --tags   # --branch B for another Git branch
+# ... later, after more Git commits:
+$ concurv git import ../existing-git-repo          # only the new commits
 ```
 
-The whole history of the branch is imported, `main` is set to its head, and
-it is checked out. This only works in a **fresh** repository: nothing
-published, nothing saved.
+- Commits concurv already has (from earlier imports or exports to that
+  repository) are recognised and reused; only new commits are imported.
+  Their Git ids are remembered, so exporting later continues the same Git
+  history.
+- `main` (or `--into C`) is created or moved **forward only**. If it has
+  work that the Git branch does not contain, import refuses (exit 42) and
+  changes nothing. Then import beside it and merge, as with any branch:
+
+  ```console
+  $ concurv git import ../repo --into git-main
+  $ concurv merge git-main && concurv publish
+  ```
+- Your files change only if this workspace tracks that branch, was at its
+  previous head, and has no unsaved changes. Otherwise the output says
+  so; run `concurv update` when you are ready.
+- `--tags` imports the Git tags of that history (annotated tags become
+  plain tags: their message and tagger are dropped). A concurv tag of the
+  same name elsewhere refuses the import.
 
 Import is all-or-nothing. It refuses (exit 23, listing everything) when the
 branch contains something concurv cannot represent: submodules, paths named
 `.concurv`, file names that aren't valid UTF-8, or non-UTF-8 commit messages.
 
 What survives a round trip: file contents, executable bits, symlinks,
-directory structure, merges, authors and messages. Not preserved: separate
-committer identities, timezones and sub-second times. Native Git commit ids
-change after passing through concurv (concurv adds a `Concurv-Change-Id`
-trailer). Tags, notes and signatures are not imported. Full details:
+directory structure, merges, authors, messages and (with `--tags`) tags.
+Not preserved: separate committer identities, timezones and sub-second
+times. Imported Git commits keep their ids when exported back to a Git
+repository that has them; exported anywhere else they become new commits
+(concurv adds a `Concurv-Change-Id` trailer). Notes and signatures are not
+imported. Full details:
 `docs/adr/0002-git-interop.md`.
 
 ## 10. Troubleshooting and recovery
@@ -658,6 +708,32 @@ with `concurv_json_version`, `ok`, `data` and, on failure, `error.code`. Branch
 on the exit code or `error.code`, never on human text. The schema and the
 full error/exit-code table are in `docs/cli.md`. `-C <dir>` runs a command as
 if started in `<dir>`.
+
+**Configuration.** Two keys, set per repository or for your user account:
+
+```console
+$ concurv config set author "Ada Lovelace <ada@example.com>" --global   # user file
+$ concurv config set remote backup        # this repository: fetch/push default
+$ concurv config list                     # effective values and where they come from
+$ concurv config unset remote
+```
+
+The repository file (`.concurv/config.json`) applies to all its
+workspaces and wins over the user file; `CONCURV_AUTHOR` wins over both.
+The user file is `%APPDATA%\concurv\config.json` on Windows and
+`~/.config/concurv/config.json` elsewhere (`$CONCURV_CONFIG` overrides the
+path; set it to an empty value to use no user file, for example in CI or
+for an agent that must not inherit your settings). Unknown keys and
+malformed files are errors, never silently ignored.
+
+**Shell completion:**
+
+```console
+$ concurv completions bash > ~/.local/share/bash-completion/completions/concurv
+$ concurv completions zsh > "${fpath[1]}/_concurv"
+$ concurv completions fish > ~/.config/fish/completions/concurv.fish
+PS> concurv completions powershell | Out-String | Invoke-Expression   # add to $PROFILE
+```
 
 ## 12. Platform notes
 

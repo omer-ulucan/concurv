@@ -5,6 +5,36 @@ version 1 and the CLI/JSON contract are not frozen until 0.1.0 (see ADR 0003).
 
 ## [Unreleased]
 
+### Added (R6: developer beta, Git ecosystem)
+- **Tags** (ADR 0008): `concurv tag create|list|delete`. Tags name a
+  snapshot and never move; `--at` (also for `branch create`) accepts a
+  branch, a tag or a snapshot id and refuses a name that is ambiguous
+  (exit 51); `undo` refuses tag operations; `verify` treats tags as roots.
+- **Git tags**: `git export --tags` writes lightweight tags together with
+  the branch in one reference transaction (a conflicting Git tag refuses
+  the export); `git import --tags` imports the tags of the imported
+  history (annotated tags become lightweight).
+- **Import into existing history**: `git import` reuses commits concurv
+  already has (from earlier imports and exports) and imports only new ones;
+  `--into C` creates or fast-forwards another branch; a diverged target is
+  refused (exit 42). Round trips Git → concurv → Git keep the Git commit
+  ids. The workspace is checked out only if that cannot lose anything.
+- **Configuration files**: `concurv config get|set|unset|list` with keys
+  `author` and `remote`, in `.concurv/config.json` (per repository) or the
+  user file (`--global`; `$CONCURV_CONFIG`, `%APPDATA%`,
+  `$XDG_CONFIG_HOME`). Malformed files and unknown keys are errors.
+- **Shell completions**: `concurv completions bash|zsh|fish|powershell|elvish`.
+- `CONTRIBUTING.md`, `SECURITY.md` (private vulnerability reporting),
+  `CODE_OF_CONDUCT.md`, issue and pull request templates.
+
+### Changed (format, R6)
+- **Repository format 4**: operations may carry tags (a second view
+  extension, RFC 0001 §3.4); upgraded by the first tag. Builds before R6
+  refuse it.
+- `git import` into a repository that already has `main` no longer refuses
+  outright: it imports on top if `main` is contained in the Git branch.
+- `op log --json` has a `tags` object per operation.
+
 ### Added (R5, RFC 0006: agent coordination)
 - **Advisory intents**: `concurv intent declare|list|release` (paths and
   symbols, 1 minute to 7 days); exchanged with the relay on `push` and

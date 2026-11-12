@@ -40,6 +40,7 @@ fn op(remotes: BTreeMap<String, BTreeMap<String, RemoteHead>>) -> Operation {
             branches,
             workspaces: BTreeMap::new(),
             remotes,
+            tags: BTreeMap::new(),
         },
     }
 }
@@ -124,6 +125,75 @@ fn remotes_extension_has_one_canonical_form() {
     e.insert("b".into(), BTreeMap::new());
     assert!(op(e).encode().is_err());
     assert!(op(remotes(&[("-bad", "x", 1, 1)])).encode().is_err());
+}
+
+/// R6 (ADR 0008): the tags extension, after the remotes extension.
+#[test]
+fn tags_extension_round_trips_and_has_one_canonical_form() {
+    let plain = op(BTreeMap::new());
+    let plain_bytes = plain.encode().unwrap();
+    let mut tagged = plain.clone();
+    tagged.view.tags.insert("v1.0".into(), snap(4));
+    tagged.view.tags.insert("release/2".into(), snap(5));
+    let bytes = tagged.encode().unwrap();
+    assert_eq!(&bytes[..plain_bytes.len()], &plain_bytes[..]);
+    let tag = |name: &str, b: u8| {
+        let mut v = Vec::new();
+        v.extend_from_slice(&(name.len() as u32).to_be_bytes());
+        v.extend_from_slice(name.as_bytes());
+        v.extend_from_slice(&[b; 32]);
+        v
+    };
+    let mut layout = vec![2u8, 0, 0, 0, 2];
+    layout.extend(tag("release/2", 5));
+    layout.extend(tag("v1.0", 4));
+    assert_eq!(
+        &bytes[plain_bytes.len()..],
+        &layout[..],
+        "documented layout"
+    );
+    assert_eq!(Operation::decode(&bytes).unwrap(), tagged);
+
+    // Both extensions: remotes (1) first, then tags (2).
+    let mut both = op(remotes(&[("origin", "main", 2, 5)]));
+    both.view.tags = tagged.view.tags.clone();
+    let both_bytes = both.encode().unwrap();
+    assert_eq!(Operation::decode(&both_bytes).unwrap(), both);
+    let remotes_only = op(remotes(&[("origin", "main", 2, 5)])).encode().unwrap();
+    assert_eq!(&both_bytes[..remotes_only.len()], &remotes_only[..]);
+    assert_eq!(&both_bytes[remotes_only.len()..], &layout[..]);
+
+    let corrupt = |tail: &[u8]| {
+        let mut b = plain_bytes.clone();
+        b.extend_from_slice(tail);
+        Operation::decode(&b).unwrap_err().code
+    };
+    // Empty, unsorted, duplicate, invalid names.
+    assert_eq!(corrupt(&[2, 0, 0, 0, 0]), ErrorCode::ObjectCorrupt);
+    let mut unsorted = vec![2u8, 0, 0, 0, 2];
+    unsorted.extend(tag("v1.0", 4));
+    unsorted.extend(tag("release/2", 5));
+    assert_eq!(corrupt(&unsorted), ErrorCode::ObjectCorrupt);
+    let mut dup = vec![2u8, 0, 0, 0, 2];
+    dup.extend(tag("v1", 4));
+    dup.extend(tag("v1", 5));
+    assert_eq!(corrupt(&dup), ErrorCode::ObjectCorrupt);
+    let mut bad = vec![2u8, 0, 0, 0, 1];
+    bad.extend(tag("a b", 4));
+    assert_eq!(corrupt(&bad), ErrorCode::ObjectCorrupt);
+    // Tags before remotes, or an extension twice: not canonical.
+    let mut twice = layout.clone();
+    twice.extend_from_slice(&layout);
+    assert_eq!(corrupt(&twice), ErrorCode::ObjectCorrupt);
+    let remotes_ext = remotes_only[plain_bytes.len()..].to_vec();
+    let mut reversed = layout.clone();
+    reversed.extend_from_slice(&remotes_ext);
+    assert_eq!(corrupt(&reversed), ErrorCode::ObjectCorrupt);
+    assert_eq!(corrupt(&[3, 0, 0, 0, 0]), ErrorCode::ObjectCorrupt);
+    // The encoder refuses names the decoder would reject.
+    let mut e = plain.clone();
+    e.view.tags.insert("a b".into(), snap(4));
+    assert!(e.encode().is_err());
 }
 
 fn frame(bytes: &[u8]) -> (Cursor<Vec<u8>>, u64) {

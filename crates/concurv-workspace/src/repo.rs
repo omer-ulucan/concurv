@@ -33,6 +33,10 @@ pub const REPO_FORMAT_2: &str = "concurv-repo-format 2\n";
 /// objects (object kind 6, RFC 0005). Upgraded from 1 or 2 by the first
 /// `concurv check`.
 pub const REPO_FORMAT_3: &str = "concurv-repo-format 3\n";
+/// Repository format 4 (since R6): operations may also carry tags (RFC 0001
+/// §3.4 tags extension, ADR 0008). Upgraded from 1, 2 or 3 by the first
+/// `concurv tag create`.
+pub const REPO_FORMAT_4: &str = "concurv-repo-format 4\n";
 /// Contents of `.concurv/format` in a secondary workspace.
 pub const WORKSPACE_FORMAT: &str = "concurv-workspace-format 1\n";
 /// Default branch created by `init`.
@@ -139,6 +143,7 @@ fn repo_format_number(format: &str) -> Option<u32> {
         REPO_FORMAT => Some(1),
         REPO_FORMAT_2 => Some(2),
         REPO_FORMAT_3 => Some(3),
+        REPO_FORMAT_4 => Some(4),
         _ => None,
     }
 }
@@ -295,6 +300,7 @@ impl Repo {
                 remotes: BTreeMap::new(),
                 branches: BTreeMap::new(),
                 workspaces,
+                tags: BTreeMap::new(),
             },
         };
         let op_id = store.write_operation(&root_op)?;
@@ -459,6 +465,7 @@ impl Repo {
         let target = match min {
             2 => REPO_FORMAT_2,
             3 => REPO_FORMAT_3,
+            4 => REPO_FORMAT_4,
             _ => return Err(ConcurvError::internal("unknown repository format")),
         };
         write_file_atomic(
@@ -477,10 +484,18 @@ impl Repo {
         now_ms(&self.opts)
     }
 
-    /// Author string per options / environment.
+    /// Author string: options, then `CONCURV_AUTHOR`, then the `author` of
+    /// the repository and user configuration files (R6), then the OS user
+    /// name. (The CLI refuses malformed configuration files before running
+    /// a command; here they are skipped.)
     pub fn author(&self) -> String {
         if let Some(a) = &self.opts.author {
             return a.clone();
+        }
+        if let Ok(layers) = crate::config::Layers::load(Some(self))
+            && let Ok(Some(e)) = layers.get("author")
+        {
+            return e.value;
         }
         for var in ["CONCURV_AUTHOR", "USER", "USERNAME"] {
             if let Ok(v) = std::env::var(var)

@@ -73,8 +73,8 @@ completion evidence.
 
 | Id | Item | Milestone |
 |---|---|---|
-| P2-1 | Git tags; import into existing history; native remote workflow | R6 |
-| P2-2 | Release pipeline, shell completion, config file, CONTRIBUTING/SECURITY/CoC/templates | R6 |
+| P2-1 | Git tags; import into existing history; native remote workflow | R6 (tags and import into existing history done 2026-11-12: ADR 0008, ADR 0002 update; the remote workflow is R3's relay. Not yet: tags at the relay) |
+| P2-2 | Release pipeline, shell completion, config file, CONTRIBUTING/SECURITY/CoC/templates | R6 (completions, configuration files and contributor documents done 2026-11-12; release pipeline local for Windows and Linux, macOS needs hosted CI or a Mac) |
 | P2-3 | GC and packs (with grace periods and reachability proofs) | R7 |
 | P2-4 | Rename detection, sparse/partial checkout, large files | R7 |
 | P2-5 | Filesystem watcher for `status` | R7 |

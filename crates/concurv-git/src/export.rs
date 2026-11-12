@@ -18,6 +18,28 @@ use crate::quote::quote;
 /// Private ref `fast-import` writes to; deleted after every export.
 const EXPORT_REF: &str = "refs/concurv/export";
 
+/// What to export.
+#[derive(Clone, Debug)]
+pub struct ExportOptions {
+    /// concurv branch whose history is exported.
+    pub from: String,
+    /// Git branch to move.
+    pub branch: String,
+    /// Also export the tags that name snapshots of that history (ADR 0008).
+    pub tags: bool,
+}
+
+/// A tag written to (or already in) Git.
+#[derive(Clone, Debug)]
+pub struct TagExport {
+    /// Tag name (`refs/tags/<name>`).
+    pub name: String,
+    /// Git commit it names.
+    pub commit: String,
+    /// False if Git already had this tag at this commit.
+    pub created: bool,
+}
+
 /// Result of an export.
 #[derive(Debug)]
 pub struct ExportOutcome {
@@ -33,6 +55,11 @@ pub struct ExportOutcome {
     pub reused: usize,
     /// Whether the Git branch moved.
     pub updated: bool,
+    /// Tags exported (with `tags`), sorted by name.
+    pub tags: Vec<TagExport>,
+    /// Tags not exported because their snapshot is not in the exported
+    /// history.
+    pub tags_skipped: Vec<String>,
 }
 
 /// Parents before children, deterministic.
@@ -60,7 +87,7 @@ fn topo_order(graph: &HashMap<SnapshotId, Vec<SnapshotId>>, tip: SnapshotId) -> 
 }
 
 /// Which of `oids` exist as commits in `git`.
-fn present_commits(git: &GitRepo, oids: &[String]) -> Result<HashSet<String>> {
+pub(crate) fn present_commits(git: &GitRepo, oids: &[String]) -> Result<HashSet<String>> {
     if oids.is_empty() {
         return Ok(HashSet::new());
     }
@@ -98,6 +125,25 @@ pub fn export(repo: &Repo, git: &GitRepo, branch: &str) -> Result<ExportOutcome>
 
 /// [`export`] of concurv branch `from` instead of `main` (ADR 0007).
 pub fn export_from(repo: &Repo, git: &GitRepo, from: &str, branch: &str) -> Result<ExportOutcome> {
+    export_with(
+        repo,
+        git,
+        &ExportOptions {
+            from: from.to_owned(),
+            branch: branch.to_owned(),
+            tags: false,
+        },
+    )
+}
+
+/// Export the history of concurv branch `opts.from` and move Git branch
+/// `opts.branch` to it by compare-and-swap; with `opts.tags`, also write the
+/// tags that name snapshots of that history, in the same reference
+/// transaction (ADR 0008 §6). A Git branch with commits outside the history,
+/// or a Git tag of the same name at another commit, refuses the export
+/// (`CONCURV_DIVERGED`) and no Git reference changes.
+pub fn export_with(repo: &Repo, git: &GitRepo, opts: &ExportOptions) -> Result<ExportOutcome> {
+    let (from, branch) = (opts.from.as_str(), opts.branch.as_str());
     let refname = format!("refs/heads/{branch}");
     if !git.run(["check-ref-format", &refname])?.status.success() {
         return Err(ConcurvError::new(
@@ -247,35 +293,84 @@ pub fn export_from(repo: &Repo, git: &GitRepo, from: &str, branch: &str) -> Resu
 
     // Compare-and-swap the Git branch; never move it backwards or sideways.
     let previous = git.resolve(&refname)?;
-    let mut updated = false;
-    if previous.as_deref() != Some(tip.as_str()) {
-        if let Some(old) = &previous
-            && !git.is_ancestor(old, &tip)?
-        {
-            return Err(ConcurvError::new(
-                ErrorCode::Diverged,
-                format!(
-                    "Git branch `{branch}` is at {old}, which is not part of concurv's `{from}` history; \
-                     nothing was changed in Git. Integrate those Git commits first, or export to a new branch"
-                ),
-            ));
+    let move_branch = previous.as_deref() != Some(tip.as_str());
+    if move_branch
+        && let Some(old) = &previous
+        && !git.is_ancestor(old, &tip)?
+    {
+        return Err(ConcurvError::new(
+            ErrorCode::Diverged,
+            format!(
+                "Git branch `{branch}` is at {old}, which is not part of concurv's `{from}` history; \
+                 nothing was changed in Git. Integrate those Git commits first (`concurv git import \
+                 --into <new branch>`, then `concurv merge`), or export to a new branch"
+            ),
+        ));
+    }
+
+    // Tags: created if missing, kept if equal, refused if different.
+    let mut tags = Vec::new();
+    let mut tags_skipped = Vec::new();
+    let mut conflicts = Vec::new();
+    if opts.tags {
+        for (name, target) in &op.view.tags {
+            let in_history = graph.contains_key(target);
+            let Some(commit) = map.get(target).filter(|_| in_history) else {
+                tags_skipped.push(name.clone());
+                continue;
+            };
+            let tag_ref = format!("refs/tags/{name}");
+            match git.resolve(&tag_ref)? {
+                None => tags.push(TagExport {
+                    name: name.clone(),
+                    commit: commit.to_owned(),
+                    created: true,
+                }),
+                Some(c) if c == commit => tags.push(TagExport {
+                    name: name.clone(),
+                    commit: commit.to_owned(),
+                    created: false,
+                }),
+                Some(c) => conflicts.push(format!("{name} (Git: {c}, concurv: {commit})")),
+            }
         }
-        let old = match &previous {
-            Some(o) => o.clone(),
-            None => git.zero_oid()?,
-        };
-        git.run_ok(
-            [
-                "update-ref",
-                "-m",
-                "concurv git export",
-                &refname,
-                &tip,
-                &old,
-            ],
-            "update the branch",
-        )?;
-        updated = true;
+    }
+    if !conflicts.is_empty() {
+        return Err(ConcurvError::new(
+            ErrorCode::Diverged,
+            format!(
+                "Git already has tag(s) with these names at other commits: {}; tags never move, so \
+                 nothing was changed in Git (no branch or tag). Rename or delete the tag on one side",
+                conflicts.join(", ")
+            ),
+        ));
+    }
+
+    // One transaction for the branch and every new tag: all or nothing.
+    let mut commands = String::new();
+    if move_branch {
+        match &previous {
+            Some(old) => commands.push_str(&format!("update {refname} {tip} {old}\n")),
+            None => commands.push_str(&format!("create {refname} {tip}\n")),
+        }
+    }
+    for t in tags.iter().filter(|t| t.created) {
+        commands.push_str(&format!("create refs/tags/{} {}\n", t.name, t.commit));
+    }
+    if !commands.is_empty() {
+        let mut child = git.spawn(["update-ref", "-m", "concurv git export", "--stdin"])?;
+        let wrote = child
+            .stdin
+            .take()
+            .ok_or_else(|| ConcurvError::internal("git stdin unavailable"))
+            .and_then(|mut stdin| {
+                stdin
+                    .write_all(commands.as_bytes())
+                    .map_err(|e| ConcurvError::io(e, "write to git", git.path()))
+            });
+        let finished = finish(child, "update-ref (branch and tags)");
+        wrote?;
+        finished?;
     }
     Ok(ExportOutcome {
         branch: branch.to_owned(),
@@ -283,6 +378,8 @@ pub fn export_from(repo: &Repo, git: &GitRepo, from: &str, branch: &str) -> Resu
         previous,
         exported: todo.len(),
         reused,
-        updated,
+        updated: move_branch,
+        tags,
+        tags_skipped,
     })
 }
