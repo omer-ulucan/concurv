@@ -5,6 +5,13 @@ version 1 and the CLI/JSON contract are not frozen until 0.1.0 (see ADR 0003).
 
 ## [Unreleased]
 
+## [0.1.0-alpha.4] — 2026-11-12
+
+Fourth pre-release (`docs/releases/v0.1.0-alpha.4.md`): branch delete and
+rename, workspace remove, tags at the relay, comparison harness. Built and
+tested by the local CI gate on Windows and Linux; no macOS binary (build
+from source). No license is asserted yet.
+
 ### Added
 - **`concurv branch delete <name>`** and **`concurv branch rename <old>
   <new>`** (backlog P2-8, ADR 0007 §9). Delete refuses tracked, protected
