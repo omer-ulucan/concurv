@@ -505,3 +505,34 @@ fn killed_relay_and_killed_clients_never_lose_acknowledged_work() {
         "the test must kill processes"
     );
 }
+
+/// Tags through a relay process (ADR 0008 §7): `push --tags` JSON, a clone
+/// that receives them, and a refused push of a re-pointed tag (exit 42).
+#[test]
+fn tags_through_a_relay_process() {
+    let s = Setup::new();
+    let a = s.clone("a", "alice");
+    let s1 = save_publish(&a, "f.txt", "1\n", "one");
+    ok(CONCURV, &a, &["tag", "create", "v1"]);
+    // `push --tags` publishes main first, then creates the tag there.
+    let d = ok(CONCURV, &a, &["push", "--tags"]);
+    assert_eq!(d["result"], "pushed");
+    assert_eq!(d["tags"]["created"][0]["name"], "v1");
+    assert_eq!(d["tags"]["created"][0]["target"], s1.to_hex().as_str());
+    let b = s.clone("b", "bob");
+    let (_, v) = run(CONCURV, &b, &["tag", "list"]);
+    assert_eq!(v["data"]["tags"][0]["name"], "v1");
+    let d = ok(CONCURV, &b, &["fetch"]);
+    assert_eq!(d["tags"][0]["action"], "unchanged");
+
+    let s2 = save_publish(&a, "f.txt", "2\n", "two");
+    ok(CONCURV, &a, &["push"]);
+    ok(CONCURV, &a, &["tag", "delete", "v1"]);
+    ok(CONCURV, &a, &["tag", "create", "v1", "--at", &s2.to_hex()]);
+    let (code, v) = run(CONCURV, &a, &["push", "--tags"]);
+    assert_eq!(code, 42, "{v}");
+    let r = s.clone("r", "reader");
+    ok(CONCURV, &r, &["tag", "create", "r1"]);
+    let (code, _) = run(CONCURV, &r, &["push", "--tags"]);
+    assert_eq!(code, 74, "a read-only device cannot create tags");
+}

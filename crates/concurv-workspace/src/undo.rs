@@ -80,6 +80,13 @@ pub fn undo(repo: &Repo) -> Result<UndoOutcome> {
                 "branches are shared and others may already use it; deleting branches is not \n                 supported yet",
             ));
         }
+        kind @ ("branch-delete" | "branch-rename") => {
+            return Err(refuse(
+                kind,
+                "branches are shared and others may already rely on the change; recreate or rename \
+                 the branch instead (the operation log shows its head)",
+            ));
+        }
         kind @ ("tag-create" | "tag-delete") => {
             return Err(refuse(
                 kind,

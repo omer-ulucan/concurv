@@ -15,6 +15,7 @@ pub use client::{ConnectOptions, Connection, RelayUrl};
 pub use relay::{Relay, RelayOptions, Scope};
 pub use server::{Server, ServerHandle, ServerOptions};
 pub use sync::{
-    BranchAction, BranchReport, CloneOutcome, FetchOutcome, PushOutcome, PushResult, SyncOptions,
-    clone_repo, fetch, push,
+    BranchAction, BranchReport, CloneOutcome, FetchOutcome, PushOutcome, PushResult,
+    PushTagsOutcome, SyncOptions, TagAction, TagReport, clone_repo, fetch, plan_fetched_tags, push,
+    push_tags,
 };

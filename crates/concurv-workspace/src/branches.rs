@@ -9,7 +9,9 @@
 //! heads and branch heads. `create` only adds a reference; `switch` refuses
 //! if the workspace head would become reachable from nothing.
 //!
-//! Deleting and renaming branches are not implemented (roadmap).
+//! `delete` refuses branches that are tracked, protected, or whose head no
+//! other reference contains; `rename` moves the name and every workspace
+//! tracking it in one operation (ADR 0007 §9).
 
 use concurv_core::{ConcurvError, ErrorCode, OperationId, Result, SnapshotId};
 use concurv_objects::Operation;
@@ -305,5 +307,191 @@ pub fn switch(repo: &Repo, name: &str) -> Result<SwitchOutcome> {
         deleted: out.deleted,
         resumed,
         operation: Some(out.operation),
+    })
+}
+
+/// Result of `branch delete` or `branch rename`.
+#[derive(Debug)]
+pub struct RefOutcome {
+    /// The branch (its old name for a rename).
+    pub name: String,
+    /// The new name (rename only).
+    pub new_name: Option<String>,
+    /// Its head, unchanged.
+    pub head: SnapshotId,
+    /// Workspaces that now track the new name (rename only), sorted.
+    pub workspaces: Vec<String>,
+    /// Operation recorded.
+    pub operation: OperationId,
+}
+
+/// Refuse to touch a branch that its own policy protects (RFC 0005): a
+/// protected branch moves only by checked publication, so it can be
+/// neither deleted nor renamed away (and then re-created elsewhere).
+fn refuse_if_protected(repo: &Repo, name: &str, head: SnapshotId, what: &str) -> Result<()> {
+    if let crate::policy::Protection::Required { .. } =
+        crate::policy::protection(repo.store(), name, Some(head))?
+    {
+        return Err(ConcurvError::new(
+            ErrorCode::PolicyFail,
+            format!(
+                "`{name}` is protected by the `concurv-policy.json` of its head; a protected branch \
+                 cannot be {what} (change the policy through a checked publication first). \
+                 Nothing was changed"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn not_found(name: &str) -> ConcurvError {
+    ConcurvError::new(
+        ErrorCode::NotFound,
+        format!("no branch named `{name}` (see `concurv branch list`)"),
+    )
+}
+
+/// True if `target` is reachable from a reference other than branch `except`:
+/// another branch, a tag, a workspace head or a remote-tracking reference.
+fn kept_elsewhere(
+    repo: &Repo,
+    view: &concurv_objects::View,
+    except: &str,
+    target: SnapshotId,
+) -> Result<bool> {
+    let mut roots: Vec<SnapshotId> = view
+        .branches
+        .iter()
+        .filter(|(n, _)| n.as_str() != except)
+        .map(|(_, h)| *h)
+        .collect();
+    roots.extend(view.tags.values().copied());
+    roots.extend(view.workspaces.values().filter_map(|w| w.head));
+    roots.extend(
+        view.remotes
+            .values()
+            .flat_map(|m| m.values().map(|r| r.head)),
+    );
+    roots.sort();
+    roots.dedup();
+    for r in roots {
+        if is_ancestor(repo.store(), target, r)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Delete branch `name` (backlog P2-8, ADR 0007 §9). Refused, with
+/// nothing changed, if: a workspace tracks it (`CONCURV_INVALID_ARGUMENT`;
+/// switch those first); its policy protects it (`CONCURV_POLICY_FAIL`); or
+/// its head is reachable from no other branch, tag, workspace head or
+/// remote-tracking reference (`CONCURV_DIVERGED`, invariant B1: tag it or
+/// merge it first). Only the name goes: the snapshots stay, and the
+/// operation log records the old head.
+pub fn delete(repo: &Repo, name: &str) -> Result<RefOutcome> {
+    let lock = repo.lock()?;
+    let (op_id, op, _) = repo.current()?;
+    let head = *op.view.branches.get(name).ok_or_else(|| not_found(name))?;
+    let tracking: Vec<String> = op
+        .view
+        .workspaces
+        .values()
+        .filter(|w| w.branch.as_deref() == Some(name))
+        .map(|w| w.name.clone())
+        .collect();
+    if !tracking.is_empty() {
+        return Err(ConcurvError::new(
+            ErrorCode::InvalidArgument,
+            format!(
+                "workspace(s) {} track `{name}`; switch them to another branch first. Nothing was \
+                 changed",
+                tracking.join(", ")
+            ),
+        ));
+    }
+    refuse_if_protected(repo, name, head, "deleted")?;
+    if !kept_elsewhere(repo, &op.view, name, head)? {
+        return Err(ConcurvError::new(
+            ErrorCode::Diverged,
+            format!(
+                "`{name}` has snapshots that no other branch, tag, workspace or remote-tracking \
+                 reference contains; deleting it would leave them on no reference. Merge it, or keep \
+                 them with `concurv tag create <tag> --at {name}`, then delete. Nothing was changed"
+            ),
+        ));
+    }
+    let mut view = op.view.clone();
+    view.branches.remove(name);
+    let new_op = Operation {
+        parents: vec![op_id],
+        timestamp_ms: repo.now_ms(),
+        device_id: repo.device_id(),
+        workspace_id: Some(repo.workspace_id()),
+        kind: "branch-delete".into(),
+        description: format!("delete branch {name} (was at {head})"),
+        backup: None,
+        undoes: None,
+        checked_out: None,
+        view,
+    };
+    let operation = repo.oplog().commit(&lock, &op_id, &new_op)?;
+    Ok(RefOutcome {
+        name: name.to_owned(),
+        new_name: None,
+        head,
+        workspaces: Vec::new(),
+        operation,
+    })
+}
+
+/// Rename branch `old` to `new` (backlog P2-8, ADR 0007 §9): the head does
+/// not move, and every workspace tracking `old` tracks `new` afterwards, in
+/// the same operation (no file changes). `new` follows the rules of new
+/// branch names (a change of case only is allowed). Refused if `old` is
+/// protected by its policy. Remote-tracking references keep the name the
+/// relay uses.
+pub fn rename(repo: &Repo, old: &str, new: &str) -> Result<RefOutcome> {
+    let lock = repo.lock()?;
+    let (op_id, op, _) = repo.current()?;
+    let head = *op.view.branches.get(old).ok_or_else(|| not_found(old))?;
+    if old == new {
+        return Err(ConcurvError::new(
+            ErrorCode::InvalidArgument,
+            format!("`{old}` already has that name; nothing was changed"),
+        ));
+    }
+    validate_new_branch_name(new, op.view.branches.keys().filter(|n| n.as_str() != old))?;
+    refuse_if_protected(repo, old, head, "renamed")?;
+    let mut view = op.view.clone();
+    view.branches.remove(old);
+    view.branches.insert(new.to_owned(), head);
+    let mut workspaces = Vec::new();
+    for w in view.workspaces.values_mut() {
+        if w.branch.as_deref() == Some(old) {
+            w.branch = Some(new.to_owned());
+            workspaces.push(w.name.clone());
+        }
+    }
+    workspaces.sort();
+    let new_op = Operation {
+        parents: vec![op_id],
+        timestamp_ms: repo.now_ms(),
+        device_id: repo.device_id(),
+        workspace_id: Some(repo.workspace_id()),
+        kind: "branch-rename".into(),
+        description: format!("rename branch {old} to {new} (at {head})"),
+        backup: None,
+        undoes: None,
+        checked_out: None,
+        view,
+    };
+    let operation = repo.oplog().commit(&lock, &op_id, &new_op)?;
+    Ok(RefOutcome {
+        name: old.to_owned(),
+        new_name: Some(new.to_owned()),
+        head,
+        workspaces,
+        operation,
     })
 }

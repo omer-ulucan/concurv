@@ -75,6 +75,9 @@ The client sends requests and reads one response each:
 | `missing {ids}` | `missing {ids}` | which of ≤ 4096 objects the relay lacks |
 | `upload {count}` | `ready {}`, then the client sends `count` object frames, then `stored {received}` | ≤ 10,000 per batch; a refusal comes before `ready`, so no frame is in flight |
 | `publish {request_id, branch, expected, proposed}` | `published {branch, head, seq, replayed}` | §6 |
+| `attest {id}` | `attested {id}` | since R4: RFC 0005 §7 (scope `attest`) |
+| `intents {device, intents}` | `intents {intents}` | since R5: RFC 0006 §2 |
+| `tags {create}` | `tags {tags: {name: snapshot}}` | since R6 (ADR 0008 §7): `create` = `null` reads; a map (scope `write`, ≤ 256 entries) first adds tags that do not exist, all or nothing: valid, non-colliding names, snapshots in the history of a published branch (else `CONCURV_OBJECT_MISSING`), an existing name only at the same snapshot (else `CONCURV_DIVERGED`). Stored in `tags.json`; at most 2048 per relay. Relays up to v0.1.0-alpha.3 end the session on it: clients then have no tags, as before |
 | `bye {}` | — | |
 | (any failure) | `error {code, message, observed?, seq?, missing[]}` | `code` is a stable error code (`docs/cli.md`) |
 
@@ -93,7 +96,7 @@ machines (ADR 0007 §8):
 | Kind | Stored | Moved by |
 |---|---|---|
 | Workspace state (files, workspace head, pending merge) | the workspace | local commands in that workspace; **never synced** |
-| Local branch reference `b` | the client's view, `branches` | local `publish` (CAS fast-forward), `fetch` fast-forward |
+| Local branch reference `b` | the client's view, `branches` | local `publish` (CAS fast-forward), `fetch` fast-forward, local `branch create`/`delete`/`rename` (ADR 0007 §9) |
 | Remote-tracking reference `remote/<r>/<b>` | the client's view, the separate map `remotes` (RFC 0001 §3.4), with the relay's `seq` | only `fetch` and `push` |
 | Authoritative published head of `b` | the relay's `state.json` | only the relay's CAS `publish` (§6) |
 
@@ -113,10 +116,14 @@ reference before the fetch, `R` the relay's head (implemented by
    rest). Remote-tracking references keep the relay's names.
 1. **Fetched history is preserved.** Objects are verified and adopted
    (§7), then `T := R`, whatever the relation of `L` and `R`.
-2. **Local references move only forward.** If `L` is missing or an ancestor
-   of `R`, `L := R` (`created` / `fast_forwarded`). Otherwise `L` stays
-   (`local_ahead`, `diverged`). A workspace integrates only through
-   `update` or `merge`; fetch never changes files or workspace heads.
+2. **Local references move only forward.** If `L` is an ancestor of `R`,
+   `L := R` (`fast_forwarded`); if `L` is missing and `T` was missing too
+   (a branch new to this repository), `L := R` (`created`). If `L` is
+   missing but `T` existed, the branch was deleted or renamed here (ADR
+   0007 §9): `L` is not recreated (`not_local`; `branch create <b> --at
+   remote/<r>/<b>` brings it back). Otherwise `L` stays (`local_ahead`,
+   `diverged`). A workspace integrates only through `update` or `merge`;
+   fetch never changes files or workspace heads.
 3. **No implicit publication.** `push` offers `publish {expected: R,
    proposed: L}` only if `R` is missing or an ancestor of `L`. If they
    diverged, nothing is published (`CONCURV_DIVERGED`, exit 42): a user or
@@ -136,6 +143,8 @@ reference before the fetch, `R` the relay's head (implemented by
    references, so no acknowledged snapshot becomes unreachable (ADR 0007
    B1). Fetch and push only add or move references forward. `remote
    remove` drops a remote's tracking references but no local branch.
+   (`branch delete` refuses to drop the only reference to a snapshot, ADR
+   0007 §9.)
 
 ## 6. Publish (relay side)
 
@@ -201,8 +210,9 @@ receiver already has.
   high availability. A relay is one directory; back it up like a
   repository (stop it, copy the directory).
 - Resuming inside a partially sent object; pack compression.
-- Branch deletion and renaming at the relay (backlog P2-8); protected
-  branches (R4, P2-9).
+- Branch deletion and renaming at the relay (local `branch delete` and
+  `rename` exist, ADR 0007 §9); deleting tags at the relay. (Protected
+  branches came with R4, tags with R6.)
 - Key rotation of the relay certificate (re-initialize and re-pin);
   per-device keys instead of bearer tokens; token expiry.
 - Awareness events and `--watch` (R5); verified publication (R4).

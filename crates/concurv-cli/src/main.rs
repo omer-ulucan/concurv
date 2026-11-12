@@ -201,6 +201,10 @@ enum Cmd {
         /// Branch to push (default: the branch this workspace tracks).
         #[arg(long)]
         branch: Option<String>,
+        /// Also create this repository's tags at the relay (those whose snapshot
+        /// it has; tags never move there either).
+        #[arg(long)]
+        tags: bool,
     },
     /// Create a repository from a relay and check out its default branch.
     Clone {
@@ -343,6 +347,19 @@ enum BranchCmd {
         /// Branch name.
         name: String,
     },
+    /// Delete a branch nobody tracks whose head another branch, tag, workspace
+    /// or remote-tracking reference still contains (the snapshots stay).
+    Delete {
+        /// Branch name.
+        name: String,
+    },
+    /// Rename a branch; workspaces tracking it follow (no file changes).
+    Rename {
+        /// Current name.
+        old: String,
+        /// New name.
+        new: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -435,6 +452,12 @@ impl Cmd {
             Cmd::Branch {
                 cmd: BranchCmd::Switch { .. },
             } => "branch switch",
+            Cmd::Branch {
+                cmd: BranchCmd::Delete { .. },
+            } => "branch delete",
+            Cmd::Branch {
+                cmd: BranchCmd::Rename { .. },
+            } => "branch rename",
             Cmd::Update { .. } => "update",
             Cmd::Merge { .. } => "merge",
             Cmd::Undo => "undo",
@@ -637,6 +660,10 @@ fn fetch_output(o: &concurv_sync::FetchOutcome) -> (Value, String) {
             concurv_sync::BranchAction::NameCollision => {
                 "not created: name collides with a local branch".to_owned()
             }
+            concurv_sync::BranchAction::NotLocal => format!(
+                "no local branch (deleted or renamed here); `remote/{}/{}` updated",
+                o.remote, r.branch
+            ),
         };
         human.push_str(&format!("  {}: {what}\n", r.branch));
         arr.push(json!({
@@ -653,12 +680,33 @@ fn fetch_output(o: &concurv_sync::FetchOutcome) -> (Value, String) {
     if o.branches.is_empty() {
         human.push_str("  (the relay has no published branches)\n");
     }
+    let mut tags = Vec::new();
+    for t in &o.tags {
+        if t.action != concurv_sync::TagAction::Unchanged {
+            human.push_str(&format!(
+                "  tag {}: {}{}\n",
+                t.name,
+                t.action.as_str().replace('_', " "),
+                t.note
+                    .as_ref()
+                    .map(|n| format!(" ({n})"))
+                    .unwrap_or_default()
+            ));
+        }
+        tags.push(json!({
+            "name": t.name,
+            "target": hex(t.target),
+            "action": t.action.as_str(),
+            "note": t.note,
+        }));
+    }
     (
         json!({
             "remote": o.remote,
             "relay": o.relay,
             "objects": o.objects,
             "branches": arr,
+            "tags": tags,
             "operation": o.operation.map(|s| s.to_hex()),
         }),
         human,
@@ -1136,10 +1184,19 @@ fn run(cli: Cli) -> Result<Output> {
             let (data, human) = fetch_output(&o);
             ok(data, human)
         }
-        Cmd::Push { remote, branch } => {
+        Cmd::Push {
+            remote,
+            branch,
+            tags,
+        } => {
             let repo = discover(&cwd)?;
             let remote = default_remote(&repo, remote)?;
             let o = concurv_sync::push(&repo, &remote, branch.as_deref(), &sync_opts())?;
+            let pushed_tags = if tags {
+                Some(concurv_sync::push_tags(&repo, &remote, &sync_opts())?)
+            } else {
+                None
+            };
             let short = |s: concurv_core::SnapshotId| s.to_hex()[..12].to_owned();
             let human = match o.result {
                 concurv_sync::PushResult::Pushed => format!(
@@ -1167,6 +1224,30 @@ fn run(cli: Cli) -> Result<Output> {
                     o.branch, o.remote, o.branch
                 ),
             };
+            let mut human = human;
+            if let Some(t) = &pushed_tags {
+                let names: Vec<&str> = t.created.iter().map(|(n, _)| n.as_str()).collect();
+                human.push_str(&format!(
+                    "\nTags: {} created{}, {} already there.",
+                    names.len(),
+                    if names.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({})", names.join(", "))
+                    },
+                    t.existing
+                ));
+                for (n, why) in &t.skipped {
+                    human.push_str(&format!("\nTag `{n}` not pushed: {why}."));
+                }
+            }
+            let tags_json = pushed_tags.as_ref().map(|t| {
+                json!({
+                    "created": t.created.iter().map(|(n, s)| json!({ "name": n, "target": s.to_hex() })).collect::<Vec<_>>(),
+                    "existing": t.existing,
+                    "skipped": t.skipped.iter().map(|(n, why)| json!({ "name": n, "reason": why })).collect::<Vec<_>>(),
+                })
+            });
             ok(
                 json!({
                     "remote": o.remote,
@@ -1174,6 +1255,7 @@ fn run(cli: Cli) -> Result<Output> {
                     "from": o.from.map(|s| s.to_hex()),
                     "head": o.head.to_hex(),
                     "seq": o.seq,
+                    "tags": tags_json,
                     "result": o.result.as_str(),
                     "objects": o.objects,
                     "replayed": o.replayed,
@@ -2034,6 +2116,46 @@ fn cmd_branch(repo: &Repo, cmd: BranchCmd) -> Result<Output> {
                     o.name,
                     o.name
                 ),
+            )
+        }
+        BranchCmd::Delete { name } => {
+            let o = branches::delete(repo, &name)?;
+            ok(
+                json!({
+                    "branch": o.name,
+                    "head": o.head.to_hex(),
+                    "operation": o.operation.to_hex(),
+                }),
+                format!(
+                    "Deleted branch `{}` (it was at {}; the snapshots stay). To restore it: \
+                     `concurv branch create {} --at {}`.",
+                    o.name, o.head, o.name, o.head
+                ),
+            )
+        }
+        BranchCmd::Rename { old, new } => {
+            let o = branches::rename(repo, &old, &new)?;
+            let mut human = format!(
+                "Renamed branch `{}` to `{}` (at {}).",
+                o.name,
+                new,
+                &o.head.to_hex()[..12]
+            );
+            if !o.workspaces.is_empty() {
+                human.push_str(&format!(
+                    "\nWorkspace(s) now tracking `{new}`: {}.",
+                    o.workspaces.join(", ")
+                ));
+            }
+            ok(
+                json!({
+                    "branch": o.name,
+                    "new_name": o.new_name,
+                    "head": o.head.to_hex(),
+                    "workspaces": o.workspaces,
+                    "operation": o.operation.to_hex(),
+                }),
+                human,
             )
         }
         BranchCmd::Switch { name } => {

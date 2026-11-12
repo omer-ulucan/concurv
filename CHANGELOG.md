@@ -5,6 +5,28 @@ version 1 and the CLI/JSON contract are not frozen until 0.1.0 (see ADR 0003).
 
 ## [Unreleased]
 
+### Added
+- **`concurv branch delete <name>`** and **`concurv branch rename <old>
+  <new>`** (backlog P2-8, ADR 0007 §9). Delete refuses tracked, protected
+  (exit 44) and unmerged branches (exit 42: work that no other branch,
+  tag, workspace or remote-tracking reference contains); only the name
+  goes and the head is printed. Rename moves the workspaces tracking the
+  branch in the same operation. `undo` refuses both.
+- `--at` (`branch create`, `tag create`) also accepts a remote-tracking
+  reference, `remote/<remote>/<branch>`.
+- **Tags at the relay** (ADR 0008 §7): `concurv push --tags` creates this
+  repository's tags at the relay (create-only, all or nothing, for
+  snapshots of published history; scope `write`); `fetch` and `clone`
+  create the relay's tags that are missing here and never move a local
+  tag (conflicts are reported). New protocol request `tags`; relays up to
+  v0.1.0-alpha.3 do not answer it, and then there are no tags, as before.
+
+### Changed
+- `fetch` no longer recreates a local branch that was deleted or renamed
+  here (its remote-tracking reference still follows the relay); the new
+  branch action is `not_local`. Branches new to this repository are still
+  created.
+
 ## [0.1.0-alpha.3] — 2026-11-12
 
 Third pre-release (`docs/releases/v0.1.0-alpha.3.md`): protected branches

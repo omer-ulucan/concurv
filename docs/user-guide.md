@@ -310,9 +310,26 @@ stricter in a few places so names work on every OS:
 - the first parts `refs`, `remote` and `remotes` are reserved;
 - no two branches that differ only in case, and not both `x` and `x/y`.
 
-Not supported yet: deleting and renaming branches. (Protected branches:
-§8b.) `undo` cannot reverse `branch create`: branches are shared, and
-someone may already be using it.
+**Deleting and renaming** (ADR 0007 §9):
+
+```console
+$ concurv branch rename feat/x feature/x   # workspaces on feat/x follow; no files change
+$ concurv branch delete feature/x          # only the name goes; the snapshots stay
+```
+
+- `delete` refuses while a workspace tracks the branch (switch it first),
+  and refuses a branch whose work no other branch, tag, workspace or
+  remote-tracking reference contains (exit 42): merge it, or keep it with
+  `concurv tag create archive/x --at feature/x`, then delete. The output
+  prints the head, so `concurv branch create <name> --at <id>` restores it.
+- Protected branches (§8b) can be neither deleted nor renamed (exit 44).
+- Both are local: a relay keeps its branch. The next `fetch` does not bring
+  back a branch you deleted or renamed; it only updates
+  `remote/<relay>/<branch>` (`concurv branch create <b> --at
+  remote/origin/<b>` brings it back). After a rename, `concurv push --branch
+  <new>` publishes the new name.
+- `undo` cannot reverse `branch create`, `delete` or `rename`: branches are
+  shared, and someone may already be using them.
 
 **Words used in this guide.** Your *workspace state* (files, head, merge in
 progress) is private. A *branch* here is a reference shared by all
@@ -344,8 +361,11 @@ $ concurv tag delete v0.9                 # prints where it was; the snapshot st
 - The first tag upgrades the repository to **format 4**; builds older than
   this one cannot open it afterwards.
 - Tags travel to and from Git with `git export --tags` and `git import
-  --tags` (§9). Relays do not exchange tags yet: create them on each
-  machine, or go through Git.
+  --tags` (§9), and through a relay: `concurv push --tags` creates your
+  tags there (only for snapshots the relay has: push the branch first),
+  and `fetch` (or `clone`) brings the relay's tags. A relay never moves a
+  tag either: if it has the name elsewhere, `push --tags` is refused, and
+  `fetch` keeps your local tag and reports the conflict.
 
 ## 5. Going back to an earlier snapshot
 
