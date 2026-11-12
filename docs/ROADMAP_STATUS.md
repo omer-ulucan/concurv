@@ -7,7 +7,7 @@ The plan itself (stages, gates, backlog, acceptance tests) lives in
 
 | Stage | Status | Evidence / blockers |
 |---|---|---|
-| R0 — RFC & competitive reproduction | **in progress** | Done: RFC 0001–0003, ADR 0001–0003, threat model, comparison plan with exact expected behaviour for S1–S10. **Open gate items:** competitor harness (`bench/scenarios/`) not built; **no** Git/jj/but/gitta/Fossil/Pijul scenario reproduced. |
+| R0 — RFC & competitive reproduction | **in progress** | Done: RFCs and ADRs, threat model, comparison plan; **harness built** (`bench/scenarios/`, 2026-11-12) and **Git reproduced** for S04, S05, S09, S10, S12 on Windows and Linux with recorded versions (`bench/results/`). **Open gate item:** at least one competitor besides Git (jj scripts are written but jj is not installed; installing it needs the owner) |
 | R1 — Native local VCS kernel | **gate passed** (2026-11-01) | CI run [41350688459](https://github.com/omer-ulucan/concurv/actions/runs/41350688459) on `main` @ `9b8ed23`: all gate checks pass on Linux, macOS and Windows. See evidence below. |
 | R1.5 — Daily VCS usability & safety | **gate passed** (2026-11-01) | CI run [41366633305](https://github.com/omer-ulucan/concurv/actions/runs/41366633305) on `main` @ `19ce0ed`: ignores (ADR 0004), ignored-file safety, `check-ignore`, benchmark, stat cache (ADR 0005), diff and case-collision tests, green on Linux, macOS and Windows. See "R1.5 evidence" below |
 | R2 — Private workspaces + concurrency | **gate passed** (2026-11-01) | CI run [41359891403](https://github.com/omer-ulucan/concurv/actions/runs/41359891403) on `main` @ `0689e96`: all four slices (RFC 0004, ADR 0002) green on Linux, macOS and Windows; 2/5/10 concurrent writers and killed-process tests pass. Git tags not supported (scoped). See "R2 evidence" below. |
@@ -84,7 +84,7 @@ What the gate does **not** prove (still true, by design of the tests):
 ## Next
 
 R1, R1.5, R2, R3, R4 and R5 are complete; R2.5 awaits the owner's final
-acceptance of ADR 0007; R0 (competitor harness) remains open. R6 is
+acceptance of ADR 0007; R0 needs one competitor run besides Git (the harness exists). R6 is
 implemented except for its two owner- or hardware-bound items: the LICENSE
 (the owner's decision) and macOS release builds (hosted CI or a Mac). After
 that: R7 items, each against a measured baseline.
