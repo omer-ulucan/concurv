@@ -197,6 +197,9 @@ impl Writer {
     fn u32(&mut self, v: u32) {
         self.0.extend_from_slice(&v.to_be_bytes());
     }
+    fn u64(&mut self, v: u64) {
+        self.0.extend_from_slice(&v.to_be_bytes());
+    }
     fn i64(&mut self, v: i64) {
         self.0.extend_from_slice(&v.to_be_bytes());
     }
@@ -254,6 +257,11 @@ impl<'a> Reader<'a> {
         let b = self.take(4)?;
         Ok(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
     }
+    fn u64(&mut self) -> Result<u64> {
+        let mut a = [0u8; 8];
+        a.copy_from_slice(self.take(8)?);
+        Ok(u64::from_be_bytes(a))
+    }
     fn i64(&mut self) -> Result<i64> {
         let mut a = [0u8; 8];
         a.copy_from_slice(self.take(8)?);
@@ -290,6 +298,9 @@ impl<'a> Reader<'a> {
             1 => Ok(true),
             other => Err(corrupt(format!("invalid boolean byte {other}"))),
         }
+    }
+    fn at_end(&self) -> bool {
+        self.pos == self.buf.len()
     }
     fn finish(self) -> Result<()> {
         if self.pos != self.buf.len() {
@@ -518,6 +529,17 @@ pub struct WorkspaceView {
     pub merge: Option<ConflictId>,
 }
 
+/// A remote-tracking reference: the head of one branch as this repository
+/// last observed it at a relay (RFC 0003 §5). Moved only by `fetch` and
+/// `push`; never by local commands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RemoteHead {
+    /// The relay's published head.
+    pub head: SnapshotId,
+    /// The relay's publication sequence number for that branch.
+    pub seq: u64,
+}
+
 /// Complete mutable repository state as of one operation.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct View {
@@ -525,6 +547,26 @@ pub struct View {
     pub branches: BTreeMap<String, SnapshotId>,
     /// Workspace → pointers.
     pub workspaces: BTreeMap<WorkspaceId, WorkspaceView>,
+    /// Remote name → branch name → remote-tracking reference (since R3,
+    /// repository format 2). A separate map: never part of `branches`.
+    /// Every remote listed has at least one branch.
+    pub remotes: BTreeMap<String, BTreeMap<String, RemoteHead>>,
+}
+
+/// Tag of the view extension that carries [`View::remotes`] (RFC 0001 §3.4).
+const VIEW_EXT_REMOTES: u8 = 1;
+
+/// Validate a remote name: the rules of workspace names (1–64 characters
+/// of `[A-Za-z0-9._-]`, not starting with `.` or `-`).
+pub fn validate_remote_name(name: &str) -> Result<()> {
+    validate_workspace_name(name).map_err(|_| {
+        ConcurvError::new(
+            ErrorCode::InvalidArgument,
+            format!(
+                "invalid remote name {name:?}: use 1-64 characters of A-Z a-z 0-9 . _ -, not starting with . or -"
+            ),
+        )
+    })
 }
 
 /// Validate a workspace name: 1–64 characters of `[A-Za-z0-9._-]`, not
@@ -664,6 +706,28 @@ impl Operation {
                 None => w.u8(0),
             }
         }
+        // Extension (since R3): present only when there are remote-tracking
+        // references, so operations without them keep their exact bytes.
+        if !self.view.remotes.is_empty() {
+            w.u8(VIEW_EXT_REMOTES);
+            w.count(self.view.remotes.len(), MAX_TREE_ENTRIES, "remotes")?;
+            for (remote, branches) in &self.view.remotes {
+                validate_remote_name(remote)?;
+                if branches.is_empty() {
+                    return Err(ConcurvError::internal(format!(
+                        "remote {remote:?} has no branches in the view"
+                    )));
+                }
+                w.string(remote)?;
+                w.count(branches.len(), MAX_TREE_ENTRIES, "remote branches")?;
+                for (name, rh) in branches {
+                    validate_branch_name(name)?;
+                    w.string(name)?;
+                    w.id(&rh.head.object_id());
+                    w.u64(rh.seq);
+                }
+            }
+        }
         Ok(w.0)
     }
 
@@ -747,6 +811,13 @@ impl Operation {
         }
         check_unique_names(view.workspaces.values().map(|w| w.name.as_str()))
             .map_err(|e| corrupt(e.message))?;
+        if !r.at_end() {
+            let tag = r.u8()?;
+            if tag != VIEW_EXT_REMOTES {
+                return Err(corrupt(format!("unknown view extension {tag}")));
+            }
+            view.remotes = decode_remotes(&mut r)?;
+        }
         r.finish()?;
         Ok(Self {
             parents,
@@ -761,6 +832,50 @@ impl Operation {
             view,
         })
     }
+}
+
+/// Decode the remotes extension: non-empty, strictly sorted remotes, each
+/// with a non-empty, strictly sorted branch map.
+fn decode_remotes(r: &mut Reader<'_>) -> Result<BTreeMap<String, BTreeMap<String, RemoteHead>>> {
+    let mut remotes = BTreeMap::new();
+    let n = r.count(MAX_TREE_ENTRIES, "remotes")?;
+    if n == 0 {
+        return Err(corrupt("empty remotes extension"));
+    }
+    let mut last: Option<String> = None;
+    for _ in 0..n {
+        let remote = r.string()?;
+        validate_remote_name(&remote).map_err(|e| corrupt(e.message))?;
+        if last
+            .as_ref()
+            .is_some_and(|l| l.as_bytes() >= remote.as_bytes())
+        {
+            return Err(corrupt("remotes are not strictly sorted"));
+        }
+        last = Some(remote.clone());
+        let nb = r.count(MAX_TREE_ENTRIES, "remote branches")?;
+        if nb == 0 {
+            return Err(corrupt(format!("remote {remote:?} has no branches")));
+        }
+        let mut branches = BTreeMap::new();
+        let mut last_b: Option<String> = None;
+        for _ in 0..nb {
+            let name = r.string()?;
+            validate_branch_name(&name).map_err(|e| corrupt(e.message))?;
+            if last_b
+                .as_ref()
+                .is_some_and(|l| l.as_bytes() >= name.as_bytes())
+            {
+                return Err(corrupt("remote branches are not strictly sorted"));
+            }
+            let head = SnapshotId::from_object_id(r.id()?);
+            let seq = r.u64()?;
+            last_b = Some(name.clone());
+            branches.insert(name, RemoteHead { head, seq });
+        }
+        remotes.insert(remote, branches);
+    }
+    Ok(remotes)
 }
 
 /// Convenience: typed id of a blob payload.

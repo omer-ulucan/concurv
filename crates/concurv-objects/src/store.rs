@@ -161,6 +161,131 @@ impl ObjectStore {
         Ok(BlobId::from_object_id(id))
     }
 
+    /// Receive one object from an untrusted peer (RFC 0003 §3.6). Exactly
+    /// `frame_len` bytes of `reader` hold its canonical encoding (header and
+    /// payload). The header is checked before anything is allocated or
+    /// written; the bytes are streamed to a temp file while hashing, and
+    /// the object is stored under the id computed from them, so a sender's
+    /// claims about ids are never trusted. Only blobs, trees and snapshots
+    /// travel between repositories; trees and snapshots are also fully
+    /// decoded. Blobs larger than `max_blob` are refused.
+    ///
+    /// An error while reading from `reader` is returned as `CONCURV_IO`
+    /// with the path `<transfer>`; nothing is stored in that case.
+    pub fn receive_object(
+        &self,
+        reader: &mut impl Read,
+        frame_len: u64,
+        max_blob: u64,
+    ) -> Result<(ObjectId, ObjectKind)> {
+        let what = Path::new("<transfer>");
+        if frame_len < HEADER_LEN as u64 {
+            return Err(ConcurvError::new(
+                ErrorCode::ObjectCorrupt,
+                "received object is shorter than an object header",
+            ));
+        }
+        let mut header = [0u8; HEADER_LEN];
+        reader
+            .read_exact(&mut header)
+            .map_err(|e| ConcurvError::io(e, "receive object", what))?;
+        let (kind, len) = decode_header(&header)?;
+        if !matches!(
+            kind,
+            ObjectKind::Blob | ObjectKind::Tree | ObjectKind::Snapshot
+        ) {
+            return Err(ConcurvError::new(
+                ErrorCode::WrongObjectKind,
+                format!("a {} object cannot be transferred", kind.name()),
+            ));
+        }
+        if Some(frame_len) != len.checked_add(HEADER_LEN as u64) {
+            return Err(ConcurvError::new(
+                ErrorCode::ObjectCorrupt,
+                "received object's declared length disagrees with its frame",
+            ));
+        }
+        if kind != ObjectKind::Blob {
+            let mut payload = vec![0u8; usize::try_from(len).unwrap_or(usize::MAX)];
+            reader
+                .read_exact(&mut payload)
+                .map_err(|e| ConcurvError::io(e, "receive object", what))?;
+            match kind {
+                ObjectKind::Tree => drop(Tree::decode(&payload)?),
+                _ => drop(Snapshot::decode(&payload)?),
+            }
+            return Ok((self.write_object(kind, &payload)?, kind));
+        }
+        if len > max_blob {
+            return Err(ConcurvError::new(
+                ErrorCode::LimitExceeded,
+                format!("received blob of {len} bytes exceeds the limit of {max_blob} bytes"),
+            ));
+        }
+        let mut t = TempFile::create(&self.tmp, "recv", &self.faults)?;
+        let mut hasher = ObjectHasher::new();
+        hasher.update(&header);
+        t.write(&header)?;
+        let mut buf = vec![0u8; CHUNK];
+        let mut left = len;
+        while left > 0 {
+            let want = usize::try_from(left.min(CHUNK as u64)).unwrap_or(CHUNK);
+            reader
+                .read_exact(&mut buf[..want])
+                .map_err(|e| ConcurvError::io(e, "receive object", what))?;
+            hasher.update(&buf[..want]);
+            t.write(&buf[..want])?;
+            left -= want as u64;
+        }
+        t.sync()?;
+        let id = hasher.finalize();
+        if !self.dedup(&id)? {
+            self.promote(t, &id)?;
+        }
+        Ok((id, kind))
+    }
+
+    /// Move object `id` from `staging` (a store on the same filesystem, such
+    /// as a temp session that received a transfer) into this store, durably.
+    /// A no-op if a valid copy is already here. The caller must have checked
+    /// the object's graph closure (RFC 0003 §3.6) and must adopt referenced
+    /// objects before the objects referencing them.
+    pub fn adopt(&self, staging: &ObjectStore, id: &ObjectId) -> Result<()> {
+        if self.dedup(id)? {
+            return Ok(());
+        }
+        let dest = self.path_for(id);
+        let fan = dest
+            .parent()
+            .ok_or_else(|| ConcurvError::internal("object path has no parent"))?;
+        create_dir_durable(fan, &self.faults)?;
+        rename_durable(&staging.path_for(id), &dest, &self.faults)
+    }
+
+    /// Open an object for sending: its file and total length (header plus
+    /// payload). The header is checked; the content is verified by the
+    /// receiver, which recomputes the id.
+    pub fn open_raw(&self, id: &ObjectId) -> Result<(File, u64)> {
+        let (mut file, path) = self.open(id)?;
+        let mut header = [0u8; HEADER_LEN];
+        let got = read_full(&mut file, &mut header)
+            .map_err(|e| ConcurvError::io(e, "read object", &path))?;
+        let (_, len) = decode_header(&header[..got]).map_err(|e| ctx(e, id))?;
+        let size = file
+            .metadata()
+            .map_err(|e| ConcurvError::io(e, "inspect object", &path))?
+            .len();
+        let total = len + HEADER_LEN as u64;
+        if size != total {
+            return Err(ConcurvError::new(
+                ErrorCode::ObjectCorrupt,
+                format!("object {id} has {size} bytes, its header declares {total}"),
+            ));
+        }
+        let (file, _) = self.open(id)?;
+        Ok((file, total))
+    }
+
     /// True if a valid copy of `id` is stored (fully re-verified). A corrupt
     /// copy is moved to quarantine and `false` is returned, so the caller
     /// writes the object again (self-healing).

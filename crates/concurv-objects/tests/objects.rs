@@ -325,6 +325,7 @@ fn sample_operation() -> Operation {
         view: View {
             branches,
             workspaces,
+            remotes: BTreeMap::new(),
         },
     }
 }

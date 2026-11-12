@@ -50,6 +50,18 @@ pub enum ErrorCode {
     AmbiguousId,
     /// Operating-system I/O failure.
     Io,
+    /// The relay could not be reached, or the connection broke or timed out.
+    Network,
+    /// A peer sent a malformed or unexpected message.
+    Protocol,
+    /// Client and relay share no protocol version.
+    ProtocolMismatch,
+    /// The relay refused the credentials (unknown or revoked device token).
+    AuthFailed,
+    /// The device is authenticated but lacks the scope for this request.
+    PermissionDenied,
+    /// The relay's TLS certificate does not match the pinned fingerprint.
+    RelayIdentity,
     /// Internal invariant violation (a bug).
     Internal,
 }
@@ -78,8 +90,50 @@ impl ErrorCode {
             Self::NotFound => "CONCURV_NOT_FOUND",
             Self::AmbiguousId => "CONCURV_AMBIGUOUS_ID",
             Self::Io => "CONCURV_IO",
+            Self::Network => "CONCURV_NETWORK",
+            Self::Protocol => "CONCURV_PROTOCOL",
+            Self::ProtocolMismatch => "CONCURV_PROTOCOL_MISMATCH",
+            Self::AuthFailed => "CONCURV_AUTH_FAILED",
+            Self::PermissionDenied => "CONCURV_PERMISSION_DENIED",
+            Self::RelayIdentity => "CONCURV_RELAY_IDENTITY",
             Self::Internal => "CONCURV_INTERNAL",
         }
+    }
+
+    /// Every code, in declaration order.
+    pub const ALL: [ErrorCode; 27] = [
+        Self::InvalidArgument,
+        Self::NotARepo,
+        Self::AlreadyInitialized,
+        Self::UnsupportedFormat,
+        Self::DirtyWorkspace,
+        Self::ConcurrentModification,
+        Self::InvalidPath,
+        Self::UnsupportedFileType,
+        Self::ObjectCorrupt,
+        Self::ObjectMissing,
+        Self::WrongObjectKind,
+        Self::LimitExceeded,
+        Self::Locked,
+        Self::Diverged,
+        Self::Conflict,
+        Self::StaleHead,
+        Self::ExternalTool,
+        Self::NotFound,
+        Self::AmbiguousId,
+        Self::Io,
+        Self::Internal,
+        Self::Network,
+        Self::Protocol,
+        Self::ProtocolMismatch,
+        Self::AuthFailed,
+        Self::PermissionDenied,
+        Self::RelayIdentity,
+    ];
+
+    /// Parse the stable string form (e.g. from a relay's error message).
+    pub fn from_code_str(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|c| c.as_str() == s)
     }
 
     /// Process exit code for this error (documented in `docs/cli.md`).
@@ -104,6 +158,12 @@ impl ErrorCode {
             Self::ExternalTool => 60,
             Self::NotFound => 50,
             Self::AmbiguousId => 51,
+            Self::Network => 70,
+            Self::Protocol => 71,
+            Self::ProtocolMismatch => 72,
+            Self::AuthFailed => 73,
+            Self::PermissionDenied => 74,
+            Self::RelayIdentity => 75,
         }
     }
 }
@@ -168,33 +228,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn codes_are_unique() {
+    fn codes_are_unique_and_round_trip() {
         use std::collections::HashSet;
-        let all = [
-            ErrorCode::InvalidArgument,
-            ErrorCode::NotARepo,
-            ErrorCode::AlreadyInitialized,
-            ErrorCode::UnsupportedFormat,
-            ErrorCode::DirtyWorkspace,
-            ErrorCode::ConcurrentModification,
-            ErrorCode::InvalidPath,
-            ErrorCode::UnsupportedFileType,
-            ErrorCode::ObjectCorrupt,
-            ErrorCode::ObjectMissing,
-            ErrorCode::WrongObjectKind,
-            ErrorCode::LimitExceeded,
-            ErrorCode::Locked,
-            ErrorCode::StaleHead,
-            ErrorCode::Diverged,
-            ErrorCode::Conflict,
-            ErrorCode::ExternalTool,
-            ErrorCode::NotFound,
-            ErrorCode::AmbiguousId,
-            ErrorCode::Io,
-            ErrorCode::Internal,
-        ];
-        let names: HashSet<_> = all.iter().map(|c| c.as_str()).collect();
-        assert_eq!(names.len(), all.len());
-        assert!(all.iter().all(|c| c.exit_code() != 0));
+        let names: HashSet<_> = ErrorCode::ALL.iter().map(|c| c.as_str()).collect();
+        assert_eq!(names.len(), ErrorCode::ALL.len());
+        let exits: HashSet<_> = ErrorCode::ALL.iter().map(|c| c.exit_code()).collect();
+        assert!(!exits.contains(&0));
+        for c in ErrorCode::ALL {
+            assert_eq!(ErrorCode::from_code_str(c.as_str()), Some(c));
+        }
+        assert_eq!(ErrorCode::from_code_str("CONCURV_NOPE"), None);
     }
 }

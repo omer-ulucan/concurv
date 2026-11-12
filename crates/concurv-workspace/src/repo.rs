@@ -21,8 +21,14 @@ use concurv_refs::{OpHead, RepoLock};
 
 use crate::worktree::{FlatTree, flatten};
 
-/// Contents of `.concurv/format` in the primary workspace (holds the store).
+/// Contents of `.concurv/format` in the primary workspace (holds the store)
+/// of a repository that has never had a remote.
 pub const REPO_FORMAT: &str = "concurv-repo-format 1\n";
+/// Repository format 2 (since R3): operations may carry remote-tracking
+/// references (RFC 0001 §3.4 view extension). A repository is upgraded from
+/// format 1 when its first remote is added; builds that only know format 1
+/// refuse it with `CONCURV_UNSUPPORTED_FORMAT` instead of misreading it.
+pub const REPO_FORMAT_2: &str = "concurv-repo-format 2\n";
 /// Contents of `.concurv/format` in a secondary workspace.
 pub const WORKSPACE_FORMAT: &str = "concurv-workspace-format 1\n";
 /// Default branch created by `init`.
@@ -124,6 +130,10 @@ pub(crate) fn check_meta_dir(root: &Path) -> Result<Option<PathBuf>> {
     }
 }
 
+fn is_repo_format(format: &str) -> bool {
+    format == REPO_FORMAT || format == REPO_FORMAT_2
+}
+
 fn unsupported(format: &str, p: &Path) -> ConcurvError {
     ConcurvError::new(
         ErrorCode::UnsupportedFormat,
@@ -166,14 +176,14 @@ impl Repo {
             ));
         };
         let format = read_format(&ws_meta)?;
-        let (store_meta, primary) = if format == REPO_FORMAT {
+        let (store_meta, primary) = if is_repo_format(&format) {
             (ws_meta.clone(), true)
         } else if format == WORKSPACE_FORMAT {
             let p = ws_meta.join("store");
             let s = fs::read_to_string(&p).map_err(|e| ConcurvError::io(e, "read", &p))?;
             let store_meta = PathBuf::from(s.trim_end_matches('\n'));
             let real = fs::symlink_metadata(&store_meta).is_ok_and(|m| m.is_dir());
-            if !real || read_format(&store_meta).ok().as_deref() != Some(REPO_FORMAT) {
+            if !real || !read_format(&store_meta).is_ok_and(|f| is_repo_format(&f)) {
                 return Err(ConcurvError::new(
                     ErrorCode::NotARepo,
                     format!(
@@ -269,6 +279,7 @@ impl Repo {
             undoes: None,
             checked_out: None,
             view: View {
+                remotes: BTreeMap::new(),
                 branches: BTreeMap::new(),
                 workspaces,
             },
@@ -396,6 +407,40 @@ impl Repo {
     /// the working files) for materializing files. Requires the workspace lock.
     pub(crate) fn workspace_session(&self, _lock: &WorkspaceLock) -> Result<TempSession> {
         TempSession::create(&self.ws_meta.join(WORKSPACE_TMP), &self.opts.faults)
+    }
+
+    // ---------------------------------------------------------------- format
+
+    /// True if the repository is format 2 (may hold remote-tracking
+    /// references).
+    pub fn supports_remotes(&self) -> Result<bool> {
+        Ok(read_format(&self.store_meta)? == REPO_FORMAT_2)
+    }
+
+    /// Upgrade the repository from format 1 to format 2 (one atomic file
+    /// replacement, under the repository lock). Nothing else changes: every
+    /// format-1 operation is also a valid format-2 operation. Returns true if
+    /// this call upgraded it.
+    pub fn upgrade_for_remotes(&self, lock: &RepoLock) -> Result<bool> {
+        if lock.meta_dir() != self.store_meta {
+            return Err(ConcurvError::internal(
+                "lock belongs to a different repository",
+            ));
+        }
+        let format = read_format(&self.store_meta)?;
+        if format == REPO_FORMAT_2 {
+            return Ok(false);
+        }
+        if format != REPO_FORMAT {
+            return Err(unsupported(&format, &self.store_meta));
+        }
+        write_file_atomic(
+            self.store.tmp_dir(),
+            &self.store_meta.join("format"),
+            REPO_FORMAT_2.as_bytes(),
+            &self.opts.faults,
+        )?;
+        Ok(true)
     }
 
     // ------------------------------------------------------------------ misc

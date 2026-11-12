@@ -54,6 +54,12 @@ impl OpLog {
             .branches
             .values()
             .chain(op.view.workspaces.values().filter_map(|w| w.head.as_ref()))
+            .chain(
+                op.view
+                    .remotes
+                    .values()
+                    .flat_map(|b| b.values().map(|r| &r.head)),
+            )
             .chain(op.backup.iter());
         for snap in referenced {
             self.store.read_snapshot(snap)?;
