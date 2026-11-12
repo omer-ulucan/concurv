@@ -32,7 +32,8 @@ fi
 echo "ci-all: $sha on Windows and WSL ($distro); output in $out"
 bash "$repo/scripts/ci-local.sh" "$sha" >"$out/windows.txt" 2>&1 &
 win=$!
-wsl.exe -d "$distro" -- bash -lc "cd '$wslrepo' && bash scripts/ci-local.sh $sha" >"$out/wsl.txt" 2>&1 &
+# MSYS_NO_PATHCONV: Git Bash must not rewrite the Linux path argument.
+MSYS_NO_PATHCONV=1 wsl.exe -d "$distro" --exec bash -lc 'cd "$1" && bash scripts/ci-local.sh "$2"' bash "$wslrepo" "$sha" >"$out/wsl.txt" 2>&1 &
 lin=$!
 wait "$win"
 wst=$?

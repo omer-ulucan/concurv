@@ -1,13 +1,14 @@
 # concurv threat model
 
-Scope: R1 local kernel (implemented) and R3–R5 surfaces (designed). Each row
-lists the mitigation **and whether it is implemented**.
+Scope: the local kernel (R1–R2.5) and sync (R3), implemented; R4–R5 surfaces
+(designed). Each row lists the mitigation **and whether it is implemented**.
 
 ## Assets
 
 Acknowledged history (objects, operations), uncommitted working files,
 files outside the repository, credentials/tokens, agent transcripts and
-private metadata, published branch heads (R3).
+private metadata, published branch heads (R3), relay private key and device
+tokens (R3).
 
 ## Adversaries and mitigations
 
@@ -22,8 +23,8 @@ private metadata, published branch heads (R3).
 | T7 | **Concurrent local writers** (many workspaces, agents and processes; processes killed mid-command) | workspace lock + commit-only repository lock with bounded waits; CAS on op_head against the current view; lock-free immutable object writes in per-process temp sessions that recovery never deletes while their owner lives; `main` moves only by fast-forward publish | R2 slice 2a implemented; tested with 2/5/10 concurrent writers and 12 rounds of killed processes on Linux, macOS and Windows |
 | T7b | **One agent's workspace overwritten by another** | commands only change files of the workspace they run in; nested workspaces refused; merges happen in the private workspace, conflicts refused | R2 slice 2a implemented + tested |
 | T8 | **Dirty working copy destroyed by restore** | refuse without `--force`; `--force` makes durable backup snapshot first; content re-check just before each replace | R1 implemented + tested; residual TOCTOU documented |
-| T9 | **Malicious remote** (lies about heads, sends bad objects, replays publishes) | RFC 0003: auth, quarantine, closure check, idempotent ids, CAS on relay, request ids | R3 design only |
-| T10 | **Network replay / reorder** | content-addressed messages, request ids, TTL for events | R3/R5 design only |
+| T9 | **Malicious remote** (lies about heads, sends bad or incomplete objects, replays publishes, impersonates the relay) | pinned relay certificate (TLS 1.3; token sent only after the handshake); every received object re-hashed, size-checked before allocation and decoded; only blobs/trees/snapshots accepted; graph closure checked in quarantine before anything is adopted or referenced; relay branch names validated like local ones, collisions never create aliasing references; a relay head that does not descend from the one seen before is reported and not followed; publish request ids remembered by the relay | R3 implemented + tested (`hostile.rs`, `two_machines.rs`) |
+| T10 | **Network replay / reorder / loss** (duplicate or reordered objects, lost publish replies, disconnects at any byte) | content addressing makes duplicates and reordering harmless; publish is a compare-and-swap with a client request id answered from the relay's memory on retry; quarantine is per connection and discarded on disconnect. Awareness events (TTL) are R5 | R3 implemented + tested (disconnect sweeps at every byte offset of a push and a fetch) |
 | T11 | **Transcript / secret leaks** | no transcript capture at all in R1; future provenance opt-in, local-only by default, preview before publish | R1: nothing captured; author string is the only identity stored (from `CONCURV_AUTHOR` or OS user name) |
 | T12 | **Arbitrary test code during validation** | R4: validation disabled unless policy enables it; explicit sandbox adapter; attestation records the environment | R4 design only; R1 executes no repository code |
 | T13 | **Resource exhaustion** (huge files, deep trees) | limits in RFC 0001 §5; streaming blob IO; recursion depth bounded by OS path length | R1 partially (no depth/total-size quota yet) |
@@ -32,6 +33,9 @@ private metadata, published branch heads (R3).
 | T16 | **False-clean status from a stale stat cache** (a changed file reported unchanged, e.g. same-size rewrite with the mtime put back, jj #10509; racy timestamps) | cache never consulted by `save`, restore, update, undo or checkout; Unix only, exact match on dev, inode, size, mode, mtime and kernel-set ctime; entries recorded only if identity is stable across the read and timestamps are outside a 2 s racy window; checksummed, any doubt = ignored; `--no-cache` | R1.5 implemented + tested (ADR 0005); residual risk on filesystems that do not maintain ctime |
 | T17 | **Branch names that alias or break Git** (names differing only in case, `x` vs `x/y`, Unicode normalization variants, Windows device names, ref syntax such as `..` or `@{`, names shadowing remote-tracking refs) | Git's ref rules (differentially tested against `git check-ref-format`), ASCII-only portability policy, reserved `refs`/`remote`/`remotes`, component-wise case and prefix collision checks under the repository lock | R2.5 implemented + tested (ADR 0007 §5) |
 | T18 | **Work lost when switching branches** (unsaved edits, untracked or ignored files overwritten, saves left on no branch, a crash midway) | refusals before any write; non-colliding untracked files kept; rollback on I/O error; marker + resumable switch after a crash; reachability invariant B1 | R2.5 implemented + tested (fault injection in crash and transient modes, killed processes) |
+| T19 | **Stolen or leaked device token** (copied `.concurv/remotes/<name>/token`, token in shell history or CI logs) | tokens are 256-bit random, stored by the relay only as a keyed BLAKE3 hash, compared in constant time; failed authentication is answered after a fixed delay; scopes limit what a token can do (`read`, `write`, `publish:<branch>`); `concurvd device revoke`; on Unix the client's token file is owner-only; `CONCURV_REMOTE_TOKEN` avoids storing it. Not yet: token expiry, per-device key pairs | R3 implemented (revocation and scopes tested) |
+| T20 | **Compromised or rolled-back relay** (relay restored from an old backup, relay operator rewrites `state.json`) | clients never follow a head that does not descend from the one they saw (`rewound`), and refuse to push to it; local branches and fetched history stay. A relay can withhold or delay publications (availability is not protected) and can show different devices different heads until they compare (no transparency log yet). Content addressing protects integrity, not authorship: snapshot signatures are R7 | R3 implemented + tested (rewound relay) |
+| T21 | **Resource exhaustion of the relay or client** (many connections, slow clients, huge or endless uploads, huge packs) | at most 64 connections, idle timeout 120 s, messages ≤ 1 MiB, ≤ 10,000 objects per upload batch, blob size limit (default 4 GiB) checked before reading, structured objects ≤ 64 MiB, ≤ 1024 wants / 4096 haves per fetch; a client accepts at most 10,000,000 objects per pack. Not yet: per-device byte quotas, rate limits | R3 implemented (limits tested in `hostile.rs`); quotas open |
 
 ## Out of scope
 

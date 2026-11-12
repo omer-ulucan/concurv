@@ -1,13 +1,16 @@
-# concurv architecture (as implemented: R1 + R2 slice 2a)
+# concurv architecture (as implemented: R1 to R3)
 
 ```
-concurv-cli ──► concurv-workspace ──► concurv-ops ──► concurv-refs ──► concurv-objects ──► concurv-core
- (clap,      (repo, workspaces,  (OpLog:     (op_head     (encoding,      (ids, errors,
-  JSON)       scan, save, status, commit,     CAS, repo    store, durable  path rules)
-              diff, restore,     walk,       lock)        fs, faults,
-              publish, update,   clean_tmp)               locks, temp
-              merge, graph,                               sessions)
-              verify, log)
+concurv-cli          binaries `concurv` and `concurvd`; clap, human and JSON output
+ ├─► concurv-git     Git bridge (fast-import / fast-export)
+ └─► concurv-sync    wire protocol, relay, pinned TLS, fetch / push / clone, remotes
+      └─► concurv-workspace  repo, workspaces, scan, save, status, diff, restore,
+           │                 publish, update, merge, branches, reconcile, graph, verify
+           └─► concurv-ops   OpLog: commit, walk, clean_tmp
+                └─► concurv-refs     op_head CAS, repository lock
+                     └─► concurv-objects  encoding, store, durable fs, faults,
+                          │                locks, temp sessions
+                          └─► concurv-core ids, errors, path rules
 ```
 
 | Crate | Key types | Responsibility |
@@ -18,7 +21,8 @@ concurv-cli ──► concurv-workspace ──► concurv-ops ──► concurv-
 | `concurv-ops` | `OpLog` | commit an operation (re-verify referenced snapshots, write op, CAS); walk history; clean store temp debris |
 | `concurv-workspace` | `Repo`, `WorkspaceLock`, `StoreWriter`, `FlatTree`, `IgnoreRules`, modules `save`, `status`, `restore`, `integrate` (publish/update), `conflicts` (pending merges), `undo`, `merge`, `graph`, `workspaces`, `ignore` (ADR 0004), `verify` | everything touching working copies, workspaces and branch publication |
 | `concurv-git` | `GitRepo`, `export`, `import`, `GitMap` | Git bridge (ADR 0002): drives `git fast-import` / `fast-export`; deterministic commits; snapshot↔commit cache |
-| `concurv-cli` | `concurv` binary | argument parsing, human and JSON output |
+| `concurv-sync` | `Relay`, `Server`, `Connection`, `RelayUrl`, modules `proto`, `tls`, `graph`, `remote`, `sync` (`fetch`, `push`, `clone_repo`) | RFC 0003: framing and messages, pinned TLS 1.3, relay storage and publish CAS, quarantine and graph closure, client operations and remote configuration |
+| `concurv-cli` | `concurv` and `concurvd` binaries | argument parsing, human and JSON output |
 
 ## Key decisions
 
@@ -57,6 +61,12 @@ concurv-cli ──► concurv-workspace ──► concurv-ops ──► concurv-
   fsyncs) only objects that are missing or fail verification.
 - **Restore never rewrites history** and never discards unsaved data without
   `--force` + durable backup.
+- **One authority per published branch.** Across machines, a relay holds
+  the published heads and moves them only by compare-and-swap, only
+  forward. Clients keep what they saw in remote-tracking references (a
+  separate map in the view) and never follow a head that went backwards.
+  Everything received is quarantined, verified and checked for graph
+  closure before anything references it (RFC 0003).
 - **Synchronous engine.** No async runtime; concurrency comes from processes
   and threads coordinating through OS locks.
 
@@ -75,6 +85,7 @@ concurv-cli ──► concurv-workspace ──► concurv-ops ──► concurv-
 
 ## Not yet implemented
 
-Line-level (within-file) merging, cross-machine
-sync, importing Git changes into existing history, GC/packing, stat cache, rename detection,
-`workspace remove`. See `ROADMAP_STATUS.md`.
+Importing Git changes into existing history, GC/packing, rename detection,
+`workspace remove`, branch delete/rename, several repositories per relay,
+verified publication (R4) and agent coordination (R5). See
+`ROADMAP_STATUS.md`.

@@ -8,19 +8,23 @@ contribute to one shared branch without ever silently losing acknowledged work
 (see `docs/ROADMAP_REVISED.md`; "ARC" was the project's earlier
 working name).
 
-**Current state:** first pre-release, **v0.1.0-alpha.1**
-([download](https://github.com/omer-ulucan/concurv/releases/tag/v0.1.0-alpha.1)).
-Gates passed: R1 (local kernel), R1.5 (daily usability and safety) and R2
-(workspaces and concurrency). R2.5 (local merge and branches) is
-implemented and tested; it awaits the owner's final acceptance of the
-branch model (ADR 0007). On one
-machine: several private workspaces on shared named branches, compare-and-swap
-publication, three-way merge with line-level merging of non-overlapping
-edits, recorded conflicts that you resolve and save, workspace-scoped
-`undo`, Git-compatible ignores, and Git export/import. Stress-tested with
-10 concurrent writers and killed processes, on Linux, macOS and Windows in
-CI; see `docs/ROADMAP_STATUS.md`. **Not yet:** cross-machine sync (R3),
-verified integration (R4), agent coordination (R5).
+**Current state:** pre-release **v0.1.0-alpha.1**
+([download](https://github.com/omer-ulucan/concurv/releases/tag/v0.1.0-alpha.1));
+`main` is ahead of it. Gates passed: R1 (local kernel), R1.5 (daily
+usability and safety) and R2 (workspaces and concurrency). R2.5 (local
+merge and branches) is implemented and tested; it awaits the owner's final
+acceptance of the branch model (ADR 0007). **R3, sync between machines, is
+implemented** on `main`: a self-hosted relay (`concurvd`) holds the
+published branches, and `concurv clone | fetch | push` exchange work over
+pinned TLS without ever publishing or overwriting anything implicitly. On
+one machine: several private workspaces on shared named branches,
+compare-and-swap publication, three-way merge with line-level merging of
+non-overlapping edits, recorded conflicts that you resolve and save,
+workspace-scoped `undo`, Git-compatible ignores, and Git export/import.
+Stress-tested with concurrent writers, killed processes (including the
+relay) and simulated disconnects at every byte of a transfer; see
+`docs/ROADMAP_STATUS.md`. **Not yet:** verified integration (R4), agent
+coordination (R5).
 
 > **Alpha:** the on-disk format and the CLI/JSON contract may still change
 > before 0.1.0. **No license has been chosen yet**: until one is added, the
@@ -80,6 +84,17 @@ $ concurv branch switch feature           # or move this workspace to another br
 $ concurv branch create topic --switch    # keep unpublished saves on a new branch
 ```
 
+Across machines, through a relay you run yourself (RFC 0003, user guide §8a):
+
+```console
+$ concurvd init relay-dir && concurvd device add relay-dir laptop   # prints fingerprint, token
+$ concurvd serve relay-dir --listen 0.0.0.0:7461
+$ concurv clone concurv://relay.example:7461 work --fingerprint sha256:… --token-file laptop.token
+$ concurv save -m "work" && concurv publish && concurv push   # exit 42 if the relay has newer work
+$ concurv fetch && concurv update                               # bring others' work in
+$ concurv merge remote/origin/main                               # when both sides published offline
+```
+
 Share with Git / GitHub (needs `git` on PATH):
 
 ```console
@@ -114,9 +129,15 @@ Full walkthrough and recovery procedures: **`docs/user-guide.md`**.
 - `status`/`diff` use a stat cache on Linux and macOS (never for snapshots,
   ADR 0005; `--no-cache` to hash everything). Windows always hashes.
   Measurements: `bench/RESULTS.md`.
+- Sync never changes working files and never publishes implicitly: a relay
+  branch moves only by compare-and-swap, only forward; diverged work is
+  refused until you merge it. Everything received is verified and checked
+  for completeness before it is stored; a relay whose history went
+  backwards is reported, not followed. A retried push never publishes twice.
 - Not implemented yet: rename detection, garbage collection, tags, branch
-  delete/rename, symlinks on Windows. The released v0.1.0-alpha.1 binaries
-  predate branches; build from `main` to get them.
+  delete/rename, symlinks on Windows, several repositories per relay. The
+  released v0.1.0-alpha.1 binaries predate branches and sync; build from
+  `main` to get them.
 - Don't keep repositories in cloud-synced folders (OneDrive, Dropbox).
 
 ## Build and test
@@ -140,7 +161,7 @@ GitHub Actions workflows are kept but start only manually for now; gate
 evidence since 2026-11-12 comes from these local runs (Windows and Linux;
 macOS is not covered locally).
 
-Workspace layout: `crates/concurv-{core,objects,refs,ops,workspace,git,cli,bench}`
+Workspace layout: `crates/concurv-{core,objects,refs,ops,workspace,git,sync,cli,bench}`
 (see `docs/architecture.md`).
 
 ## Documentation
@@ -154,7 +175,7 @@ Workspace layout: `crates/concurv-{core,objects,refs,ops,workspace,git,cli,bench
 | `docs/ROADMAP_STATUS.md` | stage status R0–R7 with test evidence |
 | `docs/rfcs/0001-vcs-semantics.md` | data model, normative byte format, path rules, test vectors |
 | `docs/rfcs/0002-durability-and-transactions.md` | write ordering, fsync, commit point, recovery |
-| `docs/rfcs/0003-sync-protocol.md` | future multi-device sync (design only) |
+| `docs/rfcs/0003-sync-protocol.md` | sync between machines: relay, pinned TLS, devices and scopes, wire protocol, fetch/push rules, quarantine (implemented, version 1) |
 | `docs/rfcs/0004-workspaces-and-concurrency.md` | workspaces, save vs publish, update and merge, locks and concurrency |
 | `docs/adr/0001-storage-format.md` | why a native BLAKE3 store with one mutable pointer |
 | `docs/adr/0002-git-interop.md` | the Git bridge: how export/import work, what is and isn't preserved |

@@ -11,7 +11,7 @@ Every command runs in the workspace containing the current directory (or `-C`).
 | `concurv save -m <msg>` | durably snapshot the working copy and advance **this workspace's head**. Does not publish | workspace history |
 | `concurv publish` | CAS fast-forward of the branch this workspace tracks (default `main`) to the workspace head | shared branch |
 | `concurv update [--allow-conflicts \| --abort]` | bring the **tracked** branch into this workspace: fast-forward, or a three-way merge into a new snapshot (file level, plus line-level merge of text files whose edits do not overlap, ADR 0006). `--allow-conflicts`: write conflicts into the working copy and start a pending merge; `--abort`: give a pending merge up | working copy, workspace head |
-| `concurv merge <branch> [--allow-conflicts] \| --abort` | integrate **another** branch with the rules of `update`; the workspace keeps its branch, and only a later `publish` (CAS) publishes the result. Merging the tracked branch is refused (use `update`). `--abort` = `update --abort` (ADR 0007) | working copy, workspace head |
+| `concurv merge <branch> [--allow-conflicts] \| --abort` | integrate **another** branch, or a remote-tracking reference `remote/<remote>/<branch>` (RFC 0003 §5), with the rules of `update`; the workspace keeps its branch, and only a later `publish` (CAS) publishes the result. Merging the tracked branch is refused (use `update`). `--abort` = `update --abort` (ADR 0007) | working copy, workspace head |
 | `concurv workspace add <path> [--name N] [--branch B]` | create a workspace in a new or empty directory, tracking `B` (default: the current workspace's branch), and check out that branch there | creates workspace |
 | `concurv workspace list` | all workspaces with branch, head and path | no |
 | `concurv branch create <name> [--at <snapshot\|branch> \| --switch]` | add a branch, by default at this workspace's head (unpublished saves included); `--switch`: there, and this workspace tracks it, in one operation with no file changes. Names: Git's ref-name rules plus a portability policy; no collision with existing branches (ADR 0007 §5). Moves no other workspace or branch | shared branches (+ tracked branch with `--switch`) |
@@ -25,8 +25,15 @@ Every command runs in the workspace containing the current directory (or `-C`).
 | `concurv op log [-n N]` | operation log of all workspaces, newest first, with backups | no |
 | `concurv git export <repo> [--from C] [--branch B]` | write concurv branch `C`'s history (default `main`) into a Git repository and move Git branch `B` (default: same name as `C`) by compare-and-swap. Requires `git` on PATH | the Git repository |
 | `concurv git import <repo> [--branch B]` | import Git branch `B` into this **fresh** repository, publish it as `main` and check it out | history, working copy |
+| `concurv remote add <name> <url> --fingerprint <fp> [--token-file F]` | add a relay (`concurv://host[:port]`), pinning its certificate fingerprint; the device token comes from `F` or `$CONCURV_REMOTE_TOKEN` and is stored in `.concurv/remotes/<name>/token` (owner-only on Unix). Contacts nothing; upgrades the repository to format 2 (RFC 0001 §7) | repository config (+ format) |
+| `concurv remote list` | remotes with URL, fingerprint and remote-tracking references | no |
+| `concurv remote remove <name>` | delete the remote's configuration and token and, in one operation, its remote-tracking references (no local branch changes) | config, view |
+| `concurv fetch [<remote>]` | download the relay's published branches (RFC 0003 §5): objects are verified and checked for completeness before anything is stored; remote-tracking references `remote/<remote>/<b>` move to the relay's heads; local branches that are behind fast-forward, new ones are created; diverged local branches stay. Never changes working files or workspace heads. A relay whose head went backwards is reported, not followed. Default remote: the only one, else `origin` | objects, remote-tracking refs, local branches (fast-forward only) |
+| `concurv push [<remote>] [--branch B]` | publish local branch `B` (default: the tracked branch) at the relay by compare-and-swap, only as a fast-forward of the relay's head; refused (42) if the relay has work this repository has not fetched or that diverged; a lost connection is retried and never publishes twice | the relay's branch, remote-tracking ref |
+| `concurv clone <url> <dir> --fingerprint <fp> [--token-file F] [--name origin]` | `init` in `<dir>` (missing or empty), `remote add`, `fetch`, then check out `main` if the relay has it | creates repo |
 
-Global flags: `--json`, `-C <dir>`. Author comes from `CONCURV_AUTHOR`, else the OS
+Global flags: `--json`, `-C <dir>`. Sync commands use the token stored for the remote,
+or `CONCURV_REMOTE_TOKEN` if set. Author comes from `CONCURV_AUTHOR`, else the OS
 user name (`USER`/`USERNAME`), else `unknown`.
 
 **Behaviour change in R2:** `save` no longer moves `main`; `publish` does (RFC 0004 §2).
@@ -75,7 +82,13 @@ changes behaviour, not the JSON shape.)
 - `restore`: `target`, `backup`, `written`, `deleted`, `operation`
 - `check-ignore`: `paths[]` (`input`, `path`, `is_dir`, `tracked`, `ignored`, `rule` (null or `{source, pattern, negated}`), `excluded_parent` (null or a directory)), `unusable_patterns[]` (`source`, `line`, `pattern`, `reason`)
 - `verify`: `full`, `operations`, `conflicts`, `snapshots`, `trees`, `blobs`, `unreachable`, `problems[]` (`code`, `subject`, `message`), `notes[]`
-- `op log`: `operations[]` (`operation`, `parents[]`, `kind` ∈ `init|save|restore|workspace-add|publish|update|undo|merge-abort|git-import|branch-create|branch-switch|merge`, `description`, `timestamp_ms`, `device`, `workspace` (null for `init`), `backup` (null unless `restore --force` replaced unsaved work), `undoes` (for `undo`: the reversed operation), `checked_out` (snapshot the working copy was set to, or null), `head` (the **current** workspace's head after the operation, or null), `branches` (object: name → snapshot id))
+- `op log`: `operations[]` (`operation`, `parents[]`, `kind` ∈ `init|save|restore|workspace-add|publish|update|undo|merge-abort|git-import|branch-create|branch-switch|merge|fetch|push|remote-remove`, `description`, `timestamp_ms`, `device`, `workspace` (null for `init`), `backup` (null unless `restore --force` replaced unsaved work), `undoes` (for `undo`: the reversed operation), `checked_out` (snapshot the working copy was set to, or null), `head` (the **current** workspace's head after the operation, or null), `branches` (object: name → snapshot id), `remotes` (object: remote → branch → `{head, seq}`; since R3))
+- `remote add`: `name`, `url`, `fingerprint`
+- `remote list`: `remotes[]` (`name`, `url`, `fingerprint`, `branches` (object: branch → `{head, seq}`, the remote-tracking references))
+- `remote remove`: `name`, `operation` (null if it had no remote-tracking references)
+- `fetch`: `remote`, `relay` (relay id), `objects` (received), `branches[]` (`branch`, `remote_head` (null if `vanished`), `seq`, `tracked_before`, `local_before`, `local_after`, `action` ∈ `up_to_date|created|fast_forwarded|local_ahead|diverged|rewound|vanished|invalid_name|name_collision`, `note`), `operation` (null if nothing changed)
+- `push`: `remote`, `branch`, `from` (relay head before, or null), `head` (local branch head), `seq` (relay sequence number after, if known), `result` ∈ `pushed|up_to_date|behind`, `objects` (uploaded), `replayed` (the relay confirmed an earlier attempt whose reply was lost), `operation`
+- `clone`: the `fetch` fields plus `root`, `checked_out` (snapshot or null), `written`
 
 ## Error codes and exit codes
 
@@ -98,6 +111,38 @@ changes behaviour, not the JSON shape.)
 | 41 | `CONCURV_STALE_HEAD` | op head or workspace head moved during compare-and-swap |
 | 42 | `CONCURV_DIVERGED` | `publish` refused: the branch has work this workspace has not integrated (run `update`); `git export` refused: the Git branch has commits outside the exported branch's history; `branch switch` refused: saves in this workspace are on neither the old nor the new branch |
 | 43 | `CONCURV_CONFLICT` | `update`/`merge` refused: conflicting changes (without `--allow-conflicts`), file/directory conflict, ambiguous merge base, or a merge already pending; `save` refused: unresolved conflicts; `branch switch` and `branch create --switch` refused during a pending merge. Nothing modified |
-| 50 | `CONCURV_NOT_FOUND` | id/prefix not found or not a snapshot; workspace not registered; nothing to undo; unknown branch (`branch switch`, `merge`, `workspace add --branch`, `git export --from`) |
+| 50 | `CONCURV_NOT_FOUND` | id/prefix not found or not a snapshot; workspace not registered; nothing to undo; unknown branch (`branch switch`, `merge`, `workspace add --branch`, `git export --from`, `push`); unknown remote |
 | 51 | `CONCURV_AMBIGUOUS_ID` | prefix matches several objects |
 | 60 | `CONCURV_EXTERNAL_TOOL` | `git` is not installed or a git command failed |
+| 70 | `CONCURV_NETWORK` | the relay could not be reached, or the connection broke or timed out (sync commands; nothing was changed locally unless the output says so) |
+| 71 | `CONCURV_PROTOCOL` | a peer sent a malformed or unexpected message |
+| 72 | `CONCURV_PROTOCOL_MISMATCH` | client and relay share no protocol version |
+| 73 | `CONCURV_AUTH_FAILED` | the relay refused the device token (unknown, malformed or revoked) |
+| 74 | `CONCURV_PERMISSION_DENIED` | the device lacks the scope (`read`, `write`, `publish:<branch>`) |
+| 75 | `CONCURV_RELAY_IDENTITY` | the relay's certificate does not match the pinned fingerprint; nothing, not even the token, was sent |
+
+Sync adds meanings to existing codes: 41 `CONCURV_STALE_HEAD` — the relay's
+branch moved between your fetch and your push (fetch, integrate, push
+again); 42 `CONCURV_DIVERGED` — `push` refused because the relay has work
+this repository has not fetched, the branches diverged, or the relay's head
+went backwards; 30/31 — a peer sent a corrupt or incomplete history
+(nothing was stored); 12 — a repository of format 2 opened by a build
+older than R3.
+
+## `concurvd` (the relay)
+
+| Command | Effect |
+|---|---|
+| `concurvd init <dir>` | create a relay in a new or empty directory: object store, empty state and device registry, a new TLS identity; prints the fingerprint clients pin |
+| `concurvd fingerprint <dir>` | print the fingerprint |
+| `concurvd device add <dir> <name> [--scope S]…` | register a device and print its token once (default scopes: `read`, `write`, `publish:*`; `publish:<branch>` limits publishing to one branch) |
+| `concurvd device list <dir>` | devices, scopes, revocation |
+| `concurvd device revoke <dir> <name>` | the token stops working at the next connection |
+| `concurvd serve <dir> [--listen ADDR] [--max-connections N] [--idle-timeout SECS]` | serve until stopped (default `127.0.0.1:7461`; port 0 picks a free port). The first line of output is `listening on <addr>` (with `--json`: `data.listening`) |
+
+`concurvd --json` prints the same envelope as `concurv --json`. `data`:
+`init` `dir`, `relay`, `fingerprint`; `fingerprint` `fingerprint`; `device
+add` `device`, `scopes`, `token`; `device list` `devices[]` (`name`,
+`scopes`, `revoked`, `created_ms`); `device revoke` `device`, `revoked`.
+A relay can be stopped (or killed) at any moment: its state is replaced
+atomically, so it restarts with the last committed heads.

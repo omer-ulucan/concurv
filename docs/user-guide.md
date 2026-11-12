@@ -50,7 +50,8 @@ guarantee.
   creates more. A command only ever changes the files of the workspace it runs in.
 - **Head:** the snapshot this workspace's working copy is based on. `save`
   advances it. It is private to the workspace.
-- **`main`:** the shared branch. It moves only when you run `publish`, and only
+- **`main`:** the shared branch. It moves only when you run `publish` (or when
+  `fetch` brings it forward from a relay), and only
   forward.
 - **Operation log:** every operation of every workspace is recorded separately
   from snapshot history, including backups made by `restore --force`.
@@ -415,6 +416,77 @@ $ concurv verify --full   # additionally every object file, including unreferenc
 
 `verify` never modifies anything. Exit 0 means intact, 30 means a corrupt object,
 and 31 means a missing object. Each problem lists the object id and reason.
+
+## 8a. Syncing between machines (relay)
+
+Machines exchange published branches through a **relay**, `concurvd`, a
+small server you run yourself (RFC 0003). The relay holds the
+authoritative head of every published branch; it moves only by
+compare-and-swap and only forward. Sync never changes your working files:
+you integrate fetched work with `update` or `merge`, as on one machine.
+
+**Set up a relay** (on a machine every device can reach):
+
+```console
+$ concurvd init /srv/concurv/myproject
+Fingerprint (give it to every client): sha256:4f0c…
+$ concurvd device add /srv/concurv/myproject laptop     # prints a token once
+$ concurvd device add /srv/concurv/myproject ci --scope read
+$ concurvd serve /srv/concurv/myproject --listen 0.0.0.0:7461
+```
+
+Give each device its token (keep it like a password) and the fingerprint.
+The fingerprint is how a client recognizes the relay: copy it over a
+channel you trust, never from the relay's own answer. A device whose token
+leaks is revoked with `concurvd device revoke <dir> <name>`.
+
+**Clone, or add the relay to an existing repository:**
+
+```console
+$ concurv clone concurv://relay.example:7461 myproject \
+    --fingerprint sha256:4f0c… --token-file ~/laptop.token
+$ concurv remote add origin concurv://relay.example:7461 \
+    --fingerprint sha256:4f0c… --token-file ~/laptop.token
+```
+
+Adding a remote upgrades the repository to format 2; concurv builds older
+than this one can no longer open it.
+
+**Daily flow:**
+
+```console
+$ concurv save -m "work"        # private to this workspace
+$ concurv publish               # local branch main moves forward
+$ concurv push                  # the relay's main moves forward (CAS)
+$ concurv fetch                 # download others' work; local main fast-forwards if behind
+$ concurv update                # bring it into this workspace
+```
+
+**When two machines published offline** (both pushed to their local
+`main`), the second push is refused with exit 42: nothing is published
+behind your back. Then:
+
+```console
+$ concurv fetch                          # main: diverged
+$ concurv merge remote/origin/main       # merge the relay's work into this workspace
+$ concurv publish && concurv push        # publish the merge, then push it
+```
+
+`remote/<remote>/<branch>` is the **remote-tracking reference**: the head
+this repository last saw at the relay. Only `fetch` and `push` move it, and
+it is listed by `concurv remote list`. If a push races with another
+machine's, one wins and the other gets exit 41 (`CONCURV_STALE_HEAD`);
+fetch and integrate again. A lost connection during `push` is retried
+automatically and never publishes twice.
+
+If `fetch` reports a branch as **rewound**, the relay's head went backwards
+(for example, the relay was restored from an old backup). concurv does not
+follow it and refuses to push to it; your history is untouched. Decide with
+the relay's operator what the right head is.
+
+Exit codes of sync: 70 network, 71/72 protocol, 73 bad or revoked token, 74
+missing permission, 75 the relay's certificate does not match the
+fingerprint (nothing was sent). See `docs/cli.md`.
 
 ## 9. Working with Git and GitHub
 

@@ -175,12 +175,22 @@ pub fn update_with(repo: &Repo, opts: UpdateOptions) -> Result<UpdateOutcome> {
     integrate(repo, None, opts)
 }
 
+/// The snapshot a remote-tracking reference `remote/<remote>/<branch>`
+/// names (RFC 0003 §5), if it exists. Local branch names can never start
+/// with `remote/` (ADR 0007 §5), so this never shadows a local branch.
+pub fn remote_tracking_head(view: &concurv_objects::View, name: &str) -> Option<SnapshotId> {
+    let (remote, branch) = name.strip_prefix("remote/")?.split_once('/')?;
+    view.remotes.get(remote)?.get(branch).map(|r| r.head)
+}
+
 /// `concurv merge <branch>` (ADR 0007 §2): integrate **another** branch into
 /// this workspace, with exactly the rules of [`update_with`] (clean working
 /// copy, exact merge base, line-level merge, conflicts refused or recorded).
 /// The workspace keeps tracking its own branch, so only a following
 /// `publish` (a compare-and-swap) can make the result a published head.
 /// Merging the tracked branch itself is `update`, and is refused here.
+/// `from` may also be a remote-tracking reference `remote/<remote>/<branch>`
+/// (RFC 0003 §5 rule 3: integrating fetched work that diverged).
 pub fn merge_branch(repo: &Repo, from: &str, opts: UpdateOptions) -> Result<UpdateOutcome> {
     integrate(repo, Some(from), opts)
 }
@@ -195,11 +205,15 @@ fn integrate(repo: &Repo, from: Option<&str>, opts: UpdateOptions) -> Result<Upd
              `concurv save`, or `concurv update --abort`",
         ));
     }
+    let tracking = from.and_then(|b| remote_tracking_head(&op.view, b));
     let branch = match from {
-        Some(b) if !op.view.branches.contains_key(b) => {
+        Some(b) if tracking.is_none() && !op.view.branches.contains_key(b) => {
             return Err(ConcurvError::new(
                 ErrorCode::NotFound,
-                format!("no branch named `{b}` (see `concurv branch list`)"),
+                format!(
+                    "no branch named `{b}` (see `concurv branch list`; fetched branches are \
+                     `remote/<remote>/<branch>`)"
+                ),
             ));
         }
         Some(b) if ws.branch.as_deref() == Some(b) => {
@@ -212,7 +226,7 @@ fn integrate(repo: &Repo, from: Option<&str>, opts: UpdateOptions) -> Result<Upd
         None => workspace_branch(ws.branch.clone())?,
     };
     let kind_name: &'static str = if from.is_some() { "merge" } else { "update" };
-    let main = op.view.branches.get(&branch).copied();
+    let main = tracking.or_else(|| op.view.branches.get(&branch).copied());
     let up_to_date = |kind| UpdateOutcome {
         branch: branch.clone(),
         kind,

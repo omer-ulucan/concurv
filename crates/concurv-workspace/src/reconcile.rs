@@ -1,7 +1,7 @@
 //! Branch reconciliation rules for multi-machine sync (RFC 0003 §5, ADR 0007
-//! §7). **R3 groundwork, not wired to any command**: no network sync exists
-//! yet. This module only decides what may happen to the references of one
-//! branch after a fetch, so the rules can be tested before R3 is built.
+//! §7): what may happen to the references of one branch after a fetch, and
+//! whether a push may be offered. Used by `concurv_sync::fetch` and
+//! `concurv_sync::push`; pure, so the rules are tested on their own.
 //!
 //! Four kinds of state are involved (ADR 0007 §8):
 //! - workspace state (files, head, pending merge): private, never synced;

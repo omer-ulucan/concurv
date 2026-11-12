@@ -3,8 +3,8 @@
 Status: **Approved in principle by the owner (2026-11-01); refinements
 implemented and verified** (CI run 41375647699 on `main` @ `79caf3f`; see
 `docs/ROADMAP_STATUS.md`, R2.5).
-Final acceptance is the owner's decision. Sections 7 and 8 (R3) are design
-only.
+Final acceptance is the owner's decision. Sections 7 and 8 describe sync,
+implemented by R3 (RFC 0003, 2026-11-12).
 
 ## Context
 
@@ -104,32 +104,36 @@ reconciliation rules, more tests, and documentation of the reference kinds.
      heads and branch heads.
    - **B2 Forward-only:** a branch reference is created at a complete,
      verified snapshot and afterwards moves only by a fast-forward
-     compare-and-swap (`publish`). No branch command moves it.
+     compare-and-swap (`publish`, and since R3 the fast-forward of `fetch`
+     to the relay's head). No branch command moves it.
    - **B3 Transactional switch:** a failed switch leaves files, head, tracked
      branch and marker as they were (rollback). An interrupted one leaves
      only old-or-new file content and is finished by repeating it.
    - **B4 Namespace:** no two branches collide (5.3).
    - **B5 No implicit publication:** `merge`, `update`, `switch` and
-     `create` never move an existing branch; only `publish` does.
+     `create` never move an existing branch; only `publish` does (and
+     `fetch`, only forward to what the relay published, R3).
 
-7. **Sync (R3, design).** Branch reconciliation is per branch and never
-   loses history (RFC 0003 §5). A fetch records the relay's head as a
+7. **Sync (R3, implemented).** Branch reconciliation is per branch and
+   never loses history (RFC 0003 §5). A fetch records the relay's head as a
    remote-tracking reference. The local reference may only fast-forward.
    Divergence is preserved and must be integrated by `merge` in a
-   workspace, pass conflict checks and R4 gates, and then be published by
-   a compare-and-swap that expects the observed remote head. A merge
-   candidate never becomes a published head automatically. A relay head
-   that moved backwards or sideways is reported, not followed. These rules
-   are encoded in `concurv_workspace::reconcile::plan` (not wired to any
-   command) and tested against an in-memory relay model.
+   workspace (`concurv merge remote/<remote>/<branch>`), pass conflict
+   checks (and, from R4, gates), and then be published by a compare-and-swap
+   that expects the observed remote head. A merge candidate never becomes a
+   published head automatically. A relay head that moved backwards or
+   sideways is reported, not followed. The rules are encoded in
+   `concurv_workspace::reconcile::plan`, used by `concurv fetch` and
+   `concurv push`, and tested with an in-memory model
+   (`tests/reconcile.rs`) and against a real relay (`concurv-sync` tests).
 
 8. **Kinds of state** (the vocabulary used everywhere):
 
    | Kind | Where | Moved by | Shared? |
    |---|---|---|---|
-   | Workspace state: files, workspace head, pending merge | the workspace directory and its view entry | `save`, `update`, `merge`, `restore`, `undo`, `branch switch` in that workspace | never (private; not synced, RFC 0003 §6) |
-   | Local branch reference `view.branches[b]` | this repository's operation view | `branch create` (insert), `publish` (CAS fast-forward) | by every workspace of this repository |
-   | Remote-tracking reference `remote/<relay>/<b>` (R3) | a separate map in the view, never in `branches` | only by fetch | read-only locally |
+   | Workspace state: files, workspace head, pending merge | the workspace directory and its view entry | `save`, `update`, `merge`, `restore`, `undo`, `branch switch` in that workspace | never (private; not synced, RFC 0003 §5) |
+   | Local branch reference `view.branches[b]` | this repository's operation view | `branch create` (insert), `publish` (CAS fast-forward), `fetch` (fast-forward only, or insert of a new name) | by every workspace of this repository |
+   | Remote-tracking reference `remote/<remote>/<b>` (R3) | a separate map in the view (`View::remotes`, repository format 2), never in `branches` | only `fetch` and `push` | read-only locally; `merge` can integrate it |
    | Authoritative published head | the relay (RFC 0003 §1) | only the relay's CAS `Publish` | the source of truth across machines |
 
    Before R3 there is no relay. Each repository's local branch references
@@ -137,8 +141,8 @@ reconciliation rules, more tests, and documentation of the reference kinds.
 
 9. **Future (not implemented, roadmap):** deleting and renaming branches
    (policy for workspaces that track them, and for sync), protected branches
-   (R4 gates), tags (R6, with the Git tag mapping), and remote-tracking
-   references (R3).
+   (R4 gates) and tags (R6, with the Git tag mapping). Remote-tracking
+   references were added by R3 (item 7).
 
 ## Consequences
 
