@@ -1,7 +1,7 @@
 # Competitive reproduction and comparison plan
 
-Status: **Harness built; concurv and Git reproduced for S04, S05, S09, S10
-and S12 on Windows and Linux (2026-11-12, `bench/results/`). No other
+Status: **Harness built; concurv and Git reproduced for S04, S05, S09, S10,
+S11, S12 and S13 on Windows and Linux (2026-11-12, `bench/results/`). No other
 competitor has been run yet** (jj scripts exist but have not run; the R0
 gate needs at least one). Apart from the "Reproduced" section, no result
 in this file is a measurement. Rows labelled *literature* come from
@@ -59,7 +59,7 @@ the environment record. See `bench/scenarios/README.md`.
 
 ## Reproduced (2026-11-12)
 
-concurv `23cb8e5` (0.1.0-alpha.3 code); Git 2.46.0.windows.1 on Windows 11
+concurv `da9d347`; Git 2.46.0.windows.1 on Windows 11
 (NTFS) and Git 2.53.0 on Ubuntu 26.04 in WSL 2 (ext4). Full rows:
 `bench/results/2026-11-12-mingw64.md`, `bench/results/2026-11-12-linux.md`.
 
@@ -69,7 +69,9 @@ concurv `23cb8e5` (0.1.0-alpha.3 code); Git 2.46.0.windows.1 on Windows 11
 | S05 CAS publish | pass (second publish refused, exit 42) | pass (`update-ref` with old value) | pass |
 | S09 restore over unsaved edit | pass (refused; `--force` keeps a backup) | fail: `git restore --source` overwrote the edit, no backup | fail (same) |
 | S10 same size, same mtime | pass | **fail: reported clean** | pass |
+| S11 nested ignores, tracked-then-ignored | pass | pass | pass |
 | S12 disjoint hunks | pass (overlap refused, exit 43) | pass (overlap: conflict markers) | pass |
+| S13 `status`, 1k / 10k files (median of 5) | Windows 163 / 804 ms; Linux 8 / 67 ms | 78 / 153 ms | 8 / 9 ms |
 
 Notes. S09 uses `git restore --source=<commit> -- <file>`, the command that
 restores files; `git checkout <commit>` of a whole tree is a different
@@ -77,7 +79,10 @@ operation that refuses to overwrite local changes. S10 on Windows: after
 the rewrite, size and modification time match the index and Git for
 Windows reported the file unchanged; on Linux the change time (which a
 rewrite always updates) exposed it. This is one machine and one Git
-version per OS, not a general claim about Git.
+version per OS, not a general claim about Git. S13: concurv hashes every
+file on Windows (its stat cache is Unix-only, ADR 0005) and is slower than
+Git at 10k files on both systems; this is the baseline any `status`
+optimization (R7) must beat.
 
 ## Literature sources (retrieved 2026-11-01)
 

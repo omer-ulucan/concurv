@@ -351,22 +351,36 @@ fn not_found(name: &str) -> ConcurvError {
     )
 }
 
-/// True if `target` is reachable from a reference other than branch `except`:
-/// another branch, a tag, a workspace head or a remote-tracking reference.
-fn kept_elsewhere(
+/// A reference to leave out of [`kept_elsewhere`].
+pub(crate) enum Except<'a> {
+    /// A branch.
+    Branch(&'a str),
+    /// A workspace head.
+    Workspace(concurv_core::WorkspaceId),
+}
+
+/// True if `target` is reachable from a reference other than `except`: a
+/// branch, a tag, a workspace head or a remote-tracking reference
+/// (invariant B1).
+pub(crate) fn kept_elsewhere(
     repo: &Repo,
     view: &concurv_objects::View,
-    except: &str,
+    except: Except<'_>,
     target: SnapshotId,
 ) -> Result<bool> {
     let mut roots: Vec<SnapshotId> = view
         .branches
         .iter()
-        .filter(|(n, _)| n.as_str() != except)
+        .filter(|(n, _)| !matches!(except, Except::Branch(b) if b == n.as_str()))
         .map(|(_, h)| *h)
         .collect();
     roots.extend(view.tags.values().copied());
-    roots.extend(view.workspaces.values().filter_map(|w| w.head));
+    roots.extend(
+        view.workspaces
+            .iter()
+            .filter(|(id, _)| !matches!(except, Except::Workspace(w) if w == **id))
+            .filter_map(|(_, w)| w.head),
+    );
     roots.extend(
         view.remotes
             .values()
@@ -411,7 +425,7 @@ pub fn delete(repo: &Repo, name: &str) -> Result<RefOutcome> {
         ));
     }
     refuse_if_protected(repo, name, head, "deleted")?;
-    if !kept_elsewhere(repo, &op.view, name, head)? {
+    if !kept_elsewhere(repo, &op.view, Except::Branch(name), head)? {
         return Err(ConcurvError::new(
             ErrorCode::Diverged,
             format!(

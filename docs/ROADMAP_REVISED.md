@@ -66,8 +66,8 @@ completion evidence.
 | P1-4 | RFC 0003 revision (wire schema, device identity, ACLs, TLS, negotiation, quarantine, resume, replay defense) | R3 prep | RFC review | — | RFC (done 2026-11-12: revision 2, implemented as protocol version 1) |
 | P1-5 | Fuzz targets for decoders and the fast-export parser | R1.5–R2.5 | `cargo fuzz` runs recorded (not just configured) | — | corpus + run log |
 | P1-6 | Explicit `track` / `untrack` with persisted state | R2.5 | ADR + tests: untrack keeps the file on disk | — | tests |
-| P1-7 | Side-by-side Git runs for S11/S13 | R0 | scripts under `bench/scenarios/` with transcripts | — | results file |
-| P1-8 | `workspace remove` (safe, refuses with unpublished work) | R2.5 | tests | refuse | tests |
+| P1-7 | Side-by-side Git runs for S11/S13 | R0 | scripts under `bench/scenarios/` with transcripts | — | results file (done 2026-11-12: `bench/results/2026-11-12-*.md`) |
+| P1-8 | `workspace remove` (safe, refuses with unpublished work) | R2.5 | tests | refuse | tests (done 2026-11-12: `workspace_remove.rs`, CLI `branch_refs_cli.rs`) |
 
 ### P2
 

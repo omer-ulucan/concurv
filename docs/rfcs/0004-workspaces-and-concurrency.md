@@ -66,6 +66,17 @@ Opening a directory: `.concurv/format` decides. The repository format opens
 the store in place. The workspace format reads `store`, requires that it
 names a directory with a valid repository format, and opens the store there.
 
+**Removing a workspace** (`concurv workspace remove <name>`, since
+2026-11-12, backlog P1-8) is one operation (`workspace-remove`) that drops
+the workspace from the view; its locator is then deleted. Nothing on disk
+is deleted: the directory keeps its files and its `.concurv/` metadata,
+which no longer opens (the workspace is not registered). Refused, with
+nothing changed: the primary workspace, the workspace running the command,
+unsaved changes or an interrupted restore in its directory (checked under
+that workspace's lock, when the directory is still there), a pending merge,
+and saves that no branch, tag, other workspace head or remote-tracking
+reference contains (ADR 0007 B1). `undo` refuses it.
+
 ## 4. Model and format changes
 
 `WorkspaceView` (RFC 0001 §3.4) gains a name:

@@ -134,7 +134,7 @@ u32    parent_count, then parent_count × Id (operation ids, no duplicates)
 i64    timestamp_ms
 Rid    device_id
 Rid    workspace_id     (the actor; all-zero bytes = repository-level)
-String kind             ("init" | "save" | "restore" | "workspace-add" | "publish" | "update" | "undo" | "merge-abort" | "git-import" | "branch-create" | "branch-switch" | "merge" | "fetch" | "push" | "remote-remove" | "tag-create" | "tag-delete" | "branch-delete" | "branch-rename")
+String kind             ("init" | "save" | "restore" | "workspace-add" | "publish" | "update" | "undo" | "merge-abort" | "git-import" | "branch-create" | "branch-switch" | "merge" | "fetch" | "push" | "remote-remove" | "tag-create" | "tag-delete" | "branch-delete" | "branch-rename" | "workspace-remove")
 String description
 u8     has_backup; if 1: Id backup_snapshot
 u8     has_undoes; if 1: Id undone_operation          (since R2 slice 2b; RFC 0004 §10)
