@@ -8,32 +8,35 @@ contribute to one shared branch without ever silently losing acknowledged work
 (see `docs/ROADMAP_REVISED.md`; "ARC" was the project's earlier
 working name).
 
-**Current state:** pre-release **v0.1.0-alpha.2**
-([download](https://github.com/omer-ulucan/concurv/releases/tag/v0.1.0-alpha.2)):
-named branches and **sync between machines**. A self-hosted relay
-(`concurvd`) holds the published branches, and `concurv clone | fetch |
-push` exchange work over pinned TLS without ever publishing or overwriting
-anything implicitly. Gates passed: R1 (local kernel), R1.5 (daily usability
-and safety), R2 (workspaces and concurrency) and R3 (sync, on Windows and
-Linux). R2.5 (local merge and branches) is implemented and tested; it
-awaits the owner's final acceptance of the branch model (ADR 0007). On one
-machine: several private workspaces on shared named branches,
-compare-and-swap publication, three-way merge with line-level merging of
-non-overlapping edits, recorded conflicts that you resolve and save,
-workspace-scoped `undo`, Git-compatible ignores, and Git export/import.
+**Current state:** pre-release **v0.1.0-alpha.3**
+([download](https://github.com/omer-ulucan/concurv/releases/tag/v0.1.0-alpha.3)).
+
+- **One machine:** several private workspaces on shared named branches,
+  compare-and-swap publication, three-way merge with line-level merging of
+  non-overlapping edits, recorded conflicts that you resolve and save,
+  workspace-scoped `undo`, Git-compatible ignores.
+- **Across machines:** a self-hosted relay (`concurvd`) holds the published
+  branches; `concurv clone | fetch | push` exchange work over pinned TLS
+  without ever publishing or overwriting anything implicitly.
+- **Protected branches** (R4): a branch can require a passing, recorded
+  check of exactly the snapshot about to be published (`concurv check`,
+  RFC 0005).
+- **Agent coordination** (R5): advisory intents, warnings about
+  overlapping or dependent work (a signature changed on another machine
+  warns before you publish code using it), and the operation log as JSON
+  events (RFC 0006).
+- **Developer beta pieces** (R6): tags, Git export and import of tags,
+  import into existing history (repeated Git → concurv → Git round trips
+  that keep commit ids), configuration files, shell completions,
+  contributor and security documents.
+
+Gates passed: R1, R1.5, R2, R3, R4 and R5 (since R3 on Windows and Linux;
+macOS last ran at R2.5). R2.5 awaits the owner's final acceptance of the
+branch model (ADR 0007); R6 awaits a license and macOS release builds.
 Stress-tested with concurrent writers, killed processes (including the
 relay) and simulated disconnects at every byte of a transfer; see
-`docs/ROADMAP_STATUS.md`. Since alpha.2, `main` also has **protected branches**
-(R4): a branch can require a passing, recorded check of exactly the snapshot
-about to be published (`concurv check`, RFC 0005), and **agent coordination**
-(R5): advisory intents, warnings about overlapping or dependent work (a
-signature changed on another machine warns before you publish code using
-it), and the operation log as JSON events (RFC 0006). From the developer
-beta (R6): **tags**, Git export and import of tags, **import into existing
-history** (repeated Git → concurv → Git round trips that keep commit ids),
-configuration files, shell completions, and contributor and security
-documents. **Not yet:** a license (the owner's decision), macOS release
-builds, relay-side tags, branch delete/rename.
+`docs/ROADMAP_STATUS.md`. **Not yet:** a license (the owner's decision),
+macOS release builds, tags at the relay, branch delete/rename.
 
 > **Alpha:** the on-disk format and the CLI/JSON contract may still change
 > before 0.1.0. **No license has been chosen yet**: until one is added, the
@@ -45,11 +48,14 @@ Download the archive for your platform from the
 [latest release](https://github.com/omer-ulucan/concurv/releases) (Linux
 x86_64, static; Windows x86_64), check it against `SHA256SUMS`, and put
 `concurv` and `concurvd` on your `PATH`. There is no macOS binary for
-alpha.2; on a Mac (or anywhere), build from source with Rust 1.89+:
+alpha.3; on a Mac (or anywhere), build from source with Rust 1.89+:
 
 ```console
-$ cargo install --git https://github.com/omer-ulucan/concurv --tag v0.1.0-alpha.2 concurv-cli
+$ cargo install --git https://github.com/omer-ulucan/concurv --tag v0.1.0-alpha.3 concurv-cli
 ```
+
+Shell completion: `concurv completions bash|zsh|fish|powershell|elvish`
+(user guide §11).
 
 ## Quick start
 
