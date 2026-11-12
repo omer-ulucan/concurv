@@ -1572,19 +1572,6 @@ fn cmd_branch(repo: &Repo, cmd: BranchCmd) -> Result<Output> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::format_time;
-
-    #[test]
-    fn time_formatting() {
-        assert_eq!(format_time(0), "1970-01-01 00:00:00 UTC");
-        assert_eq!(format_time(1_793_491_200_000), "2026-11-01 00:00:00 UTC");
-        assert_eq!(format_time(951_782_400_000), "2000-02-29 00:00:00 UTC");
-        assert_eq!(format_time(-1000), "1969-12-31 23:59:59 UTC");
-    }
-}
-
 fn check_output(c: &concurv_workspace::check::CheckOutcome) -> (Value, String) {
     let r = &c.record;
     let mut human = format!(
@@ -1635,4 +1622,17 @@ fn check_output(c: &concurv_workspace::check::CheckOutcome) -> (Value, String) {
         }),
         human,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_time;
+
+    #[test]
+    fn time_formatting() {
+        assert_eq!(format_time(0), "1970-01-01 00:00:00 UTC");
+        assert_eq!(format_time(1_793_491_200_000), "2026-11-01 00:00:00 UTC");
+        assert_eq!(format_time(951_782_400_000), "2000-02-29 00:00:00 UTC");
+        assert_eq!(format_time(-1000), "1969-12-31 23:59:59 UTC");
+    }
 }
