@@ -50,9 +50,15 @@ fn protected_publish_through_the_cli() {
     fs::write(d.join("good.txt"), "ok").unwrap();
     assert_eq!(run(d, &["save", "-m", "good"]).0, 0);
     let (code, v) = run(d, &["publish"]);
-    assert_eq!((code, v["error"]["code"].as_str()), (44, Some("CONCURV_POLICY_FAIL")));
+    assert_eq!(
+        (code, v["error"]["code"].as_str()),
+        (44, Some("CONCURV_POLICY_FAIL"))
+    );
     let (code, v) = run(d, &["check"]);
-    assert_eq!((code, v["error"]["code"].as_str()), (45, Some("CONCURV_UNTRUSTED_POLICY")));
+    assert_eq!(
+        (code, v["error"]["code"].as_str()),
+        (45, Some("CONCURV_UNTRUSTED_POLICY"))
+    );
     let (code, v) = run(d, &["check", "--trust"]);
     assert_eq!(code, 0, "{v}");
     assert_eq!(v["data"]["passed"], true);
@@ -67,7 +73,10 @@ fn protected_publish_through_the_cli() {
     fs::write(d.join("bad.flag"), "x").unwrap();
     assert_eq!(run(d, &["save", "-m", "bad"]).0, 0);
     let (code, v) = run(d, &["publish", "--check"]);
-    assert_eq!((code, v["error"]["code"].as_str()), (44, Some("CONCURV_POLICY_FAIL")));
+    assert_eq!(
+        (code, v["error"]["code"].as_str()),
+        (44, Some("CONCURV_POLICY_FAIL"))
+    );
     // Fix it: `publish --check` checks and publishes.
     fs::remove_file(d.join("bad.flag")).unwrap();
     assert_eq!(run(d, &["save", "-m", "fixed"]).0, 0);
