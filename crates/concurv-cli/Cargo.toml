@@ -1,6 +1,6 @@
 [package]
 name = "concurv-cli"
-description = "The `concurv` command-line interface"
+description = "The `concurv` command-line interface and the `concurvd` relay"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,10 +10,15 @@ publish.workspace = true
 name = "concurv"
 path = "src/main.rs"
 
+[[bin]]
+name = "concurvd"
+path = "src/concurvd.rs"
+
 [dependencies]
 concurv-core.workspace = true
 concurv-workspace.workspace = true
 concurv-git.workspace = true
+concurv-sync.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 

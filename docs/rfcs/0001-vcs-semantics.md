@@ -1,7 +1,8 @@
 # RFC 0001 — VCS semantics, identifiers and canonical encoding
 
-Status: **Accepted for R1** (format version 1). Changes to anything marked
-*normative* require a new format version and a migration note in ADR 0001.
+Status: **Accepted for R1** (format version 1; repository format 2 since R3,
+§7). Changes to anything marked *normative* require a new format version
+and a migration note in ADR 0001.
 
 ## 1. Entities
 
@@ -132,7 +133,7 @@ u32    parent_count, then parent_count × Id (operation ids, no duplicates)
 i64    timestamp_ms
 Rid    device_id
 Rid    workspace_id     (the actor; all-zero bytes = repository-level)
-String kind             ("init" | "save" | "restore" | "workspace-add" | "publish" | "update" | "undo")
+String kind             ("init" | "save" | "restore" | "workspace-add" | "publish" | "update" | "undo" | "merge-abort" | "git-import" | "branch-create" | "branch-switch" | "merge" | "fetch" | "push" | "remote-remove")
 String description
 u8     has_backup; if 1: Id backup_snapshot
 u8     has_undoes; if 1: Id undone_operation          (since R2 slice 2b; RFC 0004 §10)
@@ -150,6 +151,21 @@ u32 workspace_count; repeat:                          (sorted by id bytes, uniqu
   u8   has_branch; if 1: String branch
   u8   has_head;   if 1: Id snapshot
   u8   has_merge;  if 1: Id conflict   (since R2 slice 2c: pending merge, RFC 0004 §11)
+[ViewExtension]                       (since R3, repository format 2; absent if empty)
+```
+
+ViewExtension (remote-tracking references, RFC 0003 §5). Present **only**
+if at least one remote-tracking reference exists, so an operation without
+them has exactly its format-1 bytes and id:
+
+```
+u8  tag = 1                           (any other tag: decode error)
+u32 remote_count (≥ 1); repeat (sorted by name bytes, unique):
+  String remote_name                  (rules of workspace names)
+  u32 branch_count (≥ 1); repeat (sorted by name bytes, unique):
+    String branch                     (valid branch name)
+    Id     head                       (snapshot)
+    u64    seq                        (the relay's publication sequence number)
 ```
 
 ### 3.5 Conflict payload (since R2 slice 2c)
@@ -240,7 +256,16 @@ A header announcing a larger non-blob payload is rejected before allocation.
 - R2 (multiple workspaces) adds entries to `View.workspaces`; concurrent
   writers already serialize through the lock + CAS on `op_head`.
 - R3 published refs live on a relay and are *not* stored in the local View as
-  authoritative; a local `remote/<name>/<branch>` mirror may be added to View.
+  authoritative. The local mirror `remote/<name>/<branch>` is the view
+  extension of §3.4 (since R3).
+- **Repository format 2** (`.concurv/format` = `concurv-repo-format 2`,
+  since R3) marks a repository whose operations may carry that extension.
+  Object encodings and ids are unchanged; every format-1 operation is a
+  valid format-2 operation. A format-1 repository is upgraded, by one
+  atomic replacement of `format` under the repository lock, when its first
+  remote is added. Builds that only know format 1 refuse a format-2
+  repository with `CONCURV_UNSUPPORTED_FORMAT` (exit 12) instead of
+  misreading it.
 - New object kinds (conflict, attestation) get new kind bytes; old decoders
   reject them with `CONCURV_UNSUPPORTED_FORMAT` rather than misparse.
 

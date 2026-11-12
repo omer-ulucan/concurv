@@ -5,6 +5,31 @@ version 1 and the CLI/JSON contract are not frozen until 0.1.0 (see ADR 0003).
 
 ## [Unreleased]
 
+### Added (R3, RFC 0003: sync between machines)
+- **`concurvd`**, the relay: one directory per repository, the single
+  authority for published branch heads; `init`, `fingerprint`, `device
+  add|list|revoke`, `serve`. TLS 1.3 with a self-signed certificate that
+  clients pin by fingerprint; per-device tokens with scopes `read`, `write`,
+  `publish:<branch>|*`.
+- **`concurv remote add|list|remove`, `fetch`, `push`, `clone`.** Fetch
+  records the relay's heads as remote-tracking references
+  `remote/<remote>/<branch>` and fast-forwards local branches that are
+  behind; push is a compare-and-swap at the relay, fast-forward only, with
+  request ids so a retried push never publishes twice. Diverged work is
+  integrated with `concurv merge remote/<remote>/<branch>`.
+- Everything received is quarantined, verified object by object and
+  checked for graph closure before anything references it; a relay whose
+  head went backwards is reported and never followed.
+- Exit codes 70–75: network, protocol, protocol mismatch, authentication,
+  permission, relay identity.
+
+### Changed (format, R3)
+- **Repository format 2**: operations may carry remote-tracking references
+  (an optional view extension; existing operations keep their bytes and
+  ids). A repository is upgraded when its first remote is added; older
+  builds refuse it with exit 12 (ADR 0001 migration note).
+- Release archives contain both `concurv` and `concurvd`.
+
 ### Added (R2.5, ADR 0007)
 - **Named branches**: `branch create [--at | --switch]`, `branch list`,
   `branch switch`; `workspace add --branch`; `git export --from <branch>`.

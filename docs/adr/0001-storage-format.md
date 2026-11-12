@@ -47,6 +47,13 @@ mutable `op_head` file** (the Jujutsu "view" design).
 - A future format N+1 will ship an explicit `concurv migrate` that rewrites into a
   new store and keeps a mapping from old ids to new ids; old ids are never
   silently reinterpreted.
+- **Migration note, repository format 1 → 2 (R3, 2026-11-12).** Format 2
+  adds an optional trailing view extension to operations (remote-tracking
+  references, RFC 0001 §3.4). Object magic and every object id stay the
+  same, and every format-1 operation decodes unchanged, so no rewrite is
+  needed: `concurv remote add` (and `clone`) replaces `.concurv/format`
+  atomically under the repository lock. Downgrading is not supported:
+  builds before R3 refuse a format-2 repository (`CONCURV_UNSUPPORTED_FORMAT`).
 
 ## Consequences
 

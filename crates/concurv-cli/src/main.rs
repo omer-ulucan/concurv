@@ -134,6 +134,67 @@ enum Cmd {
         #[arg(long)]
         abort: bool,
     },
+    /// Manage remotes: relays this repository syncs with (RFC 0003).
+    Remote {
+        #[command(subcommand)]
+        cmd: RemoteCmd,
+    },
+    /// Download a relay's published branches: record them as remote-tracking
+    /// references and fast-forward local branches that are behind. Never
+    /// changes working files.
+    Fetch {
+        /// Remote (default: the only remote, or `origin`).
+        remote: Option<String>,
+    },
+    /// Publish a local branch at a relay by compare-and-swap (fast-forward only).
+    Push {
+        /// Remote (default: the only remote, or `origin`).
+        remote: Option<String>,
+        /// Branch to push (default: the branch this workspace tracks).
+        #[arg(long)]
+        branch: Option<String>,
+    },
+    /// Create a repository from a relay and check out its default branch.
+    Clone {
+        /// Relay URL, `concurv://host[:port]`.
+        url: String,
+        /// New directory (missing or empty).
+        #[arg(value_name = "DIR")]
+        directory: PathBuf,
+        /// The relay's certificate fingerprint (`concurvd fingerprint`).
+        #[arg(long)]
+        fingerprint: String,
+        /// File holding the device token (default: $CONCURV_REMOTE_TOKEN).
+        #[arg(long, value_name = "FILE")]
+        token_file: Option<PathBuf>,
+        /// Name of the remote.
+        #[arg(long, default_value = "origin")]
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum RemoteCmd {
+    /// Add a remote (contacts nothing; upgrades the repository to format 2).
+    Add {
+        /// Remote name.
+        name: String,
+        /// Relay URL, `concurv://host[:port]`.
+        url: String,
+        /// The relay's certificate fingerprint (`concurvd fingerprint`).
+        #[arg(long)]
+        fingerprint: String,
+        /// File holding the device token (default: $CONCURV_REMOTE_TOKEN).
+        #[arg(long, value_name = "FILE")]
+        token_file: Option<PathBuf>,
+    },
+    /// List remotes and their remote-tracking references.
+    List,
+    /// Remove a remote, its token and its remote-tracking references.
+    Remove {
+        /// Remote name.
+        name: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -248,6 +309,18 @@ impl Cmd {
             Cmd::Git {
                 cmd: GitCmd::Import { .. },
             } => "git import",
+            Cmd::Remote {
+                cmd: RemoteCmd::Add { .. },
+            } => "remote add",
+            Cmd::Remote {
+                cmd: RemoteCmd::List,
+            } => "remote list",
+            Cmd::Remote {
+                cmd: RemoteCmd::Remove { .. },
+            } => "remote remove",
+            Cmd::Fetch { .. } => "fetch",
+            Cmd::Push { .. } => "push",
+            Cmd::Clone { .. } => "clone",
         }
     }
 }
@@ -315,6 +388,103 @@ fn main() -> ExitCode {
 
 fn opts() -> RepoOptions {
     RepoOptions::default()
+}
+
+fn sync_opts() -> concurv_sync::SyncOptions {
+    concurv_sync::SyncOptions::default()
+}
+
+/// A device token from `--token-file`, else `$CONCURV_REMOTE_TOKEN`.
+fn read_token(file: Option<&std::path::Path>) -> Result<String> {
+    match file {
+        Some(p) => std::fs::read_to_string(p)
+            .map(|s| s.trim().to_owned())
+            .map_err(|e| ConcurvError::io(e, "read token file", p)),
+        None => std::env::var(concurv_sync::remote::TOKEN_ENV)
+            .ok()
+            .filter(|t| !t.is_empty())
+            .ok_or_else(|| {
+                ConcurvError::new(
+                    ErrorCode::InvalidArgument,
+                    format!(
+                        "no device token: pass --token-file or set {}",
+                        concurv_sync::remote::TOKEN_ENV
+                    ),
+                )
+            }),
+    }
+}
+
+/// The remote named on the command line, else the only remote, else `origin`.
+fn default_remote(repo: &Repo, given: Option<String>) -> Result<String> {
+    if let Some(r) = given {
+        return Ok(r);
+    }
+    let all = concurv_sync::remote::list(repo)?;
+    match all.as_slice() {
+        [one] => Ok(one.name.clone()),
+        _ if all.iter().any(|r| r.name == "origin") => Ok("origin".into()),
+        [] => Err(ConcurvError::new(
+            ErrorCode::NotFound,
+            "this repository has no remote (add one with `concurv remote add`)",
+        )),
+        _ => Err(ConcurvError::new(
+            ErrorCode::InvalidArgument,
+            "several remotes and none is named origin: name the remote",
+        )),
+    }
+}
+
+fn fetch_output(o: &concurv_sync::FetchOutcome) -> (Value, String) {
+    let hex = |s: Option<concurv_core::SnapshotId>| s.map(|s| s.to_hex());
+    let mut human = format!("Fetched from {} ({} object(s)).\n", o.remote, o.objects);
+    let mut arr = Vec::new();
+    for r in &o.branches {
+        let what = match r.action {
+            concurv_sync::BranchAction::UpToDate => "up to date".to_owned(),
+            concurv_sync::BranchAction::Created => "new branch".to_owned(),
+            concurv_sync::BranchAction::FastForwarded => "fast-forwarded".to_owned(),
+            concurv_sync::BranchAction::LocalAhead => {
+                "local branch is ahead: `concurv push`".to_owned()
+            }
+            concurv_sync::BranchAction::Diverged => format!(
+                "diverged: `concurv merge remote/{}/{}` in a workspace tracking {}, then publish and push",
+                o.remote, r.branch, r.branch
+            ),
+            concurv_sync::BranchAction::Rewound => {
+                "NOT followed: the relay's head went backwards or sideways".to_owned()
+            }
+            concurv_sync::BranchAction::Vanished => "gone from the relay (kept here)".to_owned(),
+            concurv_sync::BranchAction::InvalidName => "ignored: invalid name".to_owned(),
+            concurv_sync::BranchAction::NameCollision => {
+                "not created: name collides with a local branch".to_owned()
+            }
+        };
+        human.push_str(&format!("  {}: {what}\n", r.branch));
+        arr.push(json!({
+            "branch": r.branch,
+            "remote_head": r.remote.map(|h| h.head.to_hex()),
+            "seq": r.remote.map(|h| h.seq),
+            "tracked_before": hex(r.tracked_before),
+            "local_before": hex(r.local_before),
+            "local_after": hex(r.local_after),
+            "action": r.action.as_str(),
+            "note": r.note,
+        }));
+    }
+    if o.branches.is_empty() {
+        human.push_str("  (the relay has no published branches)\n");
+    }
+    (
+        json!({
+            "remote": o.remote,
+            "relay": o.relay,
+            "objects": o.objects,
+            "branches": arr,
+            "operation": o.operation.map(|s| s.to_hex()),
+        }),
+        human,
+    )
 }
 
 fn run(cli: Cli) -> Result<Output> {
@@ -592,6 +762,157 @@ fn run(cli: Cli) -> Result<Output> {
                     o.commits, o.branch, o.git_tip, o.tip, o.written
                 ),
             )
+        }
+        Cmd::Remote {
+            cmd:
+                RemoteCmd::Add {
+                    name,
+                    url,
+                    fingerprint,
+                    token_file,
+                },
+        } => {
+            let repo = Repo::discover(&cwd, opts())?;
+            let token = read_token(token_file.as_deref())?;
+            let r = concurv_sync::remote::add(&repo, &name, &url, &fingerprint, &token)?;
+            ok(
+                json!({ "name": r.name, "url": r.url.to_string(), "fingerprint": r.fingerprint }),
+                format!(
+                    "Added remote {} ({}). `concurv fetch {}` downloads its branches.",
+                    r.name, r.url, r.name
+                ),
+            )
+        }
+        Cmd::Remote {
+            cmd: RemoteCmd::List,
+        } => {
+            let repo = Repo::discover(&cwd, opts())?;
+            let (_, op) = repo.oplog().head()?;
+            let mut human = String::new();
+            let mut arr = Vec::new();
+            for r in concurv_sync::remote::list(&repo)? {
+                let tracked = op.view.remotes.get(&r.name).cloned().unwrap_or_default();
+                human.push_str(&format!("{}\t{}\t{}\n", r.name, r.url, r.fingerprint));
+                for (b, h) in &tracked {
+                    human.push_str(&format!(
+                        "  remote/{}/{b}\t{} (seq {})\n",
+                        r.name,
+                        &h.head.to_hex()[..12],
+                        h.seq
+                    ));
+                }
+                arr.push(json!({
+                    "name": r.name,
+                    "url": r.url.to_string(),
+                    "fingerprint": r.fingerprint,
+                    "branches": tracked.iter()
+                        .map(|(b, h)| (b.clone(), json!({ "head": h.head.to_hex(), "seq": h.seq })))
+                        .collect::<serde_json::Map<_, _>>(),
+                }));
+            }
+            if arr.is_empty() {
+                human.push_str("No remotes (add one with `concurv remote add`).");
+            }
+            ok(json!({ "remotes": arr }), human)
+        }
+        Cmd::Remote {
+            cmd: RemoteCmd::Remove { name },
+        } => {
+            let repo = Repo::discover(&cwd, opts())?;
+            let operation = concurv_sync::remote::remove(&repo, &name)?;
+            ok(
+                json!({ "name": name, "operation": operation.map(|o| o.to_hex()) }),
+                format!("Removed remote {name} and its remote-tracking references."),
+            )
+        }
+        Cmd::Fetch { remote } => {
+            let repo = Repo::discover(&cwd, opts())?;
+            let remote = default_remote(&repo, remote)?;
+            let o = concurv_sync::fetch(&repo, &remote, &sync_opts())?;
+            let (data, human) = fetch_output(&o);
+            ok(data, human)
+        }
+        Cmd::Push { remote, branch } => {
+            let repo = Repo::discover(&cwd, opts())?;
+            let remote = default_remote(&repo, remote)?;
+            let o = concurv_sync::push(&repo, &remote, branch.as_deref(), &sync_opts())?;
+            let short = |s: concurv_core::SnapshotId| s.to_hex()[..12].to_owned();
+            let human = match o.result {
+                concurv_sync::PushResult::Pushed => format!(
+                    "Pushed {} to {}: {} -> {} (seq {}, {} object(s) sent{}).",
+                    o.branch,
+                    o.remote,
+                    o.from.map_or("(new branch)".into(), short),
+                    short(o.head),
+                    o.seq.unwrap_or(0),
+                    o.objects,
+                    if o.replayed {
+                        ", confirmed after a lost reply"
+                    } else {
+                        ""
+                    }
+                ),
+                concurv_sync::PushResult::UpToDate => format!(
+                    "{} at {} is already at {}.",
+                    o.branch,
+                    o.remote,
+                    short(o.head)
+                ),
+                concurv_sync::PushResult::Behind => format!(
+                    "{} at {} is ahead of your local {}: nothing to push. Run `concurv fetch`.",
+                    o.branch, o.remote, o.branch
+                ),
+            };
+            ok(
+                json!({
+                    "remote": o.remote,
+                    "branch": o.branch,
+                    "from": o.from.map(|s| s.to_hex()),
+                    "head": o.head.to_hex(),
+                    "seq": o.seq,
+                    "result": o.result.as_str(),
+                    "objects": o.objects,
+                    "replayed": o.replayed,
+                    "operation": o.operation.map(|s| s.to_hex()),
+                }),
+                human,
+            )
+        }
+        Cmd::Clone {
+            url,
+            directory,
+            fingerprint,
+            token_file,
+            name,
+        } => {
+            let token = read_token(token_file.as_deref())?;
+            let target = if directory.is_absolute() {
+                directory
+            } else {
+                cwd.join(directory)
+            };
+            let o = concurv_sync::clone_repo(
+                &target,
+                &url,
+                &fingerprint,
+                &token,
+                &name,
+                opts(),
+                &sync_opts(),
+            )?;
+            let (mut data, mut human) = fetch_output(&o.fetch);
+            data["root"] = json!(o.root.display().to_string());
+            data["checked_out"] = json!(o.checked_out.map(|s| s.to_hex()));
+            data["written"] = json!(o.written);
+            human = format!(
+                "Cloned {url} into {}.\n{human}{}",
+                o.root.display(),
+                match o.checked_out {
+                    Some(s) => format!("\nChecked out {} ({} file(s)).", s, o.written),
+                    None => "\nThe relay has no default branch yet: nothing checked out.".into(),
+                }
+            );
+            ok(data, human)
         }
         Cmd::Undo => {
             let repo = Repo::discover(&cwd, opts())?;
@@ -940,6 +1261,11 @@ fn cmd_op_log(repo: &Repo, limit: usize) -> Result<Output> {
             "head": head.map(|h| h.to_hex()),
             "branches": op.view.branches.iter()
                 .map(|(name, s)| (name.clone(), Value::String(s.to_hex())))
+                .collect::<serde_json::Map<_, _>>(),
+            "remotes": op.view.remotes.iter()
+                .map(|(r, m)| (r.clone(), m.iter()
+                    .map(|(b, h)| (b.clone(), json!({ "head": h.head.to_hex(), "seq": h.seq })))
+                    .collect::<serde_json::Map<_, _>>().into()))
                 .collect::<serde_json::Map<_, _>>(),
         }));
     }

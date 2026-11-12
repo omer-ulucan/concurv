@@ -293,6 +293,7 @@ dependencies = [
  "clap",
  "concurv-core",
  "concurv-git",
+ "concurv-sync",
  "concurv-workspace",
  "serde_json",
  "tempfile",

@@ -47,9 +47,12 @@ jobs:
           set -euo pipefail
           name="concurv-${GITHUB_REF_NAME}-${{ matrix.target }}"
           mkdir -p "dist/$name"
-          bin=target/${{ matrix.target }}/release/concurv
-          [ -f "$bin.exe" ] && bin="$bin.exe"
-          cp "$bin" README.md CHANGELOG.md "dist/$name/"
+          for b in concurv concurvd; do
+            bin=target/${{ matrix.target }}/release/$b
+            [ -f "$bin.exe" ] && bin="$bin.exe"
+            cp "$bin" "dist/$name/"
+          done
+          cp README.md CHANGELOG.md "dist/$name/"
           cd dist
           if [ "${{ matrix.ext }}" = zip ]; then
             7z a -bd "$name.zip" "$name" > /dev/null

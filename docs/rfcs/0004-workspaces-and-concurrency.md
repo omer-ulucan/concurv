@@ -333,7 +333,7 @@ use it. New operation kinds: `branch-create` (inserts a reference, and with
 - *Local branch reference*: `view.branches[b]`, shared by all workspaces of
   the repository. Before R3, this is also the authoritative published head.
 - *Remote-tracking reference* (R3): the last relay head observed by fetch,
-  stored apart from `branches` (RFC 0003 §5).
+  stored apart from `branches` (`View::remotes`, RFC 0001 §3.4; RFC 0003 §5).
 - *Authoritative published head* (R3): the relay's head of a branch, moved
   only by its CAS.
 

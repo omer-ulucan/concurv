@@ -336,13 +336,13 @@ pub struct PublishError {
     pub missing: Vec<ObjectId>,
 }
 
-impl From<ConcurvError> for PublishError {
+impl From<ConcurvError> for Box<PublishError> {
     fn from(error: ConcurvError) -> Self {
-        Self {
+        Box::new(PublishError {
             error,
             observed: None,
             missing: Vec::new(),
-        }
+        })
     }
 }
 
@@ -721,7 +721,7 @@ impl Relay {
         device: &Device,
         staging: Option<&ObjectStore>,
         req: &PublishRequest,
-    ) -> std::result::Result<Published, PublishError> {
+    ) -> std::result::Result<Published, Box<PublishError>> {
         device.require_publish(&req.branch)?;
         if RandomId::from_hex(&req.request_id).is_err() {
             return Err(crate::proto::protocol("request_id must be 32 hex digits").into());
@@ -746,7 +746,7 @@ impl Relay {
         }
         let current = state.branches.get(&req.branch).copied();
         if current.map(|h| h.head) != req.expected {
-            return Err(PublishError {
+            return Err(Box::new(PublishError {
                 error: ConcurvError::new(
                     ErrorCode::StaleHead,
                     format!(
@@ -756,7 +756,7 @@ impl Relay {
                 ),
                 observed: current,
                 missing: Vec::new(),
-            });
+            }));
         }
         if current.is_none() {
             validate_branch_name(&req.branch)?;
@@ -773,7 +773,7 @@ impl Relay {
         };
         let closure = staged_closure(staging, &self.store, &[req.proposed])?;
         if !closure.missing.is_empty() {
-            return Err(PublishError {
+            return Err(Box::new(PublishError {
                 error: ConcurvError::new(
                     ErrorCode::ObjectMissing,
                     format!(
@@ -783,7 +783,7 @@ impl Relay {
                 ),
                 observed: None,
                 missing: closure.missing,
-            });
+            }));
         }
         for id in &closure.order {
             self.store.adopt(staging, id)?;
