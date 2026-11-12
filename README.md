@@ -8,23 +8,23 @@ contribute to one shared branch without ever silently losing acknowledged work
 (see `docs/ROADMAP_REVISED.md`; "ARC" was the project's earlier
 working name).
 
-**Current state:** pre-release **v0.1.0-alpha.1**
-([download](https://github.com/omer-ulucan/concurv/releases/tag/v0.1.0-alpha.1));
-`main` is ahead of it. Gates passed: R1 (local kernel), R1.5 (daily
-usability and safety) and R2 (workspaces and concurrency). R2.5 (local
-merge and branches) is implemented and tested; it awaits the owner's final
-acceptance of the branch model (ADR 0007). **R3, sync between machines, is
-implemented** on `main`: a self-hosted relay (`concurvd`) holds the
-published branches, and `concurv clone | fetch | push` exchange work over
-pinned TLS without ever publishing or overwriting anything implicitly. On
-one machine: several private workspaces on shared named branches,
+**Current state:** pre-release **v0.1.0-alpha.2**
+([download](https://github.com/omer-ulucan/concurv/releases/tag/v0.1.0-alpha.2)):
+named branches and **sync between machines**. A self-hosted relay
+(`concurvd`) holds the published branches, and `concurv clone | fetch |
+push` exchange work over pinned TLS without ever publishing or overwriting
+anything implicitly. Gates passed: R1 (local kernel), R1.5 (daily usability
+and safety), R2 (workspaces and concurrency) and R3 (sync, on Windows and
+Linux). R2.5 (local merge and branches) is implemented and tested; it
+awaits the owner's final acceptance of the branch model (ADR 0007). On one
+machine: several private workspaces on shared named branches,
 compare-and-swap publication, three-way merge with line-level merging of
 non-overlapping edits, recorded conflicts that you resolve and save,
 workspace-scoped `undo`, Git-compatible ignores, and Git export/import.
 Stress-tested with concurrent writers, killed processes (including the
 relay) and simulated disconnects at every byte of a transfer; see
-`docs/ROADMAP_STATUS.md`. **Not yet:** verified integration (R4), agent
-coordination (R5).
+`docs/ROADMAP_STATUS.md`. **Not yet:** verified integration (R4, designed in
+RFC 0005), agent coordination (R5).
 
 > **Alpha:** the on-disk format and the CLI/JSON contract may still change
 > before 0.1.0. **No license has been chosen yet**: until one is added, the
@@ -34,12 +34,12 @@ coordination (R5).
 
 Download the archive for your platform from the
 [latest release](https://github.com/omer-ulucan/concurv/releases) (Linux
-x86_64, macOS Apple Silicon and Intel, Windows x86_64), check it against
-`SHA256SUMS`, and put `concurv` on your `PATH`. Or build from source with
-Rust 1.89+:
+x86_64, static; Windows x86_64), check it against `SHA256SUMS`, and put
+`concurv` and `concurvd` on your `PATH`. There is no macOS binary for
+alpha.2; on a Mac (or anywhere), build from source with Rust 1.89+:
 
 ```console
-$ cargo install --git https://github.com/omer-ulucan/concurv --tag v0.1.0-alpha.1 concurv-cli
+$ cargo install --git https://github.com/omer-ulucan/concurv --tag v0.1.0-alpha.2 concurv-cli
 ```
 
 ## Quick start
@@ -135,9 +135,7 @@ Full walkthrough and recovery procedures: **`docs/user-guide.md`**.
   for completeness before it is stored; a relay whose history went
   backwards is reported, not followed. A retried push never publishes twice.
 - Not implemented yet: rename detection, garbage collection, tags, branch
-  delete/rename, symlinks on Windows, several repositories per relay. The
-  released v0.1.0-alpha.1 binaries predate branches and sync; build from
-  `main` to get them.
+  delete/rename, symlinks on Windows, several repositories per relay.
 - Don't keep repositories in cloud-synced folders (OneDrive, Dropbox).
 
 ## Build and test
@@ -177,6 +175,7 @@ Workspace layout: `crates/concurv-{core,objects,refs,ops,workspace,git,sync,cli,
 | `docs/rfcs/0002-durability-and-transactions.md` | write ordering, fsync, commit point, recovery |
 | `docs/rfcs/0003-sync-protocol.md` | sync between machines: relay, pinned TLS, devices and scopes, wire protocol, fetch/push rules, quarantine (implemented, version 1) |
 | `docs/rfcs/0004-workspaces-and-concurrency.md` | workspaces, save vs publish, update and merge, locks and concurrency |
+| `docs/rfcs/0005-verified-integration.md` | R4 design: policies, attestations, protected branches (draft, not implemented) |
 | `docs/adr/0001-storage-format.md` | why a native BLAKE3 store with one mutable pointer |
 | `docs/adr/0002-git-interop.md` | the Git bridge: how export/import work, what is and isn't preserved |
 | `docs/adr/0003-project-rename-concurv.md` | the ARC → concurv rename and every identifier it changed |

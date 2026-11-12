@@ -24,6 +24,12 @@ version 1 and the CLI/JSON contract are not frozen until 0.1.0 (see ADR 0003).
 - **Repository format 3**: the store may contain attestation objects;
   upgraded by the first `concurv check`. Builds before R4 refuse it.
 
+## [0.1.0-alpha.2] — 2026-11-12
+
+Second pre-release (`docs/releases/v0.1.0-alpha.2.md`): named branches and sync
+between machines. Built and tested by the local CI gate on Windows and Linux;
+no macOS binary (build from source). No license is asserted yet.
+
 ### Added (R3, RFC 0003: sync between machines)
 - **`concurvd`**, the relay: one directory per repository, the single
   authority for published branch heads; `init`, `fingerprint`, `device

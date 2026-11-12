@@ -280,7 +280,7 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "concurv-bench"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "concurv-core",
  "concurv-workspace",
@@ -288,7 +288,7 @@ dependencies = [
 
 [[package]]
 name = "concurv-cli"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "clap",
  "concurv-core",
@@ -302,7 +302,7 @@ dependencies = [
 
 [[package]]
 name = "concurv-core"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "getrandom 0.4.3",
  "proptest",
@@ -311,7 +311,7 @@ dependencies = [
 
 [[package]]
 name = "concurv-git"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "concurv-core",
  "concurv-objects",
@@ -321,7 +321,7 @@ dependencies = [
 
 [[package]]
 name = "concurv-objects"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "blake3",
  "concurv-core",
@@ -331,7 +331,7 @@ dependencies = [
 
 [[package]]
 name = "concurv-ops"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "concurv-core",
  "concurv-objects",
@@ -340,7 +340,7 @@ dependencies = [
 
 [[package]]
 name = "concurv-refs"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "concurv-core",
  "concurv-objects",
@@ -349,7 +349,7 @@ dependencies = [
 
 [[package]]
 name = "concurv-sync"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "blake3",
  "concurv-core",
@@ -366,7 +366,7 @@ dependencies = [
 
 [[package]]
 name = "concurv-workspace"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "blake3",
  "concurv-core",
