@@ -41,8 +41,9 @@ mv "$work/$name.zip" "$out/"
 echo "== Linux x86_64, static musl, in WSL ($distro)"
 wslrepo=$(wsl.exe -d "$distro" --exec wslpath -a "$(cygpath -m "$repo")" | tr -d '\r')
 wslout=$(wsl.exe -d "$distro" --exec wslpath -a "$(cygpath -m "$out")" | tr -d '\r')
-# --exec: no extra parse by the login shell; values travel as arguments.
-wsl.exe -d "$distro" --exec bash -lc '
+# --exec: no extra parse by the login shell; values travel as arguments
+# (MSYS_NO_PATHCONV: Git Bash must not rewrite the Linux paths).
+MSYS_NO_PATHCONV=1 wsl.exe -d "$distro" --exec bash -lc '
   set -euo pipefail
   repo=$1 sha=$2 tag=$3 out=$4
   w=$(mktemp -d); trap "rm -rf \"$w\"" EXIT
