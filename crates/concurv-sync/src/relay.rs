@@ -234,6 +234,29 @@ struct StoredIntent {
     intent: concurv_workspace::coord::Intent,
 }
 
+/// A tag at the relay (ADR 0008 §7): created once, never moved.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredTag {
+    target: String,
+    device: String,
+    created_ms: i64,
+}
+
+/// `tags.json`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TagsFile {
+    concurv_relay_tags: u32,
+    tags: BTreeMap<String, StoredTag>,
+}
+
+/// Most tags created by one request.
+pub const MAX_TAGS_PER_REQUEST: usize = 256;
+/// Most tags a relay keeps (every answer lists them all and must fit in one
+/// message of at most 1 MiB, even with 200-byte names).
+pub const MAX_RELAY_TAGS: usize = 2048;
+
 /// An attestation a device with the `attest` scope vouched for.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -860,6 +883,139 @@ impl Relay {
         let body = serde_json::to_vec(&all).map_err(|e| ConcurvError::internal(e.to_string()))?;
         write_file_atomic(self.store.tmp_dir(), &path, &body, &self.opts.faults)?;
         Ok(all.into_iter().map(|s| s.intent).collect())
+    }
+
+    fn load_tags(&self) -> Result<TagsFile> {
+        let path = self.dir.join("tags.json");
+        match fs::read(&path) {
+            Ok(b) => {
+                let f: TagsFile = serde_json::from_slice(&b).map_err(|e| {
+                    ConcurvError::new(
+                        ErrorCode::ObjectCorrupt,
+                        format!("the relay's tags.json is malformed: {e}"),
+                    )
+                })?;
+                if f.concurv_relay_tags != 1 {
+                    return Err(ConcurvError::new(
+                        ErrorCode::UnsupportedFormat,
+                        "the relay's tags.json has an unknown version",
+                    ));
+                }
+                Ok(f)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(TagsFile {
+                concurv_relay_tags: 1,
+                tags: BTreeMap::new(),
+            }),
+            Err(e) => Err(ConcurvError::io(e, "read", &path)),
+        }
+    }
+
+    /// The relay's tags (ADR 0008 §7); with `create` (scope `write`), first
+    /// add those that do not exist yet. All or nothing: every name must be
+    /// valid and not collide with another tag, every target must be a
+    /// snapshot in the history of a published branch, and a name that
+    /// exists must already name the same snapshot (tags never move;
+    /// otherwise `CONCURV_DIVERGED`). Kept in `tags.json`, under the relay
+    /// lock.
+    pub fn tags(
+        &self,
+        device: &Device,
+        create: Option<BTreeMap<String, SnapshotId>>,
+    ) -> Result<BTreeMap<String, SnapshotId>> {
+        device.require_read()?;
+        let to_map = |f: &TagsFile| -> Result<BTreeMap<String, SnapshotId>> {
+            f.tags
+                .iter()
+                .map(|(n, t)| {
+                    let id = ObjectId::from_hex(&t.target).map_err(|_| {
+                        ConcurvError::new(ErrorCode::ObjectCorrupt, "bad tag target in tags.json")
+                    })?;
+                    Ok((n.clone(), SnapshotId::from_object_id(id)))
+                })
+                .collect()
+        };
+        let Some(create) = create else {
+            return to_map(&self.load_tags()?);
+        };
+        device.require_write()?;
+        if create.len() > MAX_TAGS_PER_REQUEST {
+            return Err(crate::proto::protocol(format!(
+                "more than {MAX_TAGS_PER_REQUEST} tags in one request"
+            )));
+        }
+        let _l = self.lock()?;
+        let mut file = self.load_tags()?;
+        let heads: Vec<SnapshotId> = self.heads()?.values().map(|h| h.head).collect();
+        let mut conflicts = Vec::new();
+        let mut added = Vec::new();
+        for (name, target) in &create {
+            if let Some(t) = file.tags.get(name) {
+                if t.target != target.to_hex() {
+                    conflicts.push(format!("{name} (relay: {}, proposed: {target})", t.target));
+                }
+                continue;
+            }
+            let others: Vec<&String> = file.tags.keys().chain(added.iter()).collect();
+            concurv_workspace::tags::check_new_name(name, others)?;
+            let mut published = false;
+            if self.store.contains(&target.object_id()) {
+                for h in &heads {
+                    if is_ancestor(&self.store, *target, *h)? {
+                        published = true;
+                        break;
+                    }
+                }
+            }
+            if !published {
+                return Err(ConcurvError::new(
+                    ErrorCode::ObjectMissing,
+                    format!(
+                        "tag {name}: {target} is not in the history of a branch published at the \
+                         relay; push that branch first. No tag was created"
+                    ),
+                ));
+            }
+            added.push(name.clone());
+        }
+        if !conflicts.is_empty() {
+            return Err(ConcurvError::new(
+                ErrorCode::Diverged,
+                format!(
+                    "the relay already has tag(s) with these names at other snapshots: {}; tags \
+                     never move. No tag was created",
+                    conflicts.join(", ")
+                ),
+            ));
+        }
+        if !added.is_empty() {
+            if file.tags.len() + added.len() > MAX_RELAY_TAGS {
+                return Err(ConcurvError::new(
+                    ErrorCode::LimitExceeded,
+                    "the relay holds the most tags it accepts",
+                ));
+            }
+            let at = now(&self.opts);
+            for name in &added {
+                file.tags.insert(
+                    name.clone(),
+                    StoredTag {
+                        target: create[name].to_hex(),
+                        device: device.name.clone(),
+                        created_ms: at,
+                    },
+                );
+            }
+            let body = serde_json::to_vec_pretty(&file)
+                .map_err(|e| ConcurvError::internal(e.to_string()))?;
+            write_file_atomic(
+                self.store.tmp_dir(),
+                &self.dir.join("tags.json"),
+                &body,
+                &self.opts.faults,
+            )?;
+        }
+        to_map(&file)
     }
 
     /// Compare-and-swap of a published head (RFC 0003 §3.8). Under the

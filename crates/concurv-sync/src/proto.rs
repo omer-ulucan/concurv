@@ -110,6 +110,13 @@ pub enum Request {
         /// This device's active intents, or `null` to only read.
         intents: Option<Vec<concurv_workspace::coord::Intent>>,
     },
+    /// Read the relay's tags; with `create` (scope `write`), first add tags
+    /// that do not exist yet, each naming a snapshot of published history
+    /// (ADR 0008 §7). Tags never move: all or nothing.
+    Tags {
+        /// Tag name → snapshot id, or `null` to only read.
+        create: Option<BTreeMap<String, String>>,
+    },
     /// End of session.
     Bye {},
 }
@@ -174,6 +181,11 @@ pub enum Response {
     Intents {
         /// Active intents.
         intents: Vec<concurv_workspace::coord::Intent>,
+    },
+    /// Answer to `tags`: every tag at the relay.
+    Tags {
+        /// Tag name → snapshot id.
+        tags: BTreeMap<String, String>,
     },
     /// Answer to a successful `publish`.
     Published {

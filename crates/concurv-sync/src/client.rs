@@ -19,6 +19,9 @@ use crate::proto::{
 };
 use crate::tls::{client_config, parse_fingerprint, server_name};
 
+/// Most tags a client accepts from a relay in one answer.
+pub const MAX_FETCHED_TAGS: usize = 2048;
+
 /// A relay address: `concurv://host[:port]`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelayUrl {
@@ -438,6 +441,23 @@ impl Connection {
         };
         match self.call(&req)? {
             Response::Intents { intents } => Ok(intents),
+            other => Err(into_error(other)),
+        }
+    }
+
+    /// The relay's tags (ADR 0008 §7); with `create`, first add those that
+    /// do not exist yet (all or nothing). At most [`MAX_FETCHED_TAGS`] are
+    /// accepted; names and ids are validated by the caller.
+    pub fn tags(
+        &mut self,
+        create: Option<BTreeMap<String, SnapshotId>>,
+    ) -> Result<BTreeMap<String, String>> {
+        let req = Request::Tags {
+            create: create.map(|m| m.into_iter().map(|(n, t)| (n, t.to_hex())).collect()),
+        };
+        match self.call(&req)? {
+            Response::Tags { tags } if tags.len() <= MAX_FETCHED_TAGS => Ok(tags),
+            Response::Tags { .. } => Err(crate::proto::protocol("too many tags from the relay")),
             other => Err(into_error(other)),
         }
     }

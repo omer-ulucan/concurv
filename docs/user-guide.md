@@ -361,8 +361,11 @@ $ concurv tag delete v0.9                 # prints where it was; the snapshot st
 - The first tag upgrades the repository to **format 4**; builds older than
   this one cannot open it afterwards.
 - Tags travel to and from Git with `git export --tags` and `git import
-  --tags` (§9). Relays do not exchange tags yet: create them on each
-  machine, or go through Git.
+  --tags` (§9), and through a relay: `concurv push --tags` creates your
+  tags there (only for snapshots the relay has: push the branch first),
+  and `fetch` (or `clone`) brings the relay's tags. A relay never moves a
+  tag either: if it has the name elsewhere, `push --tags` is refused, and
+  `fetch` keeps your local tag and reports the conflict.
 
 ## 5. Going back to an earlier snapshot
 

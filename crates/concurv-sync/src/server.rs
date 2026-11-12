@@ -375,6 +375,23 @@ fn request<S: Read + Write>(
                 .map(|intents| Response::Intents { intents });
             answer(s, r)
         }
+        Request::Tags { create } => {
+            let r = (|| {
+                let create = match create {
+                    None => None,
+                    Some(m) => Some(
+                        m.into_iter()
+                            .map(|(n, t)| Ok((n, parse_snapshot(&t)?)))
+                            .collect::<Result<std::collections::BTreeMap<_, _>>>()?,
+                    ),
+                };
+                let tags = relay.tags(device, create)?;
+                Ok(Response::Tags {
+                    tags: tags.into_iter().map(|(n, t)| (n, t.to_hex())).collect(),
+                })
+            })();
+            answer(s, r)
+        }
         Request::Attest { id } => {
             let id = parse_id(&id)?;
             let r = relay

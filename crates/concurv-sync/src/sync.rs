@@ -8,7 +8,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use concurv_core::{
-    AttestationId, ConcurvError, ErrorCode, OperationId, RandomId, Result, SnapshotId,
+    AttestationId, ConcurvError, ErrorCode, ObjectId, OperationId, RandomId, Result, SnapshotId,
 };
 use concurv_objects::encoding::validate_branch_name;
 use concurv_objects::fs::TempSession;
@@ -115,8 +115,102 @@ pub struct FetchOutcome {
     pub objects: u32,
     /// Per-branch results, sorted by name.
     pub branches: Vec<BranchReport>,
+    /// Per-tag results, sorted by name (empty if the relay has no tags or
+    /// does not support them).
+    pub tags: Vec<TagReport>,
     /// Operation recorded, if any reference changed.
     pub operation: Option<OperationId>,
+}
+
+/// What `fetch` did with one of the relay's tags (ADR 0008 §7).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TagAction {
+    /// A local tag was created.
+    Created,
+    /// The local tag already names the same snapshot.
+    Unchanged,
+    /// A local tag of that name names another snapshot; it was kept (tags
+    /// never move).
+    Conflict,
+    /// The snapshot is not here (not in the fetched history); not created.
+    MissingTarget,
+    /// The name or id is not acceptable here; ignored.
+    Invalid,
+}
+
+impl TagAction {
+    /// Stable lowercase name used in JSON.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::Unchanged => "unchanged",
+            Self::Conflict => "conflict",
+            Self::MissingTarget => "missing_target",
+            Self::Invalid => "invalid",
+        }
+    }
+}
+
+/// One relay tag after `fetch`.
+#[derive(Clone, Debug)]
+pub struct TagReport {
+    /// Tag name, as the relay sent it.
+    pub name: String,
+    /// Snapshot it names at the relay (if the id was valid).
+    pub target: Option<SnapshotId>,
+    /// What happened.
+    pub action: TagAction,
+    /// Explanation for conflicts and refusals.
+    pub note: Option<String>,
+}
+
+/// Decide what to do with the relay's tags: never trust them. A tag is
+/// created only under a valid, non-colliding new name, for a snapshot this
+/// repository has; an existing local tag is never moved.
+pub fn plan_fetched_tags(
+    store: &ObjectStore,
+    local: &BTreeMap<String, SnapshotId>,
+    relay: &BTreeMap<String, String>,
+) -> (Vec<(String, SnapshotId)>, Vec<TagReport>) {
+    let mut create: Vec<(String, SnapshotId)> = Vec::new();
+    let mut reports = Vec::new();
+    for (name, hex) in relay {
+        let mut rep = TagReport {
+            name: name.clone(),
+            target: None,
+            action: TagAction::Invalid,
+            note: None,
+        };
+        let Ok(id) = ObjectId::from_hex(hex) else {
+            rep.note = Some("invalid snapshot id".into());
+            reports.push(rep);
+            continue;
+        };
+        let target = SnapshotId::from_object_id(id);
+        rep.target = Some(target);
+        match local.get(name) {
+            Some(t) if *t == target => rep.action = TagAction::Unchanged,
+            Some(t) => {
+                rep.action = TagAction::Conflict;
+                rep.note = Some(format!("the local tag names {t}; kept (tags never move)"));
+            }
+            None => {
+                let names: Vec<&String> =
+                    local.keys().chain(create.iter().map(|(n, _)| n)).collect();
+                if let Err(e) = concurv_workspace::tags::check_new_name(name, names) {
+                    rep.note = Some(e.message);
+                } else if store.read_snapshot(&target).is_err() {
+                    rep.action = TagAction::MissingTarget;
+                    rep.note = Some("the snapshot is not in the fetched history".into());
+                } else {
+                    rep.action = TagAction::Created;
+                    create.push((name.clone(), target));
+                }
+            }
+        }
+        reports.push(rep);
+    }
+    (create, reports)
 }
 
 /// What `push` did.
@@ -316,6 +410,9 @@ pub fn fetch(repo: &Repo, remote_name: &str, opts: &SyncOptions) -> Result<Fetch
             store.adopt(&staging.store, id)?;
         }
     }
+    // Tags (ADR 0008 §7): an older relay that does not know the request
+    // ends the session; then there are no tags, as before.
+    let relay_tags = conn.tags(None).unwrap_or_default();
     sync_intents(repo, &mut conn, remote_name)?;
     conn.close();
 
@@ -411,6 +508,11 @@ pub fn fetch(repo: &Repo, remote_name: &str, opts: &SyncOptions) -> Result<Fetch
         }
     }
     reports.sort_by(|a, b| a.branch.cmp(&b.branch));
+    let (new_tags, tag_reports) = plan_fetched_tags(store, &view.tags, &relay_tags);
+    if !new_tags.is_empty() {
+        repo.upgrade_format(&lock, concurv_workspace::tags::TAGS_FORMAT)?;
+        view.tags.extend(new_tags.iter().cloned());
+    }
     let operation = if view != op.view {
         let changed: Vec<String> = reports
             .iter()
@@ -421,6 +523,7 @@ pub fn fetch(repo: &Repo, remote_name: &str, opts: &SyncOptions) -> Result<Fetch
                 )
             })
             .map(|r| r.branch.clone())
+            .chain(new_tags.iter().map(|(n, _)| format!("tag {n}")))
             .collect();
         let new_op = Operation {
             parents: vec![op_id],
@@ -447,6 +550,7 @@ pub fn fetch(repo: &Repo, remote_name: &str, opts: &SyncOptions) -> Result<Fetch
         relay,
         objects,
         branches: reports,
+        tags: tag_reports,
         operation,
     })
 }
@@ -692,6 +796,79 @@ pub fn push(
         replayed: attempt.replayed,
         operation,
     })
+}
+
+/// What `push --tags` did.
+#[derive(Clone, Debug, Default)]
+pub struct PushTagsOutcome {
+    /// Tags created at the relay: name and snapshot.
+    pub created: Vec<(String, SnapshotId)>,
+    /// Tags the relay already had at the same snapshot.
+    pub existing: usize,
+    /// Tags not sent, with the reason (their snapshot is not published at
+    /// the relay).
+    pub skipped: Vec<(String, String)>,
+}
+
+/// Create this repository's tags at the relay (ADR 0008 §7): those whose
+/// snapshot the relay has (published history), in one all-or-nothing
+/// request. A relay tag of the same name at another snapshot refuses the
+/// whole push of tags (`CONCURV_DIVERGED`); tags never move.
+pub fn push_tags(repo: &Repo, remote_name: &str, opts: &SyncOptions) -> Result<PushTagsOutcome> {
+    let cfg = remote::get(repo, remote_name)?;
+    let local = repo.current()?.1.view.tags;
+    let mut conn = connect(repo, &cfg, opts)?;
+    let relay_tags = conn.tags(None).map_err(|e| {
+        ConcurvError::new(
+            e.code,
+            format!(
+                "the relay did not answer the tags request ({}); relays up to \
+                 v0.1.0-alpha.3 do not keep tags",
+                e.message
+            ),
+        )
+    })?;
+    let mut out = PushTagsOutcome::default();
+    let mut conflicts = Vec::new();
+    let mut candidates: BTreeMap<String, SnapshotId> = BTreeMap::new();
+    for (name, target) in &local {
+        match relay_tags.get(name) {
+            Some(t) if *t == target.to_hex() => out.existing += 1,
+            Some(t) => conflicts.push(format!("{name} (relay: {t}, here: {target})")),
+            None => {
+                candidates.insert(name.clone(), *target);
+            }
+        }
+    }
+    if !conflicts.is_empty() {
+        conn.close();
+        return Err(ConcurvError::new(
+            ErrorCode::Diverged,
+            format!(
+                "the relay has tag(s) with these names at other snapshots: {}; tags never move, so \
+                 no tag was pushed. Rename or delete the local tag",
+                conflicts.join(", ")
+            ),
+        ));
+    }
+    let ids: Vec<ObjectId> = candidates.values().map(|t| t.object_id()).collect();
+    let lacking: HashSet<ObjectId> = conn.missing(&ids)?.into_iter().collect();
+    candidates.retain(|name, target| {
+        let ok = !lacking.contains(&target.object_id());
+        if !ok {
+            out.skipped.push((
+                name.clone(),
+                "its snapshot is not published at the relay (push its branch first)".into(),
+            ));
+        }
+        ok
+    });
+    if !candidates.is_empty() {
+        conn.tags(Some(candidates.clone()))?;
+        out.created = candidates.into_iter().collect();
+    }
+    conn.close();
+    Ok(out)
 }
 
 /// Create a repository in `dir` (missing or empty), add remote

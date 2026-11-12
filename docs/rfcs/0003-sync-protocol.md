@@ -75,6 +75,9 @@ The client sends requests and reads one response each:
 | `missing {ids}` | `missing {ids}` | which of ≤ 4096 objects the relay lacks |
 | `upload {count}` | `ready {}`, then the client sends `count` object frames, then `stored {received}` | ≤ 10,000 per batch; a refusal comes before `ready`, so no frame is in flight |
 | `publish {request_id, branch, expected, proposed}` | `published {branch, head, seq, replayed}` | §6 |
+| `attest {id}` | `attested {id}` | since R4: RFC 0005 §7 (scope `attest`) |
+| `intents {device, intents}` | `intents {intents}` | since R5: RFC 0006 §2 |
+| `tags {create}` | `tags {tags: {name: snapshot}}` | since R6 (ADR 0008 §7): `create` = `null` reads; a map (scope `write`, ≤ 256 entries) first adds tags that do not exist, all or nothing: valid, non-colliding names, snapshots in the history of a published branch (else `CONCURV_OBJECT_MISSING`), an existing name only at the same snapshot (else `CONCURV_DIVERGED`). Stored in `tags.json`; at most 2048 per relay. Relays up to v0.1.0-alpha.3 end the session on it: clients then have no tags, as before |
 | `bye {}` | — | |
 | (any failure) | `error {code, message, observed?, seq?, missing[]}` | `code` is a stable error code (`docs/cli.md`) |
 
@@ -207,8 +210,9 @@ receiver already has.
   high availability. A relay is one directory; back it up like a
   repository (stop it, copy the directory).
 - Resuming inside a partially sent object; pack compression.
-- Branch deletion and renaming at the relay (backlog P2-8); protected
-  branches (R4, P2-9).
+- Branch deletion and renaming at the relay (local `branch delete` and
+  `rename` exist, ADR 0007 §9); deleting tags at the relay. (Protected
+  branches came with R4, tags with R6.)
 - Key rotation of the relay certificate (re-initialize and re-pin);
   per-device keys instead of bearer tokens; token expiry.
 - Awareness events and `--watch` (R5); verified publication (R4).

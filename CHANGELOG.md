@@ -14,6 +14,12 @@ version 1 and the CLI/JSON contract are not frozen until 0.1.0 (see ADR 0003).
   branch in the same operation. `undo` refuses both.
 - `--at` (`branch create`, `tag create`) also accepts a remote-tracking
   reference, `remote/<remote>/<branch>`.
+- **Tags at the relay** (ADR 0008 §7): `concurv push --tags` creates this
+  repository's tags at the relay (create-only, all or nothing, for
+  snapshots of published history; scope `write`); `fetch` and `clone`
+  create the relay's tags that are missing here and never move a local
+  tag (conflicts are reported). New protocol request `tags`; relays up to
+  v0.1.0-alpha.3 do not answer it, and then there are no tags, as before.
 
 ### Changed
 - `fetch` no longer recreates a local branch that was deleted or renamed
