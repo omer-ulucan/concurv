@@ -61,3 +61,36 @@ same-size, same-mtime rewrite case cannot be detected. A Unix-only cache
 roadmap as P0-7. It will be built when Linux/macOS measurements on larger
 trees (≥100k files) show `status` is too slow, together with the false-clean
 test suite the roadmap requires.
+
+## Overlap warnings (R5, RFC 0006 §4)
+
+`cargo test -p concurv-workspace --test overlap_rates -- --nocapture`;
+seeded corpus, deterministic (same numbers on every machine). Recorded
+2026-11-12, Windows 11 and WSL 2 (identical output).
+
+**Conflict warnings**: 2000 pairs of random edits (replace, insert or
+delete 1–3 lines) of one 60-line file; 1 in 20 pairs make the same edit on
+both sides. Truth: the real three-way merge (`textmerge::merge3`, ADR 0006)
+conflicts.
+
+| Level | Real conflicts | False positives | False negatives |
+|---|---|---|---|
+| `path` (same file) | 105 of 2000 | 1895 of 1895 clean pairs (rate 1.000) | 0 (rate 0.000) |
+| `conflict` (line ranges overlap or touch) | 105 of 2000 | 102 of 1895 (rate 0.054) | 0 (rate 0.000) |
+
+The `conflict` warnings never miss a real conflict; their false positives
+are pairs that make the same edit (which merges cleanly).
+
+**Dependency warnings**: 2000 cases. Upstream changes either the signature
+or only the body of one of 20 functions; the dependent change refers to a
+function by a direct call, an aliased import, a comment, a string, or a
+call through a function table (about 400 each). Truth: the dependent code
+really calls the function whose signature changed (299 cases).
+
+| Rule | False positives | False negatives |
+|---|---|---|
+| changed definition lines × uses in code (comments and strings ignored) | 0 of 1701 (rate 0.000) | 109 of 299 (rate 0.365) |
+
+All false negatives are calls through a table: a lexical rule cannot see
+them (RFC 0006 §5). Direct and aliased calls are always caught; a
+body-only change never warns.

@@ -142,7 +142,7 @@ pub fn declare(
     let _lock = repo.lock()?;
     let dir = intents_dir(repo);
     create_dir_durable(&dir, &repo.options().faults)?;
-    prune(repo, &dir, now);
+    prune(&dir, now);
     let body =
         serde_json::to_vec_pretty(&intent).map_err(|e| ConcurvError::internal(e.to_string()))?;
     write_file_atomic(
@@ -154,7 +154,7 @@ pub fn declare(
     Ok(intent)
 }
 
-fn prune(repo: &Repo, dir: &Path, now: i64) {
+fn prune(dir: &Path, now: i64) {
     let Ok(rd) = fs::read_dir(dir) else { return };
     for e in rd.flatten() {
         let stale = fs::read(e.path())
@@ -165,7 +165,6 @@ fn prune(repo: &Repo, dir: &Path, now: i64) {
             let _ = fs::remove_file(e.path());
         }
     }
-    let _ = repo;
 }
 
 /// Release this workspace's intents (all, or the one with `id`). Returns

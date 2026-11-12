@@ -32,6 +32,11 @@ Every command runs in the workspace containing the current directory (or `-C`).
 | `concurv fetch [<remote>]` | download the relay's published branches (RFC 0003 §5): objects are verified and checked for completeness before anything is stored; remote-tracking references `remote/<remote>/<b>` move to the relay's heads; local branches that are behind fast-forward, new ones are created; diverged local branches stay. Never changes working files or workspace heads. A relay whose head went backwards is reported, not followed. Default remote: the only one, else `origin` | objects, remote-tracking refs, local branches (fast-forward only) |
 | `concurv push [<remote>] [--branch B]` | publish local branch `B` (default: the tracked branch) at the relay by compare-and-swap, only as a fast-forward of the relay's head; refused (42) if the relay has work this repository has not fetched or that diverged; a lost connection is retried and never publishes twice. If the policy in the relay's head protects the branch, a recorded passing attestation for the head is uploaded and vouched for (the device needs scope `attest`; else 74, or 44 without one) | the relay's branch, remote-tracking ref |
 | `concurv clone <url> <dir> --fingerprint <fp> [--token-file F] [--name origin]` | `init` in `<dir>` (missing or empty), `remote add`, `fetch`, then check out `main` if the relay has it | creates repo |
+| `concurv intent declare <pattern>… [--symbol S]… [--ttl 1h] [--note T]` | advisory: tell other workspaces and agents which paths (ignore-file patterns) or symbols this workspace is about to change, for 1 minute to 7 days (RFC 0006). Never a lock; expired intents are ignored everywhere. `push`/`fetch` exchange this device's intents with the relay | repository intents |
+| `concurv intent list` | active intents of this repository and those fetched from relays | no |
+| `concurv intent release [ID]` | remove this workspace's intents (all, or by id prefix) | repository intents |
+| `concurv overlaps` | warnings, never refusals: files this workspace changed that another workspace's unpublished saves or upstream work also change (`path`), where the line edits would conflict (`conflict`), that match another's intent (`intent`), or that use a symbol whose definition changed upstream (`dependency`) | no |
+| `concurv events [-n N]` | the operation log as versioned JSON lines, oldest first (with `--json`: an `events` array) | no |
 
 Global flags: `--json`, `-C <dir>`. Sync commands use the token stored for the remote,
 or `CONCURV_REMOTE_TOKEN` if set. Author comes from `CONCURV_AUTHOR`, else the OS
@@ -91,6 +96,11 @@ changes behaviour, not the JSON shape.)
 - `fetch`: `remote`, `relay` (relay id), `objects` (received), `branches[]` (`branch`, `remote_head` (null if `vanished`), `seq`, `tracked_before`, `local_before`, `local_after`, `action` ∈ `up_to_date|created|fast_forwarded|local_ahead|diverged|rewound|vanished|invalid_name|name_collision`, `note`), `operation` (null if nothing changed)
 - `push`: `remote`, `branch`, `from` (relay head before, or null), `head` (local branch head), `seq` (relay sequence number after, if known), `result` ∈ `pushed|up_to_date|behind`, `objects` (uploaded), `replayed` (the relay confirmed an earlier attempt whose reply was lost), `operation`
 - `clone`: the `fetch` fields plus `root`, `checked_out` (snapshot or null), `written`
+- `intent declare`: the intent (`concurv_intent`, `id`, `device`, `workspace`, `who`, `paths[]`, `symbols[]`, `note`, `created_ms`, `expires_ms`)
+- `intent list`: `intents[]` (as above)
+- `intent release`: `released`
+- `overlaps`: `overlaps[]` (`level` ∈ `path|conflict|intent|dependency`, `source` (`workspace <name>`, `branch <b>`, `remote/<r>/<b>` or `intent <id> (<who>)`), `path`, `symbol` (null unless `intent` or `dependency`))
+- `events`: `events[]`, each `{concurv_event: 1, type: "operation", operation, kind, time_ms, device, workspace (or null), branch_moves (branch → {from, to}), head, description}`; without `--json`, one such object per line
 
 ## Error codes and exit codes
 

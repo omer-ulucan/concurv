@@ -6,7 +6,8 @@ concurv-cli          binaries `concurv` and `concurvd`; clap, human and JSON out
  └─► concurv-sync    wire protocol, relay, pinned TLS, fetch / push / clone, remotes
       └─► concurv-workspace  repo, workspaces, scan, save, status, diff, restore,
            │                 publish, update, merge, branches, reconcile, graph, verify,
-           │                 policy and check (R4: protected branches, attestations)
+           │                 policy and check (R4: protected branches, attestations),
+           │                 coord (R5: intents, overlap warnings, events)
            └─► concurv-ops   OpLog: commit, walk, clean_tmp
                 └─► concurv-refs     op_head CAS, repository lock
                      └─► concurv-objects  encoding, store, durable fs, faults,
@@ -93,5 +94,5 @@ concurv-cli          binaries `concurv` and `concurvd`; clap, human and JSON out
 
 Importing Git changes into existing history, GC/packing, rename detection,
 `workspace remove`, branch delete/rename, several repositories per relay,
-sandboxed checks and agent coordination (R5). See
+sandboxed checks, symbol analysis beyond lexical definitions. See
 `ROADMAP_STATUS.md`.

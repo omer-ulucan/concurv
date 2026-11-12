@@ -33,9 +33,9 @@ An intent says "this workspace (or agent) is about to change these paths
 and/or symbols, for a while":
 
 ```json
-{"concurv_intent": 1, "id": "<32 hex>", "workspace": "agent-1",
+{"concurv_intent": 1, "id": "<32 hex>", "device": "<32 hex>", "workspace": "agent-1",
  "who": "<author>", "paths": ["src/parser/**"], "symbols": ["parse"],
- "note": "free text", "created_ms": 0, "expires_ms": 0, "origin": "local"}
+ "note": "free text", "created_ms": 0, "expires_ms": 0}
 ```
 
 - `concurv intent declare <path-pattern>... [--symbol S]... [--ttl 30m]
@@ -45,12 +45,13 @@ and/or symbols, for a while":
   workspaces, not history). An expired intent is ignored everywhere and
   removed at the next write: it can never act as a lock, including for
   agents that were offline when it expired.
-- **Across machines**: `push` sends this repository's active intents to
-  the relay (`declare`, scope `write`); `fetch` downloads the relay's
-  active intents of other devices (`intents`) into
-  `.concurv/remote-intents/<remote>.json`. The relay keeps them in memory
-  of its state file and drops expired ones; they are never part of
-  history.
+- **Across machines**: `push` and `fetch` send this device's active intents to
+  the relay (`intents` request; submitting needs scope `write`) and get back
+  everyone's active intents, cached in
+  `.concurv/remote-intents/<remote>.json`. The relay keeps them in
+  `intents.json` (each relay device can replace only the intents it
+  submitted), drops expired ones, and never makes them part of
+  history. Expiry is judged by each party's own clock.
 
 ## 3. Overlap warnings (`concurv overlaps`, and in `status`)
 
@@ -79,7 +80,11 @@ paired edits on synthetic source files and compares each prediction with
 the actual outcome: the real three-way merge (`textmerge::merge3`) for
 `path` and `conflict`, and the constructed dependency for `dependency`. It
 prints and asserts the false-positive and false-negative rates; the
-numbers are recorded in `bench/RESULTS.md`.
+numbers are recorded in `bench/RESULTS.md`: `conflict` warnings had no false
+negatives and a 5.4 % false-positive rate (identical edits on both sides);
+`dependency` warnings had no false positives and missed only calls made
+through a function table (36.5 % of the real dependencies in that corpus,
+by construction).
 
 ## 5. Not done
 
