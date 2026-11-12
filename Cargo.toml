@@ -19,6 +19,7 @@ concurv-bench = { path = "crates/concurv-bench" }
 concurv-sync = { path = "crates/concurv-sync" }
 blake3 = "1.8"
 clap = { version = "4.6", features = ["derive"] }
+clap_complete = "4.6"
 getrandom = "0.4"
 proptest = "1"
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }

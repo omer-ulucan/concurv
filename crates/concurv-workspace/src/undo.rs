@@ -80,6 +80,13 @@ pub fn undo(repo: &Repo) -> Result<UndoOutcome> {
                 "branches are shared and others may already use it; deleting branches is not \n                 supported yet",
             ));
         }
+        kind @ ("tag-create" | "tag-delete") => {
+            return Err(refuse(
+                kind,
+                "tags are shared and others may already rely on them; use `concurv tag delete` \
+                 or `concurv tag create <name> --at <snapshot>` instead",
+            ));
+        }
         "publish" => {
             return Err(refuse(
                 "publish",

@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use concurv_core::{ConcurvError, ErrorCode, Result};
 use concurv_workspace::{
     Change, Repo, RepoOptions, RestoreOptions, StatusOptions, UpdateKind, UpdateOptions,
@@ -114,6 +114,22 @@ enum Cmd {
     Branch {
         #[command(subcommand)]
         cmd: BranchCmd,
+    },
+    /// Name snapshots with tags that never move (ADR 0008).
+    Tag {
+        #[command(subcommand)]
+        cmd: TagCmd,
+    },
+    /// Read and write configuration: the repository file `.concurv/config.json`,
+    /// or the user file with `--global`.
+    Config {
+        #[command(subcommand)]
+        cmd: ConfigCmd,
+    },
+    /// Print a shell completion script to standard output.
+    Completions {
+        /// Shell.
+        shell: clap_complete::Shell,
     },
     /// Exchange history with a Git repository (requires `git` on PATH).
     Git {
@@ -266,14 +282,26 @@ enum GitCmd {
         /// Git branch to update (default: the same name as `--from`).
         #[arg(long)]
         branch: Option<String>,
+        /// Also write the tags that name snapshots of that history, in one
+        /// transaction with the branch (ADR 0008).
+        #[arg(long)]
+        tags: bool,
     },
-    /// Import a Git branch into this fresh repository and check it out.
+    /// Import a Git branch into a concurv branch: create it, or move it forward,
+    /// reusing commits concurv already has; check it out if this workspace was
+    /// clean at its old head.
     Import {
         /// Path of the Git repository.
         repo: PathBuf,
         /// Git branch to import.
         #[arg(long, default_value = "main")]
         branch: String,
+        /// concurv branch to create or fast-forward.
+        #[arg(long, default_value = "main")]
+        into: String,
+        /// Also import the Git tags that name commits of that history.
+        #[arg(long)]
+        tags: bool,
     },
 }
 
@@ -300,7 +328,7 @@ enum BranchCmd {
     Create {
         /// Branch name (ASCII letters, digits and `._-/`).
         name: String,
-        /// Snapshot id prefix or branch name to start from.
+        /// Branch, tag or snapshot id prefix to start from.
         #[arg(long)]
         at: Option<String>,
         /// Also make this workspace track the new branch (created at its head; no
@@ -315,6 +343,55 @@ enum BranchCmd {
         /// Branch name.
         name: String,
     },
+}
+
+#[derive(Subcommand)]
+enum TagCmd {
+    /// Create a tag at this workspace's head (or `--at` a branch, tag or snapshot).
+    /// Tags never move.
+    Create {
+        /// Tag name (the rules of branch names).
+        name: String,
+        /// Branch, tag or snapshot id prefix to tag.
+        #[arg(long)]
+        at: Option<String>,
+    },
+    /// List tags.
+    List,
+    /// Delete a tag (the snapshot stays; the output names it).
+    Delete {
+        /// Tag name.
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigCmd {
+    /// Show the effective value of a key and where it comes from.
+    Get {
+        /// Key (`author`, `remote`).
+        key: String,
+    },
+    /// Set a key in the repository configuration (or the user's with --global).
+    Set {
+        /// Key (`author`, `remote`).
+        key: String,
+        /// Value.
+        value: String,
+        /// Write the user configuration file instead.
+        #[arg(long)]
+        global: bool,
+    },
+    /// Remove a key from the repository configuration (or the user's with --global).
+    Unset {
+        /// Key.
+        key: String,
+        /// Write the user configuration file instead.
+        #[arg(long)]
+        global: bool,
+    },
+    /// Every known key with its effective value and source.
+    List,
 }
 
 #[derive(Subcommand)]
@@ -390,6 +467,26 @@ impl Cmd {
             } => "intent release",
             Cmd::Overlaps => "overlaps",
             Cmd::Events { .. } => "events",
+            Cmd::Tag {
+                cmd: TagCmd::Create { .. },
+            } => "tag create",
+            Cmd::Tag { cmd: TagCmd::List } => "tag list",
+            Cmd::Tag {
+                cmd: TagCmd::Delete { .. },
+            } => "tag delete",
+            Cmd::Config {
+                cmd: ConfigCmd::Get { .. },
+            } => "config get",
+            Cmd::Config {
+                cmd: ConfigCmd::Set { .. },
+            } => "config set",
+            Cmd::Config {
+                cmd: ConfigCmd::Unset { .. },
+            } => "config unset",
+            Cmd::Config {
+                cmd: ConfigCmd::List,
+            } => "config list",
+            Cmd::Completions { .. } => "completions",
         }
     }
 }
@@ -459,6 +556,14 @@ fn opts() -> RepoOptions {
     RepoOptions::default()
 }
 
+/// Open the workspace containing `dir`, refusing a malformed repository
+/// configuration file before anything runs (R6).
+fn discover(dir: &std::path::Path) -> Result<Repo> {
+    let repo = Repo::discover(dir, opts())?;
+    concurv_workspace::config::Layers::load(Some(&repo))?;
+    Ok(repo)
+}
+
 fn sync_opts() -> concurv_sync::SyncOptions {
     concurv_sync::SyncOptions::default()
 }
@@ -484,10 +589,14 @@ fn read_token(file: Option<&std::path::Path>) -> Result<String> {
     }
 }
 
-/// The remote named on the command line, else the only remote, else `origin`.
+/// The remote named on the command line, else the configured `remote`, else
+/// the only remote, else `origin`.
 fn default_remote(repo: &Repo, given: Option<String>) -> Result<String> {
     if let Some(r) = given {
         return Ok(r);
+    }
+    if let Some(e) = concurv_workspace::config::Layers::load(Some(repo))?.get("remote")? {
+        return Ok(e.value);
     }
     let all = concurv_sync::remote::list(repo)?;
     match all.as_slice() {
@@ -575,7 +684,26 @@ fn run(cli: Cli) -> Result<Output> {
         None => std::env::current_dir()
             .map_err(|e| ConcurvError::io(e, "read current directory", "."))?,
     };
+    // A malformed user configuration file stops every command (R6), except
+    // printing completions.
+    if !matches!(cmd, Cmd::Completions { .. }) {
+        concurv_workspace::config::Layers::load(None)?;
+    }
     match cmd {
+        Cmd::Completions { shell } => {
+            let mut script = Vec::new();
+            clap_complete::generate(shell, &mut Cli::command(), "concurv", &mut script);
+            let script = String::from_utf8_lossy(&script).into_owned();
+            ok(
+                json!({ "shell": shell.to_string(), "script": script }),
+                script,
+            )
+        }
+        Cmd::Tag { cmd } => {
+            let repo = discover(&cwd)?;
+            cmd_tag(&repo, cmd)
+        }
+        Cmd::Config { cmd } => cmd_config(&cwd, cmd),
         Cmd::Init => {
             let repo = Repo::init(&cwd, opts())?;
             ok(
@@ -587,15 +715,15 @@ fn run(cli: Cli) -> Result<Output> {
             )
         }
         Cmd::Status { no_cache } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             cmd_status(&repo, status_opts(no_cache))
         }
         Cmd::Diff { no_cache } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             cmd_diff(&repo, status_opts(no_cache))
         }
         Cmd::Save { message } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             let o = save(&repo, &message)?;
             let changes: Vec<Value> = o.changes.iter().map(change_json).collect();
             let human = match &o.snapshot {
@@ -613,7 +741,7 @@ fn run(cli: Cli) -> Result<Output> {
             )
         }
         Cmd::Log { limit } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             let entries = log(&repo, limit)?;
             let mut human = String::new();
             let mut arr = Vec::new();
@@ -643,7 +771,7 @@ fn run(cli: Cli) -> Result<Output> {
             ok(json!({ "snapshots": arr }), human)
         }
         Cmd::Restore { snapshot, force } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             let target = repo.resolve_snapshot(&snapshot)?;
             let o = restore(&repo, target, RestoreOptions { force })?;
             let mut human = format!(
@@ -667,23 +795,23 @@ fn run(cli: Cli) -> Result<Output> {
             )
         }
         Cmd::CheckIgnore { paths } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             cmd_check_ignore(&repo, &cwd, &paths)
         }
         Cmd::Verify { full } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             cmd_verify(&repo, full)
         }
         Cmd::Op {
             cmd: OpCmd::Log { limit },
         } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             cmd_op_log(&repo, limit)
         }
         Cmd::Workspace {
             cmd: WorkspaceCmd::Add { path, name, branch },
         } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             let path = if path.is_absolute() {
                 path
             } else {
@@ -713,7 +841,7 @@ fn run(cli: Cli) -> Result<Output> {
         Cmd::Workspace {
             cmd: WorkspaceCmd::List,
         } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             let all = workspaces::list(&repo)?;
             let mut human = String::new();
             for w in &all {
@@ -736,11 +864,11 @@ fn run(cli: Cli) -> Result<Output> {
         }
         Cmd::Merge { .. } => Err(ConcurvError::internal("merge is dispatched as update")),
         Cmd::Branch { cmd } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             cmd_branch(&repo, cmd)
         }
         Cmd::Publish { check } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             if check {
                 let c = concurv_workspace::check::check(
                     &repo,
@@ -784,7 +912,7 @@ fn run(cli: Cli) -> Result<Output> {
             )
         }
         Cmd::Check { branch, trust } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             let c = concurv_workspace::check::check(
                 &repo,
                 &concurv_workspace::check::CheckOptions {
@@ -802,9 +930,10 @@ fn run(cli: Cli) -> Result<Output> {
                     repo: target,
                     from,
                     branch,
+                    tags,
                 },
         } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             let target = if target.is_absolute() {
                 target
             } else {
@@ -812,8 +941,12 @@ fn run(cli: Cli) -> Result<Output> {
             };
             let git = concurv_git::GitRepo::open(&target)?;
             let branch = branch.unwrap_or_else(|| from.clone());
-            let o = concurv_git::export_from(&repo, &git, &from, &branch)?;
-            let human = if o.updated {
+            let o = concurv_git::export_with(
+                &repo,
+                &git,
+                &concurv_git::ExportOptions { from, branch, tags },
+            )?;
+            let mut human = if o.updated {
                 format!(
                     "Exported to Git: `{}` is now {} ({} new commit(s), {} already present).",
                     o.branch, o.tip, o.exported, o.reused
@@ -824,6 +957,27 @@ fn run(cli: Cli) -> Result<Output> {
                     o.branch, o.tip
                 )
             };
+            let created: Vec<&str> = o
+                .tags
+                .iter()
+                .filter(|t| t.created)
+                .map(|t| t.name.as_str())
+                .collect();
+            if !created.is_empty() {
+                human.push_str(&format!("\nTags created: {}.", created.join(", ")));
+            }
+            if !o.tags_skipped.is_empty() {
+                human.push_str(&format!(
+                    "\nTags not exported (not in the history of `{}`): {}.",
+                    o.branch,
+                    o.tags_skipped.join(", ")
+                ));
+            }
+            let tag_list: Vec<Value> = o
+                .tags
+                .iter()
+                .map(|t| json!({ "name": t.name, "commit": t.commit, "created": t.created }))
+                .collect();
             ok(
                 json!({
                     "branch": o.branch,
@@ -832,6 +986,8 @@ fn run(cli: Cli) -> Result<Output> {
                     "exported": o.exported,
                     "reused": o.reused,
                     "updated": o.updated,
+                    "tags": tag_list,
+                    "tags_skipped": o.tags_skipped,
                 }),
                 human,
             )
@@ -841,28 +997,74 @@ fn run(cli: Cli) -> Result<Output> {
                 GitCmd::Import {
                     repo: source,
                     branch,
+                    into,
+                    tags,
                 },
         } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             let source = if source.is_absolute() {
                 source
             } else {
                 cwd.join(source)
             };
             let git = concurv_git::GitRepo::open(&source)?;
-            let o = concurv_git::import(&repo, &git, &branch)?;
+            let o = concurv_git::import_with(
+                &repo,
+                &git,
+                &concurv_git::ImportOptions { branch, into, tags },
+            )?;
+            let mut human = if o.published {
+                format!(
+                    "Imported {} new commit(s) from Git `{}` ({}); `{}` is now {}.",
+                    o.commits, o.branch, o.git_tip, o.into, o.tip
+                )
+            } else {
+                format!(
+                    "`{}` already has Git `{}` ({}); nothing new to import.",
+                    o.into, o.branch, o.git_tip
+                )
+            };
+            if o.checked_out {
+                human.push_str(&format!(
+                    "\nChecked out in this workspace ({} file(s) written).",
+                    o.written
+                ));
+            } else if o.published {
+                human.push_str(&format!(
+                    "\nThis workspace was not changed: bring it in with `concurv update` (on `{}`) \
+                     or `concurv merge {}`.",
+                    o.into, o.into
+                ));
+            }
+            if !o.tags_created.is_empty() {
+                let names: Vec<&str> = o.tags_created.iter().map(|(n, _)| n.as_str()).collect();
+                human.push_str(&format!("\nTags created: {}.", names.join(", ")));
+                if o.annotated_dropped > 0 {
+                    human.push_str(&format!(
+                        " {} annotated tag(s) became lightweight (message and tagger dropped).",
+                        o.annotated_dropped
+                    ));
+                }
+            }
+            for (n, why) in &o.tags_skipped {
+                human.push_str(&format!("\nTag `{n}` not imported: {why}."));
+            }
             ok(
                 json!({
                     "branch": o.branch,
+                    "into": o.into,
                     "git_tip": o.git_tip,
                     "tip": o.tip.to_hex(),
                     "commits": o.commits,
+                    "published": o.published,
+                    "checked_out": o.checked_out,
                     "written": o.written,
+                    "tags_created": o.tags_created.iter().map(|(n, s)| json!({ "name": n, "target": s.to_hex() })).collect::<Vec<_>>(),
+                    "tags_unchanged": o.tags_unchanged,
+                    "tags_skipped": o.tags_skipped.iter().map(|(n, why)| json!({ "name": n, "reason": why })).collect::<Vec<_>>(),
+                    "annotated_dropped": o.annotated_dropped,
                 }),
-                format!(
-                    "Imported {} commit(s) from Git `{}` ({}); `main` is now {} and checked out ({} file(s)).",
-                    o.commits, o.branch, o.git_tip, o.tip, o.written
-                ),
+                human,
             )
         }
         Cmd::Remote {
@@ -874,7 +1076,7 @@ fn run(cli: Cli) -> Result<Output> {
                     token_file,
                 },
         } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             let token = read_token(token_file.as_deref())?;
             let r = concurv_sync::remote::add(&repo, &name, &url, &fingerprint, &token)?;
             ok(
@@ -888,7 +1090,7 @@ fn run(cli: Cli) -> Result<Output> {
         Cmd::Remote {
             cmd: RemoteCmd::List,
         } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             let (_, op) = repo.oplog().head()?;
             let mut human = String::new();
             let mut arr = Vec::new();
@@ -920,7 +1122,7 @@ fn run(cli: Cli) -> Result<Output> {
         Cmd::Remote {
             cmd: RemoteCmd::Remove { name },
         } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             let operation = concurv_sync::remote::remove(&repo, &name)?;
             ok(
                 json!({ "name": name, "operation": operation.map(|o| o.to_hex()) }),
@@ -928,14 +1130,14 @@ fn run(cli: Cli) -> Result<Output> {
             )
         }
         Cmd::Fetch { remote } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             let remote = default_remote(&repo, remote)?;
             let o = concurv_sync::fetch(&repo, &remote, &sync_opts())?;
             let (data, human) = fetch_output(&o);
             ok(data, human)
         }
         Cmd::Push { remote, branch } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             let remote = default_remote(&repo, remote)?;
             let o = concurv_sync::push(&repo, &remote, branch.as_deref(), &sync_opts())?;
             let short = |s: concurv_core::SnapshotId| s.to_hex()[..12].to_owned();
@@ -1025,7 +1227,7 @@ fn run(cli: Cli) -> Result<Output> {
                     note,
                 },
         } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             let i = concurv_workspace::coord::declare(
                 &repo,
                 &patterns,
@@ -1045,7 +1247,7 @@ fn run(cli: Cli) -> Result<Output> {
         Cmd::Intent {
             cmd: IntentCmd::List,
         } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             let all = concurv_workspace::coord::all_intents(&repo);
             let mut human = String::new();
             for i in &all {
@@ -1079,7 +1281,7 @@ fn run(cli: Cli) -> Result<Output> {
         Cmd::Intent {
             cmd: IntentCmd::Release { id },
         } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             let n = concurv_workspace::coord::release(&repo, id.as_deref())?;
             ok(
                 json!({ "released": n }),
@@ -1087,7 +1289,7 @@ fn run(cli: Cli) -> Result<Output> {
             )
         }
         Cmd::Overlaps => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             let v = concurv_workspace::coord::overlaps(&repo)?;
             let mut human = String::new();
             for o in &v {
@@ -1115,7 +1317,7 @@ fn run(cli: Cli) -> Result<Output> {
             )
         }
         Cmd::Events { limit } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             let ev = concurv_workspace::coord::events(&repo, limit)?;
             let human = ev
                 .iter()
@@ -1125,7 +1327,7 @@ fn run(cli: Cli) -> Result<Output> {
             ok(json!({ "events": ev }), human)
         }
         Cmd::Undo => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             let o = undo(&repo)?;
             let mut human = format!(
                 "Undid `{}` {} ({}).\nWorkspace head is now {}.",
@@ -1170,7 +1372,7 @@ fn run(cli: Cli) -> Result<Output> {
                     "--abort cannot be combined with --allow-conflicts or a branch to merge",
                 ));
             }
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             let o = abort_merge(&repo)?;
             let mut human = format!(
                 "Merge aborted: working copy restored to {} ({} written, {} deleted).",
@@ -1198,7 +1400,7 @@ fn run(cli: Cli) -> Result<Output> {
             abort: false,
             from,
         } => {
-            let repo = Repo::discover(&cwd, opts())?;
+            let repo = discover(&cwd)?;
             let how = UpdateOptions { allow_conflicts };
             let o = match from.as_deref() {
                 Some(b) => merge_branch(&repo, b, how)?,
@@ -1632,6 +1834,148 @@ fn cmd_check_ignore(repo: &Repo, cwd: &std::path::Path, inputs: &[String]) -> Re
     )
 }
 
+fn cmd_tag(repo: &Repo, cmd: TagCmd) -> Result<Output> {
+    use concurv_workspace::tags;
+    match cmd {
+        TagCmd::Create { name, at } => {
+            let at = match at {
+                None => None,
+                Some(a) => Some(tags::resolve(repo, &a)?),
+            };
+            let o = tags::create(repo, &name, at)?;
+            let mut human = format!(
+                "Created tag `{}` at {}.",
+                o.tag.name,
+                &o.tag.target.to_hex()[..12]
+            );
+            if o.upgraded {
+                human.push_str(
+                    "\nThe repository was upgraded to format 4 (builds before R6 cannot open it).",
+                );
+            }
+            ok(
+                json!({
+                    "tag": o.tag.name,
+                    "target": o.tag.target.to_hex(),
+                    "operation": o.operation.to_hex(),
+                    "format_upgraded": o.upgraded,
+                }),
+                human,
+            )
+        }
+        TagCmd::List => {
+            let list = tags::list(repo)?;
+            let human = if list.is_empty() {
+                "No tags.".to_owned()
+            } else {
+                list.iter()
+                    .map(|t| format!("{}  {}", &t.target.to_hex()[..12], t.name))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            let arr: Vec<Value> = list
+                .iter()
+                .map(|t| json!({ "name": t.name, "target": t.target.to_hex() }))
+                .collect();
+            ok(json!({ "tags": arr }), human)
+        }
+        TagCmd::Delete { name } => {
+            let o = tags::delete(repo, &name)?;
+            ok(
+                json!({
+                    "tag": o.tag.name,
+                    "target": o.tag.target.to_hex(),
+                    "operation": o.operation.to_hex(),
+                }),
+                format!(
+                    "Deleted tag `{}` (it was at {}; the snapshot stays). To restore it: \
+                     `concurv tag create {} --at {}`.",
+                    o.tag.name, o.tag.target, o.tag.name, o.tag.target
+                ),
+            )
+        }
+    }
+}
+
+fn cmd_config(cwd: &std::path::Path, cmd: ConfigCmd) -> Result<Output> {
+    use concurv_workspace::config::{self, KEYS, Layers, Scope};
+    // Outside a repository only the user file applies.
+    let repo = match Repo::discover(cwd, opts()) {
+        Ok(r) => Some(r),
+        Err(e) if e.code == ErrorCode::NotARepo => None,
+        Err(e) => return Err(e),
+    };
+    let user_file = config::user_path().map(|p| p.display().to_string());
+    let repo_file = repo
+        .as_ref()
+        .map(|r| config::repo_path(r).display().to_string());
+    match cmd {
+        ConfigCmd::Get { key } => {
+            let layers = Layers::load(repo.as_ref())?;
+            match layers.get(&key)? {
+                Some(e) => ok(
+                    json!({ "key": key, "value": e.value, "source": e.source }),
+                    e.value,
+                ),
+                None => Err(ConcurvError::new(
+                    ErrorCode::NotFound,
+                    format!("`{key}` is not set (see `concurv config list`)"),
+                )),
+            }
+        }
+        ConfigCmd::List => {
+            let layers = Layers::load(repo.as_ref())?;
+            let mut arr = Vec::new();
+            let mut human = String::new();
+            for (key, what) in KEYS {
+                let e = layers.get(key)?;
+                human.push_str(&match &e {
+                    Some(e) => format!("{key} = {}  ({})\n", e.value, e.source),
+                    None => format!("{key} (not set): {what}\n"),
+                });
+                arr.push(json!({
+                    "key": key,
+                    "value": e.as_ref().map(|e| e.value.clone()),
+                    "source": e.as_ref().map(|e| e.source),
+                    "description": what,
+                }));
+            }
+            human.push_str(&format!(
+                "files: repository {}, user {}",
+                repo_file.as_deref().unwrap_or("(not in a repository)"),
+                user_file.as_deref().unwrap_or("(none)")
+            ));
+            ok(
+                json!({ "keys": arr, "repository_file": repo_file, "user_file": user_file }),
+                human,
+            )
+        }
+        ConfigCmd::Set { key, value, global } => {
+            let scope = if global { Scope::User } else { Scope::Repo };
+            let previous = config::write(repo.as_ref(), scope, &key, Some(&value))?;
+            ok(
+                json!({ "key": key, "value": value, "scope": scope.as_str(), "previous": previous }),
+                format!("Set `{key}` in the {} configuration.", scope.as_str()),
+            )
+        }
+        ConfigCmd::Unset { key, global } => {
+            let scope = if global { Scope::User } else { Scope::Repo };
+            let previous = config::write(repo.as_ref(), scope, &key, None)?;
+            let human = match &previous {
+                Some(_) => format!("Removed `{key}` from the {} configuration.", scope.as_str()),
+                None => format!(
+                    "`{key}` was not set in the {} configuration.",
+                    scope.as_str()
+                ),
+            };
+            ok(
+                json!({ "key": key, "scope": scope.as_str(), "previous": previous }),
+                human,
+            )
+        }
+    }
+}
+
 fn cmd_branch(repo: &Repo, cmd: BranchCmd) -> Result<Output> {
     match cmd {
         BranchCmd::List => {
@@ -1669,16 +2013,7 @@ fn cmd_branch(repo: &Repo, cmd: BranchCmd) -> Result<Output> {
         BranchCmd::Create { name, at, switch } => {
             let at = match at {
                 None => None,
-                Some(a) => {
-                    let named = branches::list(repo)?
-                        .into_iter()
-                        .find(|b| b.name == a)
-                        .map(|b| b.head);
-                    Some(match named {
-                        Some(h) => h,
-                        None => repo.resolve_snapshot(&a)?,
-                    })
-                }
+                Some(a) => Some(concurv_workspace::tags::resolve(repo, &a)?),
             };
             let o = branches::create(repo, &name, branches::CreateOptions { at, switch })?;
             ok(

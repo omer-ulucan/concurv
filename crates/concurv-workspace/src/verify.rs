@@ -85,6 +85,7 @@ pub fn verify(repo: &Repo, full: bool) -> VerifyReport {
                 r.operations += 1;
                 ops.extend(op.parents.iter().copied());
                 snaps.extend(op.view.branches.values().copied());
+                snaps.extend(op.view.tags.values().copied());
                 snaps.extend(op.view.workspaces.values().filter_map(|w| w.head));
                 snaps.extend(
                     op.view

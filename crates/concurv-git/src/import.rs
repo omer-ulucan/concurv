@@ -1,33 +1,64 @@
 //! `concurv git import`: read a Git branch through `git fast-export` into a
-//! fresh concurv repository.
+//! concurv branch: into a fresh repository, or on top of history imported
+//! or exported before (R6), using `.concurv/git-map` to recognise commits
+//! concurv already has.
 
-use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read};
+use std::collections::{HashMap, HashSet};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 
 use concurv_core::{BlobId, ConcurvError, ErrorCode, RepoPath, Result, SnapshotId};
 use concurv_objects::{EntryKind, ObjectStore, Operation, Snapshot};
+use concurv_workspace::branches::validate_new_branch_name;
+use concurv_workspace::graph::ancestors;
 use concurv_workspace::worktree::{FileState, FlatTree, write_trees};
-use concurv_workspace::{Repo, update};
+use concurv_workspace::{Repo, tags, update};
 
 use crate::git::{GitRepo, finish};
 use crate::map::GitMap;
 use crate::meta::{change_for_git_commit, concurv_author, parse_message};
 use crate::quote::unquote;
 
+/// What to import.
+#[derive(Clone, Debug)]
+pub struct ImportOptions {
+    /// Git branch to read.
+    pub branch: String,
+    /// concurv branch to create or fast-forward (default `main`).
+    pub into: String,
+    /// Also import the Git tags that name commits of the imported history.
+    pub tags: bool,
+}
+
 /// Result of an import.
 #[derive(Debug)]
 pub struct ImportOutcome {
     /// Git branch imported.
     pub branch: String,
+    /// concurv branch created or fast-forwarded.
+    pub into: String,
     /// Git commit at the branch head.
     pub git_tip: String,
-    /// Snapshot now at `main` and checked out in this workspace.
+    /// Snapshot of the Git branch head, now the head of `into`.
     pub tip: SnapshotId,
-    /// Commits imported.
+    /// Commits newly imported (commits concurv already had are not counted).
     pub commits: usize,
+    /// Whether `into` was created or moved.
+    pub published: bool,
+    /// Whether this workspace (tracking `into`, clean, at its old head) was
+    /// brought to the new head.
+    pub checked_out: bool,
     /// Files written into the working copy.
     pub written: usize,
+    /// Tags created: name and snapshot.
+    pub tags_created: Vec<(String, SnapshotId)>,
+    /// Git tags that concurv already had at the same snapshot.
+    pub tags_unchanged: usize,
+    /// Git tags not imported, with the reason.
+    pub tags_skipped: Vec<(String, String)>,
+    /// Annotated Git tags imported as lightweight tags (message and tagger
+    /// dropped).
+    pub annotated_dropped: usize,
 }
 
 /// Most problems listed before giving up.
@@ -107,17 +138,103 @@ fn parse_ident(rest: &str) -> Option<(String, i64)> {
     Some((concurv_author(name, email), secs.saturating_mul(1000)))
 }
 
-/// Import `refs/heads/<branch>` of `git` into this (fresh) repository: all
-/// commits become snapshots, `main` points at the branch head, and the
-/// current workspace checks it out.
+/// Import Git branch `branch` into concurv's `main` ([`import_with`]).
 pub fn import(repo: &Repo, git: &GitRepo, branch: &str) -> Result<ImportOutcome> {
+    import_with(
+        repo,
+        git,
+        &ImportOptions {
+            branch: branch.to_owned(),
+            into: concurv_workspace::DEFAULT_BRANCH.to_owned(),
+            tags: false,
+        },
+    )
+}
+
+/// Commits concurv already has (from `.concurv/git-map`) that exist in
+/// `git`, as fast-export marks: they are not exported again, and commits
+/// built on them refer to them by mark.
+fn known_marks(repo: &Repo, git: &GitRepo, map: &GitMap) -> Result<Vec<(String, SnapshotId)>> {
+    let store = repo.store();
+    let candidates: Vec<(String, SnapshotId)> = map
+        .iter()
+        .filter(|(s, _)| store.read_snapshot(s).is_ok())
+        .map(|(s, oid)| (oid.clone(), *s))
+        .collect();
+    let oids: Vec<String> = candidates.iter().map(|(o, _)| o.clone()).collect();
+    let present = crate::export::present_commits(git, &oids)?;
+    let mut seen = HashSet::new();
+    Ok(candidates
+        .into_iter()
+        .filter(|(o, _)| present.contains(o) && seen.insert(o.clone()))
+        .collect())
+}
+
+/// One Git tag: name, peeled commit, whether it is annotated.
+fn git_tags(git: &GitRepo) -> Result<Vec<(String, String, bool)>> {
+    let list = git.run_ok(
+        [
+            "for-each-ref",
+            "--format=%(objecttype) %(refname)",
+            "refs/tags",
+        ],
+        "list tags",
+    )?;
+    let refs: Vec<(String, bool)> = list
+        .lines()
+        .filter_map(|l| {
+            let (kind, name) = l.split_once(' ')?;
+            Some((name.to_owned(), kind == "tag"))
+        })
+        .collect();
+    if refs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut child = git.spawn(["cat-file", "--batch-check=%(objectname) %(objecttype)"])?;
+    let wrote = child
+        .stdin
+        .take()
+        .ok_or_else(|| ConcurvError::internal("git stdin unavailable"))
+        .and_then(|mut stdin| {
+            for (r, _) in &refs {
+                writeln!(stdin, "{r}^{{commit}}")
+                    .map_err(|e| ConcurvError::io(e, "write to git", git.path()))?;
+            }
+            Ok(())
+        });
+    let out = finish(child, "cat-file");
+    wrote?;
+    let out = String::from_utf8_lossy(&out?).into_owned();
+    Ok(refs
+        .into_iter()
+        .zip(out.lines())
+        .filter_map(|((r, annotated), line)| {
+            let commit = line.strip_suffix(" commit")?;
+            Some((
+                r.strip_prefix("refs/tags/")?.to_owned(),
+                commit.to_owned(),
+                annotated,
+            ))
+        })
+        .collect())
+}
+
+/// Import `refs/heads/<opts.branch>` of `git` into concurv branch
+/// `opts.into` (ADR 0002, R6): commits concurv already has (recorded in
+/// `.concurv/git-map` by earlier imports and exports) are reused, new ones
+/// become snapshots. `into` is created, or moved forward only if the Git
+/// branch contains its head; otherwise the import is refused
+/// (`CONCURV_DIVERGED`): import into a new branch and `concurv merge` it.
+/// This workspace is brought to the new head only if it tracks `into`, was
+/// at its old head and has no unsaved changes; no other file changes.
+/// With `opts.tags`, Git tags naming commits of the imported history become
+/// concurv tags in the same operation (ADR 0008 §6). All or nothing.
+pub fn import_with(repo: &Repo, git: &GitRepo, opts: &ImportOptions) -> Result<ImportOutcome> {
+    let (branch, into) = (opts.branch.as_str(), opts.into.as_str());
     let (_, op, ws) = repo.current()?;
-    if op.view.branches.contains_key("main") || ws.head.is_some() {
-        return Err(ConcurvError::new(
-            ErrorCode::InvalidArgument,
-            "git import needs a fresh repository: `main` and this workspace must be empty \
-             (importing into existing history is not supported yet)",
-        ));
+    let into_before = op.view.branches.get(into).copied();
+    if into_before.is_none() {
+        validate_new_branch_name(into, op.view.branches.keys())?;
     }
     let refname = format!("refs/heads/{branch}");
     let git_tip = git.resolve(&refname)?.ok_or_else(|| {
@@ -127,24 +244,38 @@ pub fn import(repo: &Repo, git: &GitRepo, branch: &str) -> Result<ImportOutcome>
         )
     })?;
 
+    let mut map = GitMap::load(repo)?;
+    let known = known_marks(repo, git, &map)?;
     let writer = repo.store_writer()?;
     let store = writer.store();
+    let marks_file = store.tmp_dir().join("git-import-marks");
+    let mut marks_text = String::new();
+    let mut seeded = HashMap::new();
+    for (i, (oid, snap)) in known.iter().enumerate() {
+        let mark = i as u64 + 1;
+        marks_text.push_str(&format!(":{mark} {oid}\n"));
+        seeded.insert(mark, *snap);
+    }
+    std::fs::write(&marks_file, &marks_text)
+        .map_err(|e| ConcurvError::io(e, "write fast-export marks", &marks_file))?;
     let mut child = git.spawn([
-        "fast-export",
-        "--full-tree",
-        "--show-original-ids",
-        "--reencode=no",
-        "--signed-tags=strip",
-        "--tag-of-filtered-object=drop",
-        "--use-done-feature",
-        &refname,
+        "fast-export".to_owned(),
+        "--full-tree".to_owned(),
+        "--show-original-ids".to_owned(),
+        "--reencode=no".to_owned(),
+        "--signed-tags=strip".to_owned(),
+        "--tag-of-filtered-object=drop".to_owned(),
+        "--use-done-feature".to_owned(),
+        format!("--import-marks={}", marks_file.display()),
+        refname.clone(),
     ])?;
     let stdout = child
         .stdout
         .take()
         .ok_or_else(|| ConcurvError::internal("git stdout unavailable"))?;
-    let parsed = parse_stream(store, BufReader::new(stdout));
+    let parsed = parse_stream(store, BufReader::new(stdout), seeded);
     let finished = finish(child, "fast-export");
+    let _ = std::fs::remove_file(&marks_file);
     let parsed = parsed?;
     finished?;
     if !parsed.problems.is_empty() {
@@ -159,23 +290,96 @@ pub fn import(repo: &Repo, git: &GitRepo, branch: &str) -> Result<ImportOutcome>
             ),
         ));
     }
-    let tip = *parsed
-        .by_oid
-        .get(&git_tip)
+    let by_oid: HashMap<&str, SnapshotId> = known
+        .iter()
+        .map(|(o, s)| (o.as_str(), *s))
+        .chain(parsed.by_oid.iter().map(|(o, s)| (o.as_str(), *s)))
+        .collect();
+    let tip = *by_oid
+        .get(git_tip.as_str())
         .ok_or_else(|| proto("branch head missing from the export"))?;
+    let history = ancestors(store, tip)?;
 
-    // Publish the imported head as `main` (CAS: must still be empty).
+    // `into` may only move forward.
+    if let Some(h) = into_before
+        && h != tip
+        && !history.contains_key(&h)
     {
-        let lock = repo.lock()?;
-        let (op_id, op, _) = repo.current()?;
-        if op.view.branches.contains_key("main") {
+        return Err(ConcurvError::new(
+            ErrorCode::Diverged,
+            format!(
+                "concurv branch `{into}` has snapshots that Git branch `{branch}` does not contain; \
+                 nothing was changed. Import into a new branch (`--into <name>`), then \
+                 `concurv merge <name>` and publish"
+            ),
+        ));
+    }
+
+    // Tags of the imported history.
+    let mut tags_created: Vec<(String, SnapshotId)> = Vec::new();
+    let mut tags_unchanged = 0;
+    let mut tags_skipped: Vec<(String, String)> = Vec::new();
+    let mut annotated_dropped = 0;
+    if opts.tags {
+        let mut conflicts = Vec::new();
+        let mut names: Vec<String> = op.view.tags.keys().cloned().collect();
+        for (name, commit, annotated) in git_tags(git)? {
+            let Some(target) = by_oid
+                .get(commit.as_str())
+                .copied()
+                .filter(|s| history.contains_key(s))
+            else {
+                tags_skipped.push((name, "not in the imported history".into()));
+                continue;
+            };
+            match op.view.tags.get(&name) {
+                Some(t) if *t == target => tags_unchanged += 1,
+                Some(t) => conflicts.push(format!("{name} (concurv: {t}, Git: {commit})")),
+                None => match tags::check_new_name(&name, names.iter()) {
+                    Ok(()) => {
+                        names.push(name.clone());
+                        annotated_dropped += usize::from(annotated);
+                        tags_created.push((name, target));
+                    }
+                    Err(e) => tags_skipped.push((name, e.message)),
+                },
+            }
+        }
+        if !conflicts.is_empty() {
             return Err(ConcurvError::new(
-                ErrorCode::StaleHead,
-                "`main` was published while importing; nothing was changed",
+                ErrorCode::Diverged,
+                format!(
+                    "concurv already has tag(s) with these names at other snapshots: {}; tags never \
+                     move, so nothing was changed. Delete or rename the tag on one side",
+                    conflicts.join(", ")
+                ),
             ));
         }
-        let mut view = op.view.clone();
-        view.branches.insert("main".to_owned(), tip);
+    }
+
+    // Record the import (CAS against the state read at the start).
+    let published = into_before != Some(tip);
+    if published || !tags_created.is_empty() {
+        let lock = repo.lock()?;
+        if !tags_created.is_empty() {
+            repo.upgrade_format(&lock, tags::TAGS_FORMAT)?;
+        }
+        let (op_id, now, _) = repo.current()?;
+        if now.view.branches.get(into).copied() != into_before
+            || tags_created
+                .iter()
+                .any(|(n, _)| now.view.tags.contains_key(n))
+        {
+            return Err(ConcurvError::new(
+                ErrorCode::StaleHead,
+                format!("`{into}` or its tags changed while importing; nothing was changed, retry"),
+            ));
+        }
+        let mut view = now.view.clone();
+        view.branches.insert(into.to_owned(), tip);
+        for (n, t) in &tags_created {
+            view.tags.insert(n.clone(), *t);
+        }
         let new_op = Operation {
             parents: vec![op_id],
             timestamp_ms: repo.now_ms(),
@@ -183,8 +387,13 @@ pub fn import(repo: &Repo, git: &GitRepo, branch: &str) -> Result<ImportOutcome>
             workspace_id: Some(repo.workspace_id()),
             kind: "git-import".into(),
             description: format!(
-                "import Git branch {branch} at {git_tip} ({} commits) from {}",
+                "import Git branch {branch} at {git_tip} into {into} ({} new commits{}) from {}",
                 parsed.commits,
+                if tags_created.is_empty() {
+                    String::new()
+                } else {
+                    format!(", {} tags", tags_created.len())
+                },
                 git.path().display()
             ),
             backup: None,
@@ -194,19 +403,39 @@ pub fn import(repo: &Repo, git: &GitRepo, branch: &str) -> Result<ImportOutcome>
         };
         repo.oplog().commit(&lock, &op_id, &new_op)?;
     }
-    let mut map = GitMap::load(repo)?;
     for (oid, s) in &parsed.by_oid {
         map.insert(*s, oid.clone());
     }
     map.save(repo)?;
     drop(writer);
-    let u = update(repo)?;
+
+    // Bring this workspace along only if that cannot lose anything.
+    let mut checked_out = false;
+    let mut written = 0;
+    if published && ws.branch.as_deref() == Some(into) && ws.head == into_before {
+        match update(repo) {
+            Ok(u) => {
+                checked_out = true;
+                written = u.written;
+            }
+            Err(e) if e.code == ErrorCode::DirtyWorkspace => {}
+            Err(e) => return Err(e),
+        }
+    }
+    tags_created.sort();
     Ok(ImportOutcome {
         branch: branch.to_owned(),
+        into: into.to_owned(),
         git_tip,
         tip,
         commits: parsed.commits,
-        written: u.written,
+        published,
+        checked_out,
+        written,
+        tags_created,
+        tags_unchanged,
+        tags_skipped,
+        annotated_dropped,
     })
 }
 
@@ -221,9 +450,18 @@ enum Mark {
     Commit(SnapshotId),
 }
 
-fn parse_stream<R: BufRead>(store: &ObjectStore, r: R) -> Result<Parsed> {
+/// Parse a fast-export stream; `seeded` marks name commits concurv already
+/// has (passed to fast-export with `--import-marks`).
+fn parse_stream<R: BufRead>(
+    store: &ObjectStore,
+    r: R,
+    seeded: HashMap<u64, SnapshotId>,
+) -> Result<Parsed> {
     let mut lines = Lines { r, pending: None };
-    let mut marks: HashMap<u64, Mark> = HashMap::new();
+    let mut marks: HashMap<u64, Mark> = seeded
+        .into_iter()
+        .map(|(m, s)| (m, Mark::Commit(s)))
+        .collect();
     let mut out = Parsed {
         by_oid: HashMap::new(),
         commits: 0,
