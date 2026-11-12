@@ -2,8 +2,8 @@
 
 ## Supported versions
 
-concurv is an alpha. Only the **latest release** and `main` receive fixes;
-there are no backports to older alphas.
+Only the **latest release** and `main` receive security fixes; there are no
+backports to older releases yet. Pre-releases (`-alpha`) are not supported.
 
 ## Reporting a vulnerability
 

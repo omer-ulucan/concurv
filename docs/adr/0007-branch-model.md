@@ -1,9 +1,9 @@
 # ADR 0007 — Branch model: shared references, private workspaces
 
-Status: **Approved in principle by the owner (2026-11-01); refinements
-implemented and verified** (CI run 41375647699 on `main` @ `79caf3f`; see
-`docs/ROADMAP_STATUS.md`, R2.5).
-Final acceptance is the owner's decision. Sections 7 and 8 describe sync,
+Status: **Accepted by the owner (2026-11-12).** Approved in principle on
+2026-11-01; the requested refinements were implemented and verified (CI run
+41375647699 on `main` @ `79caf3f`, and the local gates since; see
+`docs/ROADMAP_STATUS.md`, R2.5). Sections 7 and 8 describe sync,
 implemented by R3 (RFC 0003, 2026-11-12); section 9 (delete and rename)
 was added on 2026-11-12 for the owner's refinement 8.
 

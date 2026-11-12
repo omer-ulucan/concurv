@@ -1,13 +1,18 @@
 # Contributing to concurv
 
-Thanks for your interest. concurv is an **alpha**: the on-disk format and the
-CLI/JSON contract can still change before 0.1.0, and the project is run by
-one maintainer.
+Thanks for your interest. concurv is run by one maintainer; bug reports,
+reproductions, design discussion and pull requests are welcome. For larger
+changes, open an issue first so the design can be agreed before the code.
 
-> **No license has been chosen yet** (see the README). Until there is one,
-> please start with an issue rather than a pull request: the terms for
-> accepting contributions will be stated here together with the license.
-> Bug reports, reproductions and design discussion are welcome now.
+**License of contributions.** concurv is licensed under MIT OR Apache-2.0
+(`LICENSE-MIT`, `LICENSE-APACHE`). Unless you explicitly state otherwise,
+any contribution intentionally submitted for inclusion in the work by you,
+as defined in the Apache-2.0 license, shall be dual licensed as above,
+without any additional terms or conditions.
+
+What may change between releases, and what may not, is in
+`docs/compatibility.md`: a change to a format, a JSON field or an exit code
+must follow it.
 
 ## Reporting a bug
 

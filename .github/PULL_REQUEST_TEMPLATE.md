@@ -1,4 +1,4 @@
-<!-- No license has been chosen yet: please open an issue first (see CONTRIBUTING.md). -->
+<!-- Contributions are dual licensed MIT OR Apache-2.0 (see CONTRIBUTING.md). For larger changes, please open an issue first. -->
 
 **What and why**
 
