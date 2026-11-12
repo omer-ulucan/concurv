@@ -1,6 +1,6 @@
 # RFC 0001 — VCS semantics, identifiers and canonical encoding
 
-Status: **Accepted for R1** (format version 1; repository format 2 since R3,
+Status: **Accepted for R1** (format version 1; repository formats 2–4 since R3, R4, R6:
 §7). Changes to anything marked *normative* require a new format version
 and a migration note in ADR 0001.
 
@@ -134,7 +134,7 @@ u32    parent_count, then parent_count × Id (operation ids, no duplicates)
 i64    timestamp_ms
 Rid    device_id
 Rid    workspace_id     (the actor; all-zero bytes = repository-level)
-String kind             ("init" | "save" | "restore" | "workspace-add" | "publish" | "update" | "undo" | "merge-abort" | "git-import" | "branch-create" | "branch-switch" | "merge" | "fetch" | "push" | "remote-remove")
+String kind             ("init" | "save" | "restore" | "workspace-add" | "publish" | "update" | "undo" | "merge-abort" | "git-import" | "branch-create" | "branch-switch" | "merge" | "fetch" | "push" | "remote-remove" | "tag-create" | "tag-delete")
 String description
 u8     has_backup; if 1: Id backup_snapshot
 u8     has_undoes; if 1: Id undone_operation          (since R2 slice 2b; RFC 0004 §10)
@@ -152,7 +152,8 @@ u32 workspace_count; repeat:                          (sorted by id bytes, uniqu
   u8   has_branch; if 1: String branch
   u8   has_head;   if 1: Id snapshot
   u8   has_merge;  if 1: Id conflict   (since R2 slice 2c: pending merge, RFC 0004 §11)
-[ViewExtension]                       (since R3, repository format 2; absent if empty)
+[ViewExtension: remotes]              (since R3, repository format 2; absent if empty)
+[ViewExtension: tags]                 (since R6, repository format 4; absent if empty)
 ```
 
 ViewExtension (remote-tracking references, RFC 0003 §5). Present **only**
@@ -160,7 +161,7 @@ if at least one remote-tracking reference exists, so an operation without
 them has exactly its format-1 bytes and id:
 
 ```
-u8  tag = 1                           (any other tag: decode error)
+u8  tag = 1
 u32 remote_count (≥ 1); repeat (sorted by name bytes, unique):
   String remote_name                  (rules of workspace names)
   u32 branch_count (≥ 1); repeat (sorted by name bytes, unique):
@@ -168,6 +169,20 @@ u32 remote_count (≥ 1); repeat (sorted by name bytes, unique):
     Id     head                       (snapshot)
     u64    seq                        (the relay's publication sequence number)
 ```
+
+ViewExtension (tags, ADR 0008; since R6). Present **only** if at least
+one tag exists, after the remotes extension if both are present:
+
+```
+u8  tag = 2
+u32 tag_count (≥ 1); repeat (sorted by name bytes, unique):
+  String name                         (valid branch name rules)
+  Id     target                       (snapshot)
+```
+
+Extensions appear at most once each, in increasing tag order; a repeated,
+out-of-order or unknown tag, or an empty extension, is a decode error, so
+every view has exactly one encoding.
 
 ### 3.5 Conflict payload (since R2 slice 2c)
 
@@ -270,6 +285,11 @@ A header announcing a larger non-blob payload is rejected before allocation.
 - **Repository format 3** (`concurv-repo-format 3`, since R4): the store may
   also contain attestation objects (kind 6, RFC 0005). Upgraded from format
   1 or 2 by the first `concurv check`; earlier builds refuse it (exit 12).
+- **Repository format 4** (`concurv-repo-format 4`, since R6): operations
+  may also carry the tags extension (§3.4, ADR 0008). Upgraded from format
+  1, 2 or 3 by the first `concurv tag create` (or `git import --tags` that
+  creates a tag), before the operation that introduces the tag; earlier
+  builds refuse it (exit 12).
 - New object kinds (conflict, attestation) get new kind bytes; old decoders
   reject them with `CONCURV_UNSUPPORTED_FORMAT` rather than misparse.
 

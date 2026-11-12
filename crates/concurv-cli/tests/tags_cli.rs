@@ -100,6 +100,9 @@ fn tag_commands_and_exit_codes() {
     assert_eq!(v["data"]["target"], target.as_str());
     assert_eq!(run(&r, &["tag", "delete", "v1.0"]).0, 50);
     assert_eq!(run(&r, &["tag", "create", "v1.0", "--at", &target]).0, 0);
+    let (_, v, _) = run(&r, &["--json", "op", "log", "-n", "1"]);
+    assert_eq!(v["data"]["operations"][0]["kind"], "tag-create");
+    assert_eq!(v["data"]["operations"][0]["tags"]["v1.0"], target.as_str());
     let (_, v, _) = run(&r, &["--json", "verify", "--full"]);
     assert_eq!(v["ok"], true);
     // Events name the tag operations.

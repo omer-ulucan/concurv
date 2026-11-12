@@ -1,4 +1,4 @@
-# concurv architecture (as implemented: R1 to R3)
+# concurv architecture (as implemented)
 
 ```
 concurv-cli          binaries `concurv` and `concurvd`; clap, human and JSON output
@@ -7,7 +7,8 @@ concurv-cli          binaries `concurv` and `concurvd`; clap, human and JSON out
       └─► concurv-workspace  repo, workspaces, scan, save, status, diff, restore,
            │                 publish, update, merge, branches, reconcile, graph, verify,
            │                 policy and check (R4: protected branches, attestations),
-           │                 coord (R5: intents, overlap warnings, events)
+           │                 coord (R5: intents, overlap warnings, events),
+           │                 tags and config (R6)
            └─► concurv-ops   OpLog: commit, walk, clean_tmp
                 └─► concurv-refs     op_head CAS, repository lock
                      └─► concurv-objects  encoding, store, durable fs, faults,
@@ -21,7 +22,7 @@ concurv-cli          binaries `concurv` and `concurvd`; clap, human and JSON out
 | `concurv-objects` | `encoding::{Tree, Snapshot, Operation, View, WorkspaceView}`, `ObjectStore`, `fs::{TempFile, TempSession, FileLock, Faults}` | RFC 0001 byte format with strict decoders; verified loose-object store; durable write primitives with deterministic failpoints; bounded-wait OS locks; per-process temp sessions and best-effort debris cleanup |
 | `concurv-refs` | `OpHead`, `RepoLock` | the only mutable pointer and its CAS; the repository (commit) lock |
 | `concurv-ops` | `OpLog` | commit an operation (re-verify referenced snapshots, write op, CAS); walk history; clean store temp debris |
-| `concurv-workspace` | `Repo`, `WorkspaceLock`, `StoreWriter`, `FlatTree`, `IgnoreRules`, modules `save`, `status`, `restore`, `integrate` (publish/update), `conflicts` (pending merges), `undo`, `merge`, `graph`, `workspaces`, `ignore` (ADR 0004), `verify` | everything touching working copies, workspaces and branch publication |
+| `concurv-workspace` | `Repo`, `WorkspaceLock`, `StoreWriter`, `FlatTree`, `IgnoreRules`, modules `save`, `status`, `restore`, `integrate` (publish/update), `conflicts` (pending merges), `undo`, `merge`, `graph`, `workspaces`, `ignore` (ADR 0004), `verify`, `branches`, `check`/`policy` (RFC 0005), `coord` (RFC 0006), `tags` (ADR 0008), `config` (configuration files) | everything touching working copies, workspaces and branch publication |
 | `concurv-git` | `GitRepo`, `export`, `import`, `GitMap` | Git bridge (ADR 0002): drives `git fast-import` / `fast-export`; deterministic commits; snapshot↔commit cache |
 | `concurv-sync` | `Relay`, `Server`, `Connection`, `RelayUrl`, modules `proto`, `tls`, `graph`, `remote`, `sync` (`fetch`, `push`, `clone_repo`) | RFC 0003: framing and messages, pinned TLS 1.3, relay storage and publish CAS, quarantine and graph closure, client operations and remote configuration |
 | `concurv-cli` | `concurv` and `concurvd` binaries | argument parsing, human and JSON output |

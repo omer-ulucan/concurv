@@ -516,11 +516,16 @@ fn git_export_and_import() {
         "{v}"
     );
     assert_eq!(fs::read_to_string(b.join("hello.txt")).unwrap(), "hello\n");
+    // Importing again (R6: into existing history) finds nothing new.
     let (code, v) = cv_json(&b, &["git", "import", mirror.to_str().unwrap()]);
     assert_eq!(
-        (code, v["error"]["code"].as_str()),
-        (2, Some("CONCURV_INVALID_ARGUMENT")),
-        "not fresh"
+        (
+            code,
+            v["data"]["commits"].as_u64(),
+            v["data"]["published"].as_bool()
+        ),
+        (0, Some(0), Some(false)),
+        "{v}"
     );
     let (code, _) = cv_json(
         &b,

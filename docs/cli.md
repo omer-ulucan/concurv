@@ -15,7 +15,7 @@ Every command runs in the workspace containing the current directory (or `-C`).
 | `concurv merge <branch> [--allow-conflicts] \| --abort` | integrate **another** branch, or a remote-tracking reference `remote/<remote>/<branch>` (RFC 0003 §5), with the rules of `update`; the workspace keeps its branch, and only a later `publish` (CAS) publishes the result. Merging the tracked branch is refused (use `update`). `--abort` = `update --abort` (ADR 0007) | working copy, workspace head |
 | `concurv workspace add <path> [--name N] [--branch B]` | create a workspace in a new or empty directory, tracking `B` (default: the current workspace's branch), and check out that branch there | creates workspace |
 | `concurv workspace list` | all workspaces with branch, head and path | no |
-| `concurv branch create <name> [--at <snapshot\|branch> \| --switch]` | add a branch, by default at this workspace's head (unpublished saves included); `--switch`: there, and this workspace tracks it, in one operation with no file changes. Names: Git's ref-name rules plus a portability policy; no collision with existing branches (ADR 0007 §5). Moves no other workspace or branch | shared branches (+ tracked branch with `--switch`) |
+| `concurv branch create <name> [--at <branch\|tag\|snapshot> \| --switch]` | add a branch, by default at this workspace's head (unpublished saves included); `--switch`: there, and this workspace tracks it, in one operation with no file changes. Names: Git's ref-name rules plus a portability policy; no collision with existing branches (ADR 0007 §5). Moves no other workspace or branch | shared branches (+ tracked branch with `--switch`) |
 | `concurv branch list` | branches with head and the workspaces tracking them | no |
 | `concurv branch switch <name>` | track another branch and check out its head, transactionally. Untracked files that do not collide stay. Refused, with nothing changed: unsaved changes, or untracked/ignored files that would be overwritten (20); a pending merge (43); an unknown branch (50); saves that would be on no branch (42). A failed switch is rolled back; an interrupted one is finished by running it again | working copy, workspace head and branch |
 | `concurv undo` | reverse this workspace's most recent operation (`save`, `update`, `merge`, `restore`, `branch switch`); repeat to go further back. Refuses `publish` and `branch create` | workspace head and/or working copy |
@@ -24,8 +24,8 @@ Every command runs in the workspace containing the current directory (or `-C`).
 | `concurv check-ignore <path>…` | explain whether each path is ignored (`.gitignore`, `.concurv/exclude`) or tracked, and by which rule; reports unusable patterns | no |
 | `concurv verify [--full]` | integrity check of reachable graph (`--full`: every object file) | no |
 | `concurv op log [-n N]` | operation log of all workspaces, newest first, with backups | no |
-| `concurv git export <repo> [--from C] [--branch B]` | write concurv branch `C`'s history (default `main`) into a Git repository and move Git branch `B` (default: same name as `C`) by compare-and-swap. Requires `git` on PATH | the Git repository |
-| `concurv git import <repo> [--branch B]` | import Git branch `B` into this **fresh** repository, publish it as `main` and check it out | history, working copy |
+| `concurv git export <repo> [--from C] [--branch B] [--tags]` | write concurv branch `C`'s history (default `main`) into a Git repository and move Git branch `B` (default: same name as `C`) by compare-and-swap. `--tags`: also the tags naming snapshots of that history, as lightweight `refs/tags/<name>`, in one reference transaction with the branch; a Git tag of the same name at another commit refuses the export (42) and no Git reference changes. Requires `git` on PATH | the Git repository |
+| `concurv git import <repo> [--branch B] [--into C] [--tags]` | import Git branch `B` (default `main`) into concurv branch `C` (default `main`): commits concurv already has (`.concurv/git-map`, from earlier imports and exports) are reused, new ones become snapshots. `C` is created, or moved forward only if `B` contains its head (else 42: import `--into` a new branch and `merge` it). This workspace is checked out to the new head only if it tracks `C`, was at its old head and has no unsaved changes. `--tags`: Git tags naming commits of that history become concurv tags (annotated ones lose message and tagger); a concurv tag of the same name elsewhere refuses the import (42). All or nothing | history, branch `C`, tags, working copy (see above) |
 | `concurv remote add <name> <url> --fingerprint <fp> [--token-file F]` | add a relay (`concurv://host[:port]`), pinning its certificate fingerprint; the device token comes from `F` or `$CONCURV_REMOTE_TOKEN` and is stored in `.concurv/remotes/<name>/token` (owner-only on Unix). Contacts nothing; upgrades the repository to format 2 (RFC 0001 §7) | repository config (+ format) |
 | `concurv remote list` | remotes with URL, fingerprint and remote-tracking references | no |
 | `concurv remote remove <name>` | delete the remote's configuration and token and, in one operation, its remote-tracking references (no local branch changes) | config, view |
@@ -37,10 +37,29 @@ Every command runs in the workspace containing the current directory (or `-C`).
 | `concurv intent release [ID]` | remove this workspace's intents (all, or by id prefix) | repository intents |
 | `concurv overlaps` | warnings, never refusals: files this workspace changed that another workspace's unpublished saves or upstream work also change (`path`), where the line edits would conflict (`conflict`), that match another's intent (`intent`), or that use a symbol whose definition changed upstream (`dependency`) | no |
 | `concurv events [-n N]` | the operation log as versioned JSON lines, oldest first (with `--json`: an `events` array) | no |
+| `concurv tag create <name> [--at <branch\|tag\|snapshot>]` | name a snapshot (default: this workspace's head) with a tag that never moves (ADR 0008). Names: the rules of new branch names, no collision with another tag. An existing name is refused. The first tag upgrades the repository to format 4 | shared tags (+ format) |
+| `concurv tag list` | tags with their snapshots | no |
+| `concurv tag delete <name>` | remove the name; the snapshot stays and is printed (`tag create <name> --at <id>` restores it). `undo` refuses tag operations | shared tags |
+| `concurv config get <key>` | the effective value of `author` or `remote` and its source (`environment`, `repository`, `user`); not set: exit 50 | no |
+| `concurv config set <key> <value> [--global]` | write the repository file `.concurv/config.json` (shared by its workspaces), or with `--global` the user file. Unknown keys and invalid values are refused | configuration file |
+| `concurv config unset <key> [--global]` | remove a key from that file | configuration file |
+| `concurv config list` | every known key with its effective value and source, and both file paths | no |
+| `concurv completions <shell>` | print a completion script for `bash`, `zsh`, `fish`, `powershell` or `elvish` | no |
 
 Global flags: `--json`, `-C <dir>`. Sync commands use the token stored for the remote,
-or `CONCURV_REMOTE_TOKEN` if set. Author comes from `CONCURV_AUTHOR`, else the OS
-user name (`USER`/`USERNAME`), else `unknown`.
+or `CONCURV_REMOTE_TOKEN` if set. Author: `CONCURV_AUTHOR`, else `author` from the
+repository configuration, else from the user configuration, else the OS user name
+(`USER`/`USERNAME`), else `unknown`. Default remote for `fetch`/`push`: the one named,
+else the configured `remote`, else the only remote, else `origin`.
+
+**Configuration** (since R6): the repository file is `.concurv/config.json`; the
+user file is `$CONCURV_CONFIG` if set (empty: none), else
+`%APPDATA%\concurv\config.json` on Windows and `$XDG_CONFIG_HOME/concurv/config.json`
+(default `~/.config/concurv/config.json`) elsewhere. Format:
+`{"concurv_config": 1, "settings": {"author": "…", "remote": "…"}}`. A malformed
+file, an unknown key or an invalid value stops every command (exit 2, naming the
+file) except `completions`; nothing is guessed. Writes are atomic, under the
+repository lock (repository file) or `config.lock` next to the user file.
 
 **Behaviour change in R2:** `save` no longer moves `main`; `publish` does (RFC 0004 §2).
 
@@ -77,8 +96,16 @@ changes behaviour, not the JSON shape.)
 - `publish`: `branch`, `from` (previous branch head or null), `to`, `published` (false if already there), `operation`, `attestation` (the attestation that authorized a protected publish, or null)
 - `check`: `attestation`, `passed`, `candidate`, `branch`, `policy` (blob id), `environment` (`os`, `arch`, `concurv`), `checks[]` (`name`, `argv[]`, `exit_code` (−1000001: timeout, −1000002: could not start), `duration_ms`, `output` (blob id of combined stdout+stderr)), `newly_trusted`
 - `update`, `merge`: `branch` (the branch integrated), `result` ∈ `up_to_date|fast_forward|merged|conflicted|aborted`, `conflict` (pending-merge id or null), `conflicts[]` (`path`, `kind` ∈ `both_modified|both_added|delete_modify|file_directory`, `markers`, `side_files[]`), `content_merged[]` (paths merged line by line), for `aborted` also `backup`, `head`, `written`, `deleted`, `operation`
-- `git export`: `branch`, `tip` (Git commit), `previous` (Git branch before, or null), `exported` (new commits), `reused` (already present), `updated`
-- `git import`: `branch`, `git_tip`, `tip` (snapshot now at `main`), `commits`, `written`
+- `git export`: `branch`, `tip` (Git commit), `previous` (Git branch before, or null), `exported` (new commits), `reused` (already present), `updated`, `tags[]` (with `--tags`: `name`, `commit`, `created` (false if Git already had it)), `tags_skipped[]` (names of tags outside the exported history)
+- `git import`: `branch`, `into`, `git_tip`, `tip` (snapshot now at `into`), `commits` (newly imported), `published` (`into` created or moved), `checked_out`, `written`, `tags_created[]` (`name`, `target`), `tags_unchanged`, `tags_skipped[]` (`name`, `reason`), `annotated_dropped`
+- `tag create`: `tag`, `target`, `operation`, `format_upgraded`
+- `tag list`: `tags[]` (`name`, `target`)
+- `tag delete`: `tag`, `target` (where it was), `operation`
+- `config get`: `key`, `value`, `source` ∈ `environment|repository|user`
+- `config set`: `key`, `value`, `scope` ∈ `repository|user`, `previous` (or null)
+- `config unset`: `key`, `scope`, `previous` (null if it was not set)
+- `config list`: `keys[]` (`key`, `value` (or null), `source` (or null), `description`), `repository_file` (null outside a repository), `user_file` (or null)
+- `completions`: `shell`, `script`
 - `undo`: `undone` (operation id), `undone_kind` ∈ `save|update|merge|restore|branch-switch`, `undone_description`, `head` (workspace head after), `files_restored_to` (snapshot or null if files were untouched), `written`, `deleted`, `operation`
 - `branch create`: `branch`, `head`, `switched`, `operation`
 - `branch list`: `branches[]` (`name`, `head`, `workspaces[]` (names), `current`)
@@ -89,7 +116,7 @@ changes behaviour, not the JSON shape.)
 - `restore`: `target`, `backup`, `written`, `deleted`, `operation`
 - `check-ignore`: `paths[]` (`input`, `path`, `is_dir`, `tracked`, `ignored`, `rule` (null or `{source, pattern, negated}`), `excluded_parent` (null or a directory)), `unusable_patterns[]` (`source`, `line`, `pattern`, `reason`)
 - `verify`: `full`, `operations`, `conflicts`, `snapshots`, `trees`, `blobs`, `unreachable`, `problems[]` (`code`, `subject`, `message`), `notes[]`
-- `op log`: `operations[]` (`operation`, `parents[]`, `kind` ∈ `init|save|restore|workspace-add|publish|update|undo|merge-abort|git-import|branch-create|branch-switch|merge|fetch|push|remote-remove`, `description`, `timestamp_ms`, `device`, `workspace` (null for `init`), `backup` (null unless `restore --force` replaced unsaved work), `undoes` (for `undo`: the reversed operation), `checked_out` (snapshot the working copy was set to, or null), `head` (the **current** workspace's head after the operation, or null), `branches` (object: name → snapshot id), `remotes` (object: remote → branch → `{head, seq}`; since R3))
+- `op log`: `operations[]` (`operation`, `parents[]`, `kind` ∈ `init|save|restore|workspace-add|publish|update|undo|merge-abort|git-import|branch-create|branch-switch|merge|fetch|push|remote-remove|tag-create|tag-delete`, `description`, `timestamp_ms`, `device`, `workspace` (null for `init`), `backup` (null unless `restore --force` replaced unsaved work), `undoes` (for `undo`: the reversed operation), `checked_out` (snapshot the working copy was set to, or null), `head` (the **current** workspace's head after the operation, or null), `branches` (object: name → snapshot id), `remotes` (object: remote → branch → `{head, seq}`; since R3), `tags` (object: name → snapshot id; since R6))
 - `remote add`: `name`, `url`, `fingerprint`
 - `remote list`: `remotes[]` (`name`, `url`, `fingerprint`, `branches` (object: branch → `{head, seq}`, the remote-tracking references))
 - `remote remove`: `name`, `operation` (null if it had no remote-tracking references)
@@ -111,7 +138,7 @@ changes behaviour, not the JSON shape.)
 | 2 | `CONCURV_INVALID_ARGUMENT` (and clap usage errors) | bad input (e.g. empty message, bad workspace name, publish without a saved snapshot, undo of a `publish`) |
 | 10 | `CONCURV_NOT_A_REPO` | no repository found, or a workspace whose repository is gone |
 | 11 | `CONCURV_ALREADY_INITIALIZED` | `init` on existing repo |
-| 12 | `CONCURV_UNSUPPORTED_FORMAT` | unknown object/repository format version |
+| 12 | `CONCURV_UNSUPPORTED_FORMAT` | unknown object/repository format version (for example a format-4 repository, which has tags, opened by a build older than R6) |
 | 20 | `CONCURV_DIRTY_WORKSPACE` | restore/update/merge/undo/branch switch would discard unsaved changes, or would overwrite an ignored untracked file (also with `--force`); `branch switch` would overwrite or remove an untracked file |
 | 21 | `CONCURV_CONCURRENT_MODIFICATION` | a file changed while concurv was reading/replacing it |
 | 22 | `CONCURV_INVALID_PATH` | name violates concurv or platform path rules (incl. a `.git` entry on restore); nested workspace |
@@ -121,12 +148,12 @@ changes behaviour, not the JSON shape.)
 | 33 | `CONCURV_LIMIT_EXCEEDED` | input exceeds a hard limit |
 | 40 | `CONCURV_LOCKED` | a repository or workspace lock stayed busy for the whole wait |
 | 41 | `CONCURV_STALE_HEAD` | op head or workspace head moved during compare-and-swap |
-| 42 | `CONCURV_DIVERGED` | `publish` refused: the branch has work this workspace has not integrated (run `update`); `git export` refused: the Git branch has commits outside the exported branch's history; `branch switch` refused: saves in this workspace are on neither the old nor the new branch |
+| 42 | `CONCURV_DIVERGED` | `publish` refused: the branch has work this workspace has not integrated (run `update`); `git export` refused: the Git branch has commits outside the exported branch's history, or (`--tags`) Git has a tag of the same name at another commit; `git import` refused: the concurv branch has snapshots the Git branch lacks, or (`--tags`) a concurv tag of the same name is elsewhere; `branch switch` refused: saves in this workspace are on neither the old nor the new branch |
 | 43 | `CONCURV_CONFLICT` | `update`/`merge` refused: conflicting changes (without `--allow-conflicts`), file/directory conflict, ambiguous merge base, or a merge already pending; `save` refused: unresolved conflicts; `branch switch` and `branch create --switch` refused during a pending merge. Nothing modified |
 | 44 | `CONCURV_POLICY_FAIL` | a protected branch (RFC 0005) refused the publish or push: no recorded passing attestation for exactly this candidate under the current policy (stale, failing, other branch, other OS), an invalid policy, or a policy that excludes this OS for `check` |
 | 45 | `CONCURV_UNTRUSTED_POLICY` | `check`: this version of the branch policy has not been approved on this device (`--trust`); nothing ran |
 | 50 | `CONCURV_NOT_FOUND` | id/prefix not found or not a snapshot; workspace not registered; nothing to undo; unknown branch (`branch switch`, `merge`, `workspace add --branch`, `git export --from`, `push`); unknown remote |
-| 51 | `CONCURV_AMBIGUOUS_ID` | prefix matches several objects |
+| 51 | `CONCURV_AMBIGUOUS_ID` | prefix matches several objects; `--at` names a branch and a tag that point at different snapshots |
 | 60 | `CONCURV_EXTERNAL_TOOL` | `git` is not installed or a git command failed |
 | 70 | `CONCURV_NETWORK` | the relay could not be reached, or the connection broke or timed out (sync commands; nothing was changed locally unless the output says so) |
 | 71 | `CONCURV_PROTOCOL` | a peer sent a malformed or unexpected message |

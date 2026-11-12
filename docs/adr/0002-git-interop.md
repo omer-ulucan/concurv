@@ -2,7 +2,7 @@
 
 Status: **Accepted; minimum subset implemented** in R2 slice 2d (crate
 `concurv-git`, commands `concurv git export` / `concurv git import`).
-Date: 2026-11-01. GitHub-oriented workflows (push/pull automation) remain R6.
+Date: 2026-11-01; R6 (2026-11-12) added tags and import into existing history.
 
 ## Why concurv ids are not Git ids
 
@@ -31,7 +31,7 @@ The `git` process runs hermetically: `GIT_DIR`, `GIT_WORK_TREE`,
 `git -C <repo>`. A missing or failing `git` gives `CONCURV_EXTERNAL_TOOL`
 (exit 60).
 
-## Export (`concurv git export <repo> [--branch main]`)
+## Export (`concurv git export <repo> [--from main] [--branch main] [--tags]`)
 
 - Exports **every snapshot reachable from `main`** (merges included) in
   parent-first order. Snapshots already present in the target repository are
@@ -39,7 +39,7 @@ The `git` process runs hermetically: `GIT_DIR`, `GIT_WORK_TREE`,
 - Mapping: `file` → `100644`, `executable` → `100755`, `symlink` → `120000`;
   blob bytes are identical. Commits are written to the private ref
   `refs/concurv/export` (deleted afterwards), then **`refs/heads/<branch>` is
-  moved with a compare-and-swap** (`git update-ref <ref> <new> <old>`). If the
+  moved with a compare-and-swap** (`git update-ref --stdin`, one transaction with the tags of `--tags`, ADR 0008 §6). If the
   Git branch has commits that are not part of `main`'s history, export refuses
   with `CONCURV_DIVERGED` and changes nothing in Git.
 - Each commit depends **only on data that survives a round trip**: tree,
@@ -50,11 +50,32 @@ The `git` process runs hermetically: `GIT_DIR`, `GIT_WORK_TREE`,
   `.concurv/git-map` is just a cache: deleting it costs a re-export, never
   different commits.
 
-## Import (`concurv git import <repo> [--branch main]`)
+## Import (`concurv git import <repo> [--branch main] [--into main] [--tags]`)
 
-- Imports a Git branch with its full history into a **fresh** repository
-  (`main` and the current workspace empty), publishes the head as `main`, and
-  checks it out. Importing into existing history is not supported.
+- Imports a Git branch into a concurv branch (`--into`, default `main`). In
+  a fresh repository that is the whole history, published as `main` and
+  checked out.
+- **Into existing history (since R6).** Commits concurv already has (pairs
+  in `.concurv/git-map`, recorded by earlier imports *and* exports, whose
+  snapshot exists here and whose commit exists in that Git repository) are
+  passed to `git fast-export --import-marks`, so Git streams only the new
+  commits, which refer to known ones by mark. Imported commits keep their
+  Git ids in the map, so a later export continues Git's history instead of
+  rewriting it (Git → concurv → Git: the same commits; concurv work on top
+  becomes new commits).
+- The target branch is created, or moved **forward only**: if it has
+  snapshots the Git branch does not contain, the import is refused
+  (`CONCURV_DIVERGED`) and nothing changes. Import into a new branch
+  (`--into git-main`) and `concurv merge` it instead: divergence is resolved
+  by the normal merge, never by an implicit one.
+- This workspace is brought to the new head only if it tracks the target,
+  was at its old head and has no unsaved changes; otherwise its files are
+  untouched and the output says so.
+- `--tags` (ADR 0008 §6): Git tags (lightweight, or annotated and peeled)
+  naming commits of the imported history become concurv tags in the same
+  operation; tags elsewhere or with names concurv refuses are listed and
+  skipped; a concurv tag of the same name at another snapshot refuses the
+  import.
 - Each commit becomes a snapshot with the same tree contents (identical
   concurv tree ids for the same files) and the same parent structure. The
   ChangeId comes from the `Concurv-Change-Id` trailer if present (the trailer
@@ -76,7 +97,8 @@ The `git` process runs hermetically: `GIT_DIR`, `GIT_WORK_TREE`,
 | submodules (`160000` entries) | import **refused**, listed |
 | paths concurv rejects (`.concurv`, invalid or non-UTF-8 names) | import **refused**, listed |
 | non-UTF-8 commit messages (`encoding` header) | import **refused**, listed |
-| tags, notes, signatures, replace refs, grafts, shallow history | not imported (tags and notes are skipped, signatures stripped); export writes no tags |
+| tags | since R6, with `--tags` both ways: lightweight tags (annotated Git tags are imported as lightweight; message and tagger dropped, ADR 0008) |
+| notes, signatures, replace refs, grafts, shallow history | not imported (notes skipped, signatures stripped) |
 | empty directories | not versioned on either side |
 | concurv operations, workspaces, backups, pending merges | never exported; local-only metadata |
 | concurv snapshots not reachable from `main` (unpublished work) | not exported |

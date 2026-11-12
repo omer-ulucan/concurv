@@ -1679,6 +1679,9 @@ fn cmd_op_log(repo: &Repo, limit: usize) -> Result<Output> {
                     .map(|(b, h)| (b.clone(), json!({ "head": h.head.to_hex(), "seq": h.seq })))
                     .collect::<serde_json::Map<_, _>>().into()))
                 .collect::<serde_json::Map<_, _>>(),
+            "tags": op.view.tags.iter()
+                .map(|(name, s)| (name.clone(), Value::String(s.to_hex())))
+                .collect::<serde_json::Map<_, _>>(),
         }));
     }
     ok(json!({ "operations": arr }), human)
