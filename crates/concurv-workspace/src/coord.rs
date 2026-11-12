@@ -330,12 +330,15 @@ pub struct Overlap {
     pub symbol: Option<String>,
 }
 
+/// Base and new text of one changed file; `None` = absent or unreadable as
+/// text (binary, symlink or too large).
+pub type TextChange = (Option<Vec<u8>>, Option<Vec<u8>>);
+
 /// A set of changed files with their before (base) and after contents.
 #[derive(Default)]
 pub struct ChangeSet {
-    /// Path → (base content, new content); `None` = absent or unreadable
-    /// as text (binary, symlink or too large).
-    pub files: BTreeMap<RepoPath, (Option<Vec<u8>>, Option<Vec<u8>>)>,
+    /// Path → (base content, new content).
+    pub files: BTreeMap<RepoPath, TextChange>,
 }
 
 fn blob_text(store: &ObjectStore, files: &FlatTree, p: &RepoPath) -> Option<Vec<u8>> {
@@ -527,9 +530,10 @@ pub fn mentions_in_code(text: &[u8], symbol: &str) -> bool {
                 }
             } else if c == '"' {
                 in_str = true;
-            } else if c == '/' && chars.peek() == Some(&'/') {
-                break;
-            } else if c == '#' && matches!(chars.peek(), Some(' ') | None) {
+            } else if (c == '/' && chars.peek() == Some(&'/'))
+                || (c == '#' && matches!(chars.peek(), Some(' ') | None))
+            {
+                // A line comment (`//`, or `# ` as in shells and Python).
                 break;
             } else {
                 code.push(c);
