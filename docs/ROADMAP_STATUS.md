@@ -203,7 +203,7 @@ refinements before full acceptance. Status of each:
 | 5 | R3 reconciliation preserves divergence; no automatic publication | RFC 0003 §5 rewritten; `reconcile::plan` (pure, not wired to a command) | `tests/reconcile.rs` with an in-memory CAS relay |
 | 6 | Tests: concurrent creation, several workspaces per branch, switching, unpublished changes, CAS failures, crash recovery, cross-machine divergence | — | `tests/branches.rs` (19), `branch_switch_faults.rs` (2), `reconcile.rs` (4), `refname_vs_git.rs` (2), CLI `kill_recovery.rs::killed_branch_switches_are_finished_by_running_them_again` (real processes; locally 20 kills, 18 mid-switch, all resumed) |
 | 7 | Document workspace state, local branch refs, remote-tracking refs, authoritative heads | ADR 0007 §8, RFC 0004 §12, RFC 0003 §5, user guide §4a, architecture | docs |
-| 8 | Delete/rename, protected branches, tags stay on the roadmap | not implemented | `ROADMAP_REVISED.md` P2-1, P2-8, P2-9, P2-10 |
+| 8 | Delete/rename, protected branches, tags stay on the roadmap | all implemented: protected branches (R4, RFC 0005), tags (R6, ADR 0008, also at the relay), delete and rename (2026-11-12, ADR 0007 §9) | see "Branch delete and rename, tags at the relay" below |
 
 CI run [41375647699](https://github.com/omer-ulucan/concurv/actions/runs/41375647699)
 on `main` @ `79caf3f`, rustc 1.99.1, `--locked`, `--no-fail-fast`: ubuntu-latest
@@ -353,6 +353,25 @@ Found by the gate: the CLI smoke test still expected `git import` to refuse
 a non-empty repository (the old rule); it now checks that a repeated
 import finds nothing new.
 
-What R6 does **not** provide yet: tags at the relay (tags travel through
-Git or are created per machine), annotated or signed tags, branch
-delete/rename, macOS release builds.
+What R6 does **not** provide yet: annotated or signed tags, deleting tags
+or branches at a relay, macOS release builds. (Tags at the relay and local
+branch delete/rename were added afterwards; see the next section.)
+
+## Branch delete and rename, tags at the relay (2026-11-12)
+
+Local CI gate on `feat/branch-delete-rename` @ `2c5ffb4`, rustc 1.99.1,
+`--locked`, `--no-fail-fast`: Windows 11 **258 passed**, Linux (WSL 2)
+**262 passed**, 0 failed, 0 ignored; fmt, clippy `-D warnings`, release
+build and MSRV 1.89 check pass on both. (The delete/rename commit alone,
+`0907ae8`, passed on Windows with 254.) macOS not run.
+
+| Item | Tests |
+|---|---|
+| `branch delete` (backlog P2-8): refused while tracked (2), when protected (44), when no other branch, tag, workspace head or remote-tracking reference holds the head (42, invariant B1); recreate from the printed head | `concurv-workspace/tests/branch_refs.rs` (B1 checked after every deletion), CLI `branch_refs_cli.rs` |
+| `branch rename`: workspaces follow in one operation; collisions, same name and protected branches refused; case-only rename allowed | `branch_refs.rs::rename_moves_the_name_and_its_workspaces`, `protected_branches_cannot_be_deleted_or_renamed` |
+| Sync: a branch deleted or renamed here is not recreated by `fetch` (`not_local`); `--at remote/<r>/<b>` brings it back; new relay branches are still created | `concurv-sync/tests/branch_refs.rs` |
+| Tags at the relay (ADR 0008 §7): create-only, all or nothing, scope `write`, names checked, snapshots of published history only; `push --tags`; `fetch`/`clone` create missing tags and never move one; a hostile tag list creates nothing invalid, colliding or dangling | `concurv-sync/tests/relay_tags.rs` (3 tests), CLI `sync_cli.rs::tags_through_a_relay_process` (real `concurvd`) |
+
+Not covered: deleting branches or tags at a relay (not supported), and a
+relay of v0.1.0-alpha.3 or older answering `push --tags` (it ends the
+session; the client reports the error, `fetch` simply gets no tags).
