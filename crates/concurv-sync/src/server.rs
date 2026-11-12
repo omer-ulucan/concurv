@@ -366,6 +366,15 @@ fn request<S: Read + Write>(
             write_message(s, &Response::Stored { received: count })?;
             Ok(true)
         }
+        Request::Intents {
+            device: client,
+            intents,
+        } => {
+            let r = relay
+                .exchange_intents(device, &client, intents)
+                .map(|intents| Response::Intents { intents });
+            answer(s, r)
+        }
         Request::Attest { id } => {
             let id = parse_id(&id)?;
             let r = relay

@@ -5,6 +5,17 @@ version 1 and the CLI/JSON contract are not frozen until 0.1.0 (see ADR 0003).
 
 ## [Unreleased]
 
+### Added (R5, RFC 0006: agent coordination)
+- **Advisory intents**: `concurv intent declare|list|release` (paths and
+  symbols, 1 minute to 7 days); exchanged with the relay on `push` and
+  `fetch`; expired intents are ignored everywhere. Never a lock.
+- **`concurv overlaps`**: warnings about the same files changed elsewhere,
+  line edits that would conflict, declared intents, and upstream changes to
+  the definition of a function or type this workspace uses (a signature
+  change on another machine warns after `fetch`). Measured rates in
+  `bench/RESULTS.md`.
+- **`concurv events`**: the operation log as versioned JSON lines.
+
 ### Added (R4, RFC 0005: verified integration)
 - **Protected branches.** A `concurv-policy.json` in a branch's current head
   can `protect` it: `publish` (and, at a relay, `push`) then needs a passing

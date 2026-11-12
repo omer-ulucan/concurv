@@ -226,6 +226,14 @@ struct RequestRecord {
     seq: u64,
 }
 
+/// An intent and the relay device that submitted it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredIntent {
+    submitter: String,
+    intent: concurv_workspace::coord::Intent,
+}
+
 /// An attestation a device with the `attest` scope vouched for.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -792,6 +800,66 @@ impl Relay {
             &state.encode()?,
             &self.opts.faults,
         )
+    }
+
+    /// Exchange advisory intents (RFC 0006 §2). With `submit` (scope
+    /// `write`), the intents this relay device submitted for client device
+    /// `client_device` are replaced by `submit`. Returns every active
+    /// intent. Kept in `intents.json`, never part of history; expired ones
+    /// are dropped on every exchange.
+    pub fn exchange_intents(
+        &self,
+        device: &Device,
+        client_device: &str,
+        submit: Option<Vec<concurv_workspace::coord::Intent>>,
+    ) -> Result<Vec<concurv_workspace::coord::Intent>> {
+        device.require_read()?;
+        let now = now(&self.opts);
+        let path = self.dir.join("intents.json");
+        let load = || -> Vec<StoredIntent> {
+            fs::read(&path)
+                .ok()
+                .and_then(|b| serde_json::from_slice(&b).ok())
+                .unwrap_or_default()
+        };
+        let Some(list) = submit else {
+            return Ok(load()
+                .into_iter()
+                .map(|s| s.intent)
+                .filter(|i| i.active(now))
+                .collect());
+        };
+        device.require_write()?;
+        if list.len() > 256 {
+            return Err(crate::proto::protocol("more than 256 intents"));
+        }
+        for i in &list {
+            i.validate()?;
+            if i.device != client_device {
+                return Err(crate::proto::protocol(
+                    "an intent of another device was submitted",
+                ));
+            }
+        }
+        let _l = self.lock()?;
+        let mut all: Vec<StoredIntent> = load()
+            .into_iter()
+            .filter(|s| s.intent.active(now))
+            .filter(|s| !(s.submitter == device.name && s.intent.device == client_device))
+            .collect();
+        all.extend(
+            list.into_iter()
+                .filter(|i| i.active(now))
+                .map(|intent| StoredIntent {
+                    submitter: device.name.clone(),
+                    intent,
+                }),
+        );
+        let excess = all.len().saturating_sub(4096);
+        all.drain(..excess);
+        let body = serde_json::to_vec(&all).map_err(|e| ConcurvError::internal(e.to_string()))?;
+        write_file_atomic(self.store.tmp_dir(), &path, &body, &self.opts.faults)?;
+        Ok(all.into_iter().map(|s| s.intent).collect())
     }
 
     /// Compare-and-swap of a published head (RFC 0003 §3.8). Under the

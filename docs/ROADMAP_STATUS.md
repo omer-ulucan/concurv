@@ -3,7 +3,7 @@
 Legend: `not started` · `in progress` · `gate passed` · `blocked`.
 A stage is `gate passed` only with the evidence listed next to it.
 The plan itself (stages, gates, backlog, acceptance tests) lives in
-**`docs/ROADMAP_REVISED.md`**. Last updated: 2026-11-12 (R4 verified integration).
+**`docs/ROADMAP_REVISED.md`**. Last updated: 2026-11-12 (R5 agent coordination).
 
 | Stage | Status | Evidence / blockers |
 |---|---|---|
@@ -14,7 +14,7 @@ The plan itself (stages, gates, backlog, acceptance tests) lives in
 | R2.5 — Local merge & branch semantics | **in progress** (gate re-opened 2026-11-01) | Line-level merge (ADR 0006) verified. Branch model: the owner approved ADR 0007 **in principle** and requested refinements; they are implemented and tested (see "R2.5 branch-model refinements" below). Remaining gate item: the owner's final acceptance of ADR 0007 |
 | R3 — Two-PC authenticated sync | **gate passed** (2026-11-12, Windows and Linux) | Local CI gate on `3f85c0b`: Windows 216 passed, Linux 220 passed; relay `concurvd`, pinned TLS, devices and scopes, fetch/push/clone, two-process harness, disconnect, malformed-object, auth, crash/restart tests (RFC 0003 v1). macOS not run. See "R3 evidence" below |
 | R4 — Verified integration | **gate passed** (2026-11-12, Windows and Linux) | Local CI gate on `5a4863b`: Windows 227 passed, Linux 231 passed; protected branches, `concurv check`, attestations bound to candidate, branch, policy version, checks and OS, at the relay too (RFC 0005). macOS not run. See "R4 evidence" below |
-| R5 — Agent-aware coordination | not started | — |
+| R5 — Agent-aware coordination | **gate passed** (2026-11-12, Windows and Linux) | Local CI gate on `8b0bbe3`: Windows 235 passed, Linux 239 passed; versioned JSON events, advisory intents with TTL (also through the relay), overlap warnings at four levels with measured false-positive and false-negative rates, no LLM (RFC 0006). macOS not run. See "R5 evidence" below |
 | R6 — Developer beta + Git ecosystem | not started | design only: ADR 0002 |
 | R7 — Advanced VCS | not started | — |
 
@@ -83,9 +83,10 @@ What the gate does **not** prove (still true, by design of the tests):
 
 ## Next
 
-R1, R1.5, R2, R3 and R4 are complete; R2.5 awaits the owner's final acceptance
-of ADR 0007; R0 (competitor harness) remains open. Next: R5, agent
-coordination (`docs/rfcs/0006-agent-coordination.md`), then R6.
+R1, R1.5, R2, R3, R4 and R5 are complete; R2.5 awaits the owner's final
+acceptance of ADR 0007; R0 (competitor harness) remains open. Next: R6, the
+developer beta (Git tags, import into existing history, configuration,
+completions, contributor documents; the LICENSE is the owner's decision).
 macOS evidence needs hosted CI or a Mac running `scripts/ci-local.sh`.
 
 ## R2 evidence (gate passed 2026-11-01)
@@ -295,3 +296,33 @@ test blocks publish; no TOCTOU; sandbox policy explicit."*
 What the R4 gate does **not** prove: that a runner really ran the checks
 (attestations are claims of an authenticated device; signatures are R7);
 isolation of checks (`sandbox: none`); macOS.
+
+## R5 evidence (gate passed 2026-11-12, Windows and Linux)
+
+Local CI gate (`scripts/ci-local.sh`, Windows and then WSL, same commit) on
+`feat/r5-coord` @ `8b0bbe3`, rustc 1.99.1, `--locked`, `--no-fail-fast`:
+Windows 11 **235 passed**, Linux (WSL 2) **239 passed**, 0 failed, 0
+ignored; fmt, clippy `-D warnings`, release build and MSRV 1.89 check pass
+on both. macOS not run.
+
+Gate statement (roadmap §2): *"Versioned JSONL events, advisory intent with
+TTL, overlap warnings with measured false-positive/negative rates; no LLM
+dependency."*
+
+| Requirement | Tests and evidence |
+|---|---|
+| Versioned JSONL events | `concurv events` (JSON lines, `concurv_event` version 1, oldest first): `concurv-workspace/tests/coordination.rs::events_are_versioned_json_lines_of_the_operation_log`, CLI `coord_cli.rs` |
+| Advisory intent with TTL | `intent declare\|list\|release` (1 minute to 7 days): `intents_are_advisory_expire_and_never_lock` (an intent never refuses a save or publish; expired intents are ignored and pruned); across machines, `concurv-sync/tests/coordination.rs` (intents travel through the relay, are released, expire for an agent that was offline, and a read-only device cannot submit any) |
+| Overlap warnings | `concurv overlaps` at four levels (`path`, `conflict`, `intent`, `dependency`): `unpublished_work_in_another_workspace_is_reported_at_path_or_conflict_level`, `a_changed_definition_warns_dependent_work`; a signature changed on another machine warns the dependent agent after `fetch` (`cross_machine_signature_change_warns_the_dependent_agent`) |
+| Measured false-positive and false-negative rates | `overlap_rates.rs` over a seeded corpus (`bench/RESULTS.md`): `conflict` level FP 0.054, FN 0 (2000 pairs, compared with the real three-way merge); `path` level FP 1.000, FN 0; `dependency` FP 0.000, FN 0.365 (2000 cases; every miss is a call through a function table, which a lexical rule cannot see) |
+| No LLM dependency | the rules are lexical and merge-based; no model, network service or new dependency (`Cargo.lock` gained no crate for R5) |
+
+Found by the gate: Clippy 1.99 flagged two lints in `coord.rs`, and the
+fetch fault-injection test found that a failed write of the intents cache
+was swallowed. `fetch` now reports it before recording anything; `push`,
+whose publish stands either way, still ignores it (RFC 0006 §2).
+
+What the R5 gate does **not** prove: that the warnings help agents in
+practice (no user study); dependency detection beyond lexical uses (calls
+through tables, dynamic dispatch, other languages' import forms); clock
+skew between devices for intent expiry; macOS.

@@ -1,7 +1,7 @@
 # concurv threat model
 
-Scope: the local kernel (R1–R2.5), sync (R3) and verified integration (R4),
-implemented; R5 surfaces (designed). Each row lists the mitigation **and
+Scope: the local kernel (R1–R2.5), sync (R3), verified integration (R4) and
+agent coordination (R5), all implemented. Each row lists the mitigation **and
 whether it is implemented**.
 
 ## Assets
@@ -38,6 +38,7 @@ tokens (R3).
 | T20 | **Compromised or rolled-back relay** (relay restored from an old backup, relay operator rewrites `state.json`) | clients never follow a head that does not descend from the one they saw (`rewound`), and refuse to push to it; local branches and fetched history stay. A relay can withhold or delay publications (availability is not protected) and can show different devices different heads until they compare (no transparency log yet). Content addressing protects integrity, not authorship: snapshot signatures are R7 | R3 implemented + tested (rewound relay) |
 | T21 | **Resource exhaustion of the relay or client** (many connections, slow clients, huge or endless uploads, huge packs) | at most 64 connections, idle timeout 120 s, messages ≤ 1 MiB, ≤ 10,000 objects per upload batch, blob size limit (default 4 GiB) checked before reading, structured objects ≤ 64 MiB, ≤ 1024 wants / 4096 haves per fetch; a client accepts at most 10,000,000 objects per pack. Not yet: per-device byte quotas, rate limits | R3 implemented (limits tested in `hostile.rs`); quotas open |
 | T22 | **Forged, stale or misapplied attestations** (an attestation for another candidate, branch, policy version or OS; a result that contradicts the exit codes; a candidate that rewrites its own policy) | the policy comes from the branch's current head, never the candidate; attestations bind candidate, branch, policy blob, checks and OS, and are verified on every use; the decoder rejects a result that disagrees with the exit codes; at the relay only attestations vouched for by `attest` devices count. A runner can still lie about having run the checks: authenticity is device authentication, signatures are R7 | R4 implemented + tested (`verified_integration.rs`, `protected.rs`) |
+| T23 | **Misleading or flooding intents; leaking through events** (a device declares intents for others, floods the relay, or events expose secrets) | intents are advisory only: no command refuses work because of one, so a false intent can at most cause a warning; each relay device can replace only the intents it submitted itself; at most 256 per submission and 4096 at the relay, validated (ids, sizes, names), expired ones dropped; events contain ids, names and the descriptions users wrote, never file contents, tokens or environment variables | R5 implemented + tested (`coordination.rs`) |
 
 ## Out of scope
 

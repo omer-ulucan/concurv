@@ -531,6 +531,40 @@ $ concurv publish --check         # or both in one step
   'publish:*' --scope attest`). `push` uploads and vouches for it
   automatically.
 
+## 8c. Coordinating agents: intents, overlaps, events
+
+Several people or agents can work in parallel without stepping on each
+other unknowingly (RFC 0006). Everything here is **advisory**: nothing is
+ever locked or refused.
+
+```console
+$ concurv intent declare 'src/parser/**' --symbol parse --ttl 2h --note "parser rewrite"
+$ concurv intent list             # everyone's active intents (this repository and fetched ones)
+$ concurv overlaps                # what of my changes collides with others' work
+$ concurv intent release          # done (or just let it expire)
+$ concurv events                  # the operation log as JSON lines, for tools and agents
+```
+
+`overlaps` compares this workspace's changes (saved and unsaved, since the
+branch) with other workspaces' unpublished saves, with work on the branch
+or the relay that this workspace has not integrated yet, and with intents:
+
+- `path`: the same file is changed elsewhere;
+- `conflict`: the line edits overlap or touch, so a merge would conflict;
+- `intent`: a changed path matches someone's declared pattern, or a changed
+  file uses a declared symbol;
+- `dependency`: upstream work changed the definition of a function or type
+  (`fn`, `def`, `function`, `class`, `struct`, …) that your changes call. A
+  signature change on another machine shows up after `concurv fetch`,
+  before you publish code that still uses the old signature.
+
+Intents travel with `push` and `fetch` (each device sends its own). An
+intent expires at its time-to-live, also for agents that were offline; an
+expired intent is ignored everywhere. Measured accuracy of the warnings is
+in `bench/RESULTS.md`: conflict warnings never missed a real conflict in
+the test corpus, and dependency warnings miss only calls the code makes
+indirectly (through tables or strings), which a lexical rule cannot see.
+
 ## 9. Working with Git and GitHub
 
 concurv can write its history into a Git repository, and start from an

@@ -101,6 +101,15 @@ pub enum Request {
         /// Attestation id.
         id: String,
     },
+    /// Exchange advisory intents (RFC 0006 §2): if `intents` is given (scope
+    /// `write`), it replaces the intents this relay device submitted for
+    /// client device `device`; the answer lists every active intent.
+    Intents {
+        /// The client repository's device id (hex).
+        device: String,
+        /// This device's active intents, or `null` to only read.
+        intents: Option<Vec<concurv_workspace::coord::Intent>>,
+    },
     /// End of session.
     Bye {},
 }
@@ -160,6 +169,11 @@ pub enum Response {
     Attested {
         /// Attestation id.
         id: String,
+    },
+    /// Answer to `intents`: every active intent at the relay.
+    Intents {
+        /// Active intents.
+        intents: Vec<concurv_workspace::coord::Intent>,
     },
     /// Answer to a successful `publish`.
     Published {

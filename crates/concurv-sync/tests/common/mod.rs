@@ -44,7 +44,15 @@ impl Env {
         let dir = tempfile::tempdir().unwrap();
         let relay_dir = dir.path().join("relay");
         let init = Relay::init(&relay_dir).unwrap();
-        let relay = Relay::open(&relay_dir, RelayOptions::default()).unwrap();
+        // The relay shares the clients' fixed clock (intents expire by time).
+        let relay = Relay::open(
+            &relay_dir,
+            RelayOptions {
+                now_ms: Some(1_793_491_200_000),
+                ..RelayOptions::default()
+            },
+        )
+        .unwrap();
         let all = [Scope::Read, Scope::Write, Scope::Publish(None)];
         let alice = relay.add_device("alice", &all).unwrap();
         let bob = relay.add_device("bob", &all).unwrap();

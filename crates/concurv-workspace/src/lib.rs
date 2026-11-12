@@ -5,6 +5,7 @@
 pub mod branches;
 pub mod check;
 pub mod conflicts;
+pub mod coord;
 pub mod graph;
 pub mod ignore;
 pub mod integrate;

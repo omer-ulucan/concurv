@@ -425,6 +425,23 @@ impl Connection {
         }
     }
 
+    /// Exchange advisory intents (RFC 0006 §2): replace this device's
+    /// intents at the relay (if `submit`), and get every active intent.
+    pub fn intents(
+        &mut self,
+        device: &str,
+        submit: Option<Vec<concurv_workspace::coord::Intent>>,
+    ) -> Result<Vec<concurv_workspace::coord::Intent>> {
+        let req = Request::Intents {
+            device: device.to_owned(),
+            intents: submit,
+        };
+        match self.call(&req)? {
+            Response::Intents { intents } => Ok(intents),
+            other => Err(into_error(other)),
+        }
+    }
+
     /// Compare-and-swap of `branch` at the relay.
     pub fn publish(
         &mut self,
