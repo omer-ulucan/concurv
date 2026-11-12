@@ -3,7 +3,7 @@
 Legend: `not started` · `in progress` · `gate passed` · `blocked`.
 A stage is `gate passed` only with the evidence listed next to it.
 The plan itself (stages, gates, backlog, acceptance tests) lives in
-**`docs/ROADMAP_REVISED.md`**. Last updated: 2026-11-12 (local CI gate).
+**`docs/ROADMAP_REVISED.md`**. Last updated: 2026-11-12 (R3 sync; local CI gate).
 
 | Stage | Status | Evidence / blockers |
 |---|---|---|
@@ -12,8 +12,8 @@ The plan itself (stages, gates, backlog, acceptance tests) lives in
 | R1.5 — Daily VCS usability & safety | **gate passed** (2026-11-01) | CI run [41366633305](https://github.com/omer-ulucan/concurv/actions/runs/41366633305) on `main` @ `19ce0ed`: ignores (ADR 0004), ignored-file safety, `check-ignore`, benchmark, stat cache (ADR 0005), diff and case-collision tests, green on Linux, macOS and Windows. See "R1.5 evidence" below |
 | R2 — Private workspaces + concurrency | **gate passed** (2026-11-01) | CI run [41359891403](https://github.com/omer-ulucan/concurv/actions/runs/41359891403) on `main` @ `0689e96`: all four slices (RFC 0004, ADR 0002) green on Linux, macOS and Windows; 2/5/10 concurrent writers and killed-process tests pass. Git tags not supported (scoped). See "R2 evidence" below. |
 | R2.5 — Local merge & branch semantics | **in progress** (gate re-opened 2026-11-01) | Line-level merge (ADR 0006) verified. Branch model: the owner approved ADR 0007 **in principle** and requested refinements; they are implemented and tested (see "R2.5 branch-model refinements" below). Remaining gate item: the owner's final acceptance of ADR 0007 |
-| R3 — Two-PC authenticated sync | not started | design only: RFC 0003 (draft; must be revised for per-branch reconciliation, ADR 0007, before implementation) |
-| R4 — Verified integration | not started | — |
+| R3 — Two-PC authenticated sync | **gate passed** (2026-11-12, Windows and Linux) | Local CI gate on `3f85c0b`: Windows 216 passed, Linux 220 passed; relay `concurvd`, pinned TLS, devices and scopes, fetch/push/clone, two-process harness, disconnect, malformed-object, auth, crash/restart tests (RFC 0003 v1). macOS not run. See "R3 evidence" below |
+| R4 — Verified integration | not started | design draft: RFC 0005 |
 | R5 — Agent-aware coordination | not started | — |
 | R6 — Developer beta + Git ecosystem | not started | design only: ADR 0002 |
 | R7 — Advanced VCS | not started | — |
@@ -83,10 +83,10 @@ What the gate does **not** prove (still true, by design of the tests):
 
 ## Next
 
-R0 (harness) remains open; R1, R1.5 and R2 are complete; R2.5 awaits the owner's
-final acceptance of ADR 0007. Next: revise
-RFC 0003 (per-branch reconciliation, ADR 0007) and start R3 (see `docs/ROADMAP_REVISED.md`). Open R0 work (competitor
-reproduction harness) continues in parallel and does not block R3.
+R1, R1.5, R2 and R3 are complete; R2.5 awaits the owner's final acceptance
+of ADR 0007; R0 (competitor harness) remains open. Next: R4, verified
+integration (draft design: `docs/rfcs/0005-verified-integration.md`), then
+R5. macOS evidence needs hosted CI or a Mac running `scripts/ci-local.sh`.
 
 ## R2 evidence (gate passed 2026-11-01)
 
@@ -215,3 +215,58 @@ run proves both happened on every OS.
 §6, B1–B5) are verified by the tests above on all three platforms. ADR 0007
 is *approved in principle*; marking it fully accepted, and with it the
 R2.5 gate, is the owner's decision.
+
+## R3 evidence (gate passed 2026-11-12, Windows and Linux)
+
+Local CI gate (`scripts/ci-local.sh`, on Windows and then in WSL, the same
+commit) on `feat/r3-sync` @ `3f85c0b`, rustc 1.99.1
+on both sides, `--locked`, `--no-fail-fast`:
+
+| Platform | Tests |
+|---|---|
+| Windows 11, NTFS | **216 passed, 0 failed, 0 ignored** |
+| Linux (WSL 2, Ubuntu 26.04, ext4) | **220 passed, 0 failed, 0 ignored** (4 Unix-only tests more) |
+| MSRV 1.89 `cargo check` | pass on both |
+| macOS | **not run** (no hosted CI; see "How evidence is produced") |
+
+Gate statement (roadmap §2): *"Two independent repos save offline,
+reconnect in both orders; all acked snapshots on the relay; one
+authoritative head; stale publish → explicit conflict; duplicate/reordered
+messages idempotent; disconnect, malformed object, auth failure, permission
+denial, crash/restart tests; local two-process harness first."*
+
+| Requirement | Tests (`crates/concurv-sync/tests/` unless noted) |
+|---|---|
+| Two independent repositories save offline and reconnect, in both orders | `two_machines.rs::two_machines_save_offline_and_reconnect_in_both_orders` (each order: the second push is refused, fetch preserves the divergence, `merge remote/origin/main`, publish, push), `fetch_then_update_integrates_unpublished_saves`; CLI `sync_cli.rs::two_repositories_sync_through_a_relay_process` |
+| All acknowledged snapshots on the relay | history assertions in the tests above; `racing_pushes_have_one_winner_and_all_work_lands_eventually` (5 clients); CLI `killed_relay_and_killed_clients_never_lose_acknowledged_work`: every acknowledged save and push is in the relay's `main` after 4 relay kills and about 11 client kills per run |
+| One authoritative head | the relay's `state.json` compare-and-swap; racing pushes have exactly one winner per round |
+| Stale publish is an explicit conflict | `stale_publish_is_refused_and_retries_are_idempotent` (`CONCURV_STALE_HEAD`, exit 41, naming the observed head); push refused with exit 42 when the relay has unfetched or diverged work; forward-only and incomplete-graph refusals |
+| Duplicate and reordered messages are idempotent | same test: every object uploaded twice in reverse dependency order; a publish retried with its request id is answered from the relay's memory and applied once; reusing a request id for another publish is refused |
+| Disconnect | `disconnects_during_push_lose_nothing_and_never_publish_twice` (cuts across the whole push and at each of its last 40 bytes; about 20 cuts lose the publish reply, every retry is answered as `replayed` and the relay's `seq` shows one publish), `disconnects_during_fetch_change_nothing` (25 cuts: nothing adopted, no reference changed, the retry completes) |
+| Malformed object | `hostile.rs::malformed_traffic_is_refused_and_changes_nothing` (bad frames, JSON, versions, corrupt and wrong-kind objects, truncation, limits), `a_lying_relay_cannot_inject_objects_or_references` (forged, incomplete, wrong-kind and oversized objects; invalid and colliding names); `concurv-objects/tests/transfer.rs` |
+| Authentication failure, permission denial | `authentication_and_permissions_are_enforced` (unknown, malformed, revoked tokens; read-only device; `publish:main` only), `a_wrong_certificate_stops_the_client_before_the_token_is_sent` (no application byte reaches the impostor); CLI exit codes 73, 74, 75 |
+| Crash and restart | `sync_faults.rs`: an injected failure at every write step of a relay publish (160 cases) and of a client fetch (about 290 cases), as crash and as transient error: old or new state only, retry completes once; CLI kill test with real `concurvd` processes killed mid-push and restarted |
+| Local two-process harness first | `concurv-cli/tests/sync_cli.rs`: real `concurvd` and `concurv` processes over TLS on loopback |
+| Also | `a_rewound_relay_is_reported_and_never_followed`; `format_upgrade_keeps_secondary_workspaces_working` (format 1 → 2, secondary workspaces, undo after fetch) |
+
+**Across two operating systems** (manual run, 2026-11-12): relay in WSL
+(Linux, ext4); one client on Windows (NTFS) connecting through WSL's
+localhost forwarding, one in WSL. Clone, push, clone on the other side
+(CRLF bytes identical), concurrent offline work: the Windows push was
+refused with exit 42, `fetch` reported `diverged`, `merge
+remote/origin/main` + `publish` + `push` succeeded, the Linux side
+fast-forwarded; the executable bit set on Linux survived a merge made on
+Windows; `verify --full` passed everywhere.
+
+Found and fixed while building R3: a malicious relay can advertise names
+that collide with each other; fetch now creates only the first (in byte
+order) and reports the rest. An upload refused for permissions used to
+close the connection while the client was still sending, so the client saw
+a network error; the relay now answers `ready` before objects are sent.
+The fetch fault test assumed a fixed number of write steps (random ids
+change it by one or two), which the first WSL run caught.
+
+What the R3 gate does **not** prove: macOS (not run since R2.5); real
+wide-area networks (latency, NAT, middleboxes); a relay under sustained load
+or long uptime; relay high availability; power loss (fault injection
+simulates crashes of the process, not of the machine).
