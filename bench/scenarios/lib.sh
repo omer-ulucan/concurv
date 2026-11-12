@@ -55,3 +55,49 @@ two_functions() {
 edit_line() {
     sed "s|^$2\$|$3|" "$1" >"$1.tmp" && mv "$1.tmp" "$1"
 }
+
+# The S11 fixture: nested ignore files with negation, an excluded parent,
+# and a file that becomes ignored after it was recorded.
+ignore_fixture() {
+    printf '*.log\nbuild/\n!build/keep.txt\n!keep.log\n' >.gitignore
+    mkdir -p sub build deep/er
+    printf '!*.log\n' >sub/.gitignore
+    echo x >a.log
+    echo x >keep.log
+    echo x >sub/b.log
+    echo x >build/out.o
+    echo x >build/keep.txt
+    echo x >deep/er/c.log
+    echo x >src.txt
+    echo x >later.txt
+}
+# What every tool must record after the fixture and a first save/commit:
+IGNORE_EXPECTED='.gitignore keep.log later.txt src.txt sub/.gitignore sub/b.log'
+
+# Milliseconds since the epoch (GNU date).
+now_ms() { echo $(($(date +%s%N) / 1000000)); }
+
+# Median of the numbers on stdin.
+median() { sort -n | awk '{ a[NR] = $1 } END { print a[int((NR + 1) / 2)] }'; }
+
+# A tree of $1 small files in directories of 100.
+make_tree() {
+    i=0
+    while [ "$i" -lt "$1" ]; do
+        d=d$((i / 100))
+        [ -d "$d" ] || mkdir "$d"
+        echo "file $i" >"$d/f$i.txt"
+        i=$((i + 1))
+    done
+}
+
+# Median wall time in ms of 5 runs of the command "$@" (output discarded).
+time_ms() {
+    n=0
+    while [ "$n" -lt 5 ]; do
+        t0=$(now_ms)
+        "$@" >/dev/null 2>&1
+        echo $(($(now_ms) - t0))
+        n=$((n + 1))
+    done | median
+}

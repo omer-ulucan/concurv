@@ -24,7 +24,9 @@ user name.
 | S05 CAS publish | A and B publish from the same head. Does exactly one win, without losing the other's work? |
 | S09 restore over unsaved edits | Going back to an older snapshot over an unsaved edit: refused, or recoverable? |
 | S10 same size, same mtime | A same-size rewrite with the old modification time put back: is it seen? (cf. jj #10509) |
+| S11 nested ignores | Nested `.gitignore` files with negation and an excluded parent: is exactly the expected set recorded, and does a file ignored after it was recorded stay tracked? |
 | S12 disjoint hunks | Edits at the top and bottom of one file merge; an edit of the same line is not resolved silently? |
+| S13 status at scale | `status` on 1,000 and 10,000 files after a save (median of 5 warm runs), and an edit is seen. Timings compare tools on one machine; run them on an idle machine |
 
 The `jj.sh` scripts were written for Jujutsu 0.47 but **have not been run
 yet** (jj was not installed on the machine that wrote them); expect to fix
