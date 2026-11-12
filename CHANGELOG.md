@@ -5,6 +5,14 @@ version 1 and the CLI/JSON contract are not frozen until 0.1.0 (see ADR 0003).
 
 ## [Unreleased]
 
+## [0.1.0-alpha.3] — 2026-11-12
+
+Third pre-release (`docs/releases/v0.1.0-alpha.3.md`): protected branches
+(R4), agent coordination (R5), tags, Git import into existing history,
+configuration and completions (R6). Built and tested by the local CI gate on
+Windows and Linux; no macOS binary (build from source). No license is
+asserted yet.
+
 ### Added (R6: developer beta, Git ecosystem)
 - **Tags** (ADR 0008): `concurv tag create|list|delete`. Tags name a
   snapshot and never move; `--at` (also for `branch create`) accepts a
