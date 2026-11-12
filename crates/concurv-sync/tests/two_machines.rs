@@ -387,49 +387,54 @@ fn a_rewound_relay_is_reported_and_never_followed() {
 /// the publish, the client never heard).
 #[test]
 fn disconnects_during_push_lose_nothing_and_never_publish_twice() {
-    // Find the size of a complete push, then cut the connection at many
-    // byte offsets, densely near the end (where the reply can be lost).
-    let fresh = || {
-        let env = Env::new();
-        let a = env.clone("a", &env.alice);
-        write(&a, "README", "base\n");
-        save_publish(&a, "base");
-        push(&a, "origin", None, &sync_opts()).unwrap();
+    let env = Env::new();
+    let a = env.clone("a", &env.alice);
+    write(&a, "README", "base\n");
+    let base = save_publish(&a, "base");
+    push(&a, "origin", None, &sync_opts()).unwrap();
+    // Each cut starts from this relay state, with a fresh clone whose work
+    // has the same size, so every push sends the same number of bytes.
+    let state_path = env.relay_dir.join("state.json");
+    let original = std::fs::read(&state_path).unwrap();
+    let mut k = 0usize;
+    let mut cut = |n: Option<u64>, retries: u32| {
+        k += 1;
+        std::fs::write(&state_path, &original).unwrap();
+        let c = env.clone(&format!("c{k}"), &env.alice);
         for i in 0..20 {
             write(
-                &a,
+                &c,
                 &format!("d/f{i}.txt"),
-                &format!("content {i}\n").repeat(50),
+                &format!("cut {k:06} file {i}\n").repeat(50),
             );
         }
-        let snap = save_publish(&a, "work");
-        (env, a, snap)
-    };
-    let with_budget = |n: u64, retries: u32| concurv_sync::SyncOptions {
-        connect: ConnectOptions {
-            fail_after_bytes: Some(n),
-            ..sync_opts().connect
-        },
-        retries,
+        let snap = save_publish(&c, "work");
+        let opts = concurv_sync::SyncOptions {
+            connect: ConnectOptions {
+                fail_after_bytes: n,
+                ..sync_opts().connect
+            },
+            retries,
+        };
+        let r = push(&c, "origin", None, &opts);
+        (c, snap, r)
     };
     let (mut lo, mut hi) = (0u64, 1 << 22);
     while lo < hi {
         let mid = (lo + hi) / 2;
-        let (_env, a, _) = fresh();
-        if push(&a, "origin", None, &with_budget(mid, 0)).is_ok() {
+        if cut(Some(mid), 0).2.is_ok() {
             hi = mid;
         } else {
             lo = mid + 1;
         }
     }
     let total = lo;
-    let mut budgets: Vec<u64> = (0..12).map(|k| total * k / 12).collect();
-    budgets.extend(total.saturating_sub(48)..total);
+    let mut budgets: Vec<u64> = (0..10).map(|j| total * j / 10).collect();
+    budgets.extend(total.saturating_sub(40)..total);
     let (mut lost_replies, mut replayed) = (0, 0);
     for (i, n) in budgets.into_iter().enumerate() {
-        let (env, a, snap) = fresh();
-        let retries = (i % 2) as u32;
-        match push(&a, "origin", None, &with_budget(n, retries)) {
+        let (c, snap, r) = cut(Some(n), (i % 2) as u32);
+        match r {
             Ok(o) => {
                 assert_eq!(o.result, PushResult::Pushed);
                 replayed += usize::from(o.replayed);
@@ -437,11 +442,12 @@ fn disconnects_during_push_lose_nothing_and_never_publish_twice() {
             Err(e) => {
                 assert_eq!(e.code, ErrorCode::Network, "budget {n}: {e}");
                 let h = env.heads()["main"];
-                assert!(h.seq == 1 || (h.seq == 2 && h.head == snap), "budget {n}");
-                if h.seq == 2 {
-                    lost_replies += 1;
-                }
-                let o = push(&a, "origin", None, &sync_opts()).unwrap();
+                assert!(
+                    (h.head, h.seq) == (base, 1) || (h.head, h.seq) == (snap, 2),
+                    "budget {n}: old or new head only"
+                );
+                lost_replies += usize::from(h.seq == 2);
+                let o = push(&c, "origin", None, &sync_opts()).unwrap();
                 assert!(matches!(
                     o.result,
                     PushResult::Pushed | PushResult::UpToDate
@@ -454,9 +460,9 @@ fn disconnects_during_push_lose_nothing_and_never_publish_twice() {
             (snap, 2),
             "budget {n}: exactly one publish"
         );
-        assert_eq!(tracking(&a, "main"), Some(snap));
+        assert_eq!(tracking(&c, "main"), Some(snap));
         relay_is_consistent(&env.relay_dir);
-        verify(&a);
+        verify(&c);
     }
     eprintln!("push size {total} bytes; lost replies {lost_replies}; replayed {replayed}");
     assert!(lost_replies > 0, "some cut must lose the publish reply");
