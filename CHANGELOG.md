@@ -5,6 +5,25 @@ version 1 and the CLI/JSON contract are not frozen until 0.1.0 (see ADR 0003).
 
 ## [Unreleased]
 
+### Added (R4, RFC 0005: verified integration)
+- **Protected branches.** A `concurv-policy.json` in a branch's current head
+  can `protect` it: `publish` (and, at a relay, `push`) then needs a passing
+  attestation for exactly the new head, under exactly that policy version.
+  A candidate cannot weaken its own policy; two changes that pass apart and
+  fail together cannot be published.
+- **`concurv check [--branch B] [--trust]`**: runs the policy's checks on a
+  fresh checkout of the saved snapshot (never the working copy), with a
+  cleared environment and timeouts, and records an attestation (new object
+  kind 6). Runs only policies approved on the device (`--trust`).
+  `publish --check` checks first.
+- Relay: scope `attest` and the `attest` request; a protected branch at the
+  relay accepts only attestations vouched for by `attest` devices.
+- Exit codes 44 (`CONCURV_POLICY_FAIL`) and 45 (`CONCURV_UNTRUSTED_POLICY`).
+
+### Changed (format, R4)
+- **Repository format 3**: the store may contain attestation objects;
+  upgraded by the first `concurv check`. Builds before R4 refuse it.
+
 ### Added (R3, RFC 0003: sync between machines)
 - **`concurvd`**, the relay: one directory per repository, the single
   authority for published branch heads; `init`, `fingerprint`, `device

@@ -167,8 +167,9 @@ impl ObjectStore {
     /// payload). The header is checked before anything is allocated or
     /// written; the bytes are streamed to a temp file while hashing, and
     /// the object is stored under the id computed from them, so a sender's
-    /// claims about ids are never trusted. Only blobs, trees and snapshots
-    /// travel between repositories; trees and snapshots are also fully
+    /// claims about ids are never trusted. Only blobs, trees, snapshots and
+    /// attestations (RFC 0005)
+    /// travel between repositories; everything but blobs is also fully
     /// decoded. Blobs larger than `max_blob` are refused.
     ///
     /// An error while reading from `reader` is returned as `CONCURV_IO`
@@ -193,7 +194,7 @@ impl ObjectStore {
         let (kind, len) = decode_header(&header)?;
         if !matches!(
             kind,
-            ObjectKind::Blob | ObjectKind::Tree | ObjectKind::Snapshot
+            ObjectKind::Blob | ObjectKind::Tree | ObjectKind::Snapshot | ObjectKind::Attestation
         ) {
             return Err(ConcurvError::new(
                 ErrorCode::WrongObjectKind,
@@ -213,6 +214,7 @@ impl ObjectStore {
                 .map_err(|e| ConcurvError::io(e, "receive object", what))?;
             match kind {
                 ObjectKind::Tree => drop(Tree::decode(&payload)?),
+                ObjectKind::Attestation => drop(Attestation::decode(&payload)?),
                 _ => drop(Snapshot::decode(&payload)?),
             }
             return Ok((self.write_object(kind, &payload)?, kind));

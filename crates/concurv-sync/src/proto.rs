@@ -89,6 +89,17 @@ pub enum Request {
         expected: Option<String>,
         /// New head; must descend from `expected`.
         proposed: String,
+        /// For a branch the relay's policy protects (RFC 0005): an attestation
+        /// submitted with `attest`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attestation: Option<String>,
+    },
+    /// Vouch for an attestation object (uploaded earlier in this session, or
+    /// already stored): the relay records that this device, which needs the
+    /// `attest` scope, submitted it (RFC 0005 §7).
+    Attest {
+        /// Attestation id.
+        id: String,
     },
     /// End of session.
     Bye {},
@@ -144,6 +155,11 @@ pub enum Response {
     Stored {
         /// Objects received and verified.
         received: u32,
+    },
+    /// Answer to `attest`.
+    Attested {
+        /// Attestation id.
+        id: String,
     },
     /// Answer to a successful `publish`.
     Published {
@@ -370,6 +386,7 @@ mod tests {
             branch: "main".into(),
             expected: None,
             proposed: "cd".into(),
+            attestation: None,
         };
         let mut buf = Vec::new();
         write_message(&mut buf, &req).unwrap();

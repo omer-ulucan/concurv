@@ -16,6 +16,7 @@ path = "src/concurvd.rs"
 
 [dependencies]
 concurv-core.workspace = true
+concurv-objects.workspace = true
 concurv-workspace.workspace = true
 concurv-git.workspace = true
 concurv-sync.workspace = true

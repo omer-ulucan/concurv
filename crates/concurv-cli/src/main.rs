@@ -689,7 +689,6 @@ fn run(cli: Cli) -> Result<Output> {
         }
         Cmd::Publish { check } => {
             let repo = Repo::discover(&cwd, opts())?;
-            let mut checked = None;
             if check {
                 let c = concurv_workspace::check::check(
                     &repo,
@@ -702,7 +701,6 @@ fn run(cli: Cli) -> Result<Output> {
                         format!("{human}\nnothing was published"),
                     ));
                 }
-                checked = Some(c);
             }
             let o = publish(&repo)?;
             let mut human = match o.operation {
@@ -721,7 +719,6 @@ fn run(cli: Cli) -> Result<Output> {
                     &a.to_hex()[..12]
                 ));
             }
-            let _ = checked;
             ok(
                 json!({
                     "branch": o.branch,
@@ -1607,8 +1604,8 @@ fn check_output(c: &concurv_workspace::check::CheckOutcome) -> (Value, String) {
     for k in &r.checks {
         let status = match k.exit_code {
             0 => "ok".to_owned(),
-            concurv_objects_exit::TIMEOUT => "timed out".to_owned(),
-            concurv_objects_exit::NOT_STARTED => "could not start".to_owned(),
+            concurv_objects::encoding::EXIT_TIMEOUT => "timed out".to_owned(),
+            concurv_objects::encoding::EXIT_NOT_STARTED => "could not start".to_owned(),
             n => format!("exit {n}"),
         };
         human.push_str(&format!(
@@ -1638,10 +1635,4 @@ fn check_output(c: &concurv_workspace::check::CheckOutcome) -> (Value, String) {
         }),
         human,
     )
-}
-
-/// Reserved exit codes of attestations (RFC 0005 §4).
-mod concurv_objects_exit {
-    pub const TIMEOUT: i64 = -1_000_001;
-    pub const NOT_STARTED: i64 = -1_000_002;
 }

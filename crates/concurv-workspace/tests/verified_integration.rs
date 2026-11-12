@@ -173,18 +173,13 @@ fn stale_attestations_are_refused() {
     forged.candidate = c4;
     forged.branch = "other".into();
     let other = r.store().write_attestation(&forged).unwrap();
-    let mut bytes = forged.encode().unwrap();
+    // A failing check, but the result byte says "pass".
     forged.checks[0].exit_code = 1;
-    bytes.truncate(bytes.len() - 1);
-    bytes.push(1); // "pass" although a check failed
+    let mut lie = forged.encode().unwrap();
+    *lie.last_mut().unwrap() = 1;
     let raw = r
         .store()
-        .write_object(ObjectKind::Attestation, &{
-            let mut b = forged.encode().unwrap();
-            b.truncate(b.len() - 1);
-            b.push(1);
-            b
-        })
+        .write_object(ObjectKind::Attestation, &lie)
         .unwrap();
     assert_eq!(
         r.store()

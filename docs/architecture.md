@@ -5,7 +5,8 @@ concurv-cli          binaries `concurv` and `concurvd`; clap, human and JSON out
  ├─► concurv-git     Git bridge (fast-import / fast-export)
  └─► concurv-sync    wire protocol, relay, pinned TLS, fetch / push / clone, remotes
       └─► concurv-workspace  repo, workspaces, scan, save, status, diff, restore,
-           │                 publish, update, merge, branches, reconcile, graph, verify
+           │                 publish, update, merge, branches, reconcile, graph, verify,
+           │                 policy and check (R4: protected branches, attestations)
            └─► concurv-ops   OpLog: commit, walk, clean_tmp
                 └─► concurv-refs     op_head CAS, repository lock
                      └─► concurv-objects  encoding, store, durable fs, faults,
@@ -67,6 +68,11 @@ concurv-cli          binaries `concurv` and `concurvd`; clap, human and JSON out
   separate map in the view) and never follow a head that went backwards.
   Everything received is quarantined, verified and checked for graph
   closure before anything references it (RFC 0003).
+- **Evidence before publication (R4).** A branch protected by the policy in
+  its current head moves only to a candidate with a passing attestation
+  bound to that exact snapshot, branch and policy version; checks run on a
+  fresh checkout of the snapshot, only for policies approved on the
+  device. The relay applies the same rule (RFC 0005).
 - **Synchronous engine.** No async runtime; concurrency comes from processes
   and threads coordinating through OS locks.
 
@@ -87,5 +93,5 @@ concurv-cli          binaries `concurv` and `concurvd`; clap, human and JSON out
 
 Importing Git changes into existing history, GC/packing, rename detection,
 `workspace remove`, branch delete/rename, several repositories per relay,
-verified publication (R4) and agent coordination (R5). See
+sandboxed checks and agent coordination (R5). See
 `ROADMAP_STATUS.md`.

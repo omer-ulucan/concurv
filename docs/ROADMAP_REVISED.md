@@ -79,9 +79,9 @@ completion evidence.
 | P2-4 | Rename detection, sparse/partial checkout, large files | R7 |
 | P2-5 | Filesystem watcher for `status` | R7 |
 | P2-6 | Agent identity, intent, JSONL events | R5 |
-| P2-7 | Candidate test gates, attestations, sandbox | R4 |
+| P2-7 | Candidate test gates, attestations, sandbox | R4 (done 2026-11-12: RFC 0005; sandbox "none" stated explicitly, isolation open) |
 | P2-8 | Branch delete and rename (policy for workspaces tracking them; sync semantics; refuse while tracked or unmerged) | R3 |
-| P2-9 | Protected branches (publication only through R4 gates) | R4 |
+| P2-9 | Protected branches (publication only through R4 gates) | R4 (done 2026-11-12: `protect` in the branch head's policy, locally and at the relay) |
 | P2-10 | Remote-tracking references in the view (`remote/<relay>/<b>`, separate from `branches`) and wiring `reconcile::plan` into fetch | R3 (done 2026-11-12: `View::remotes`, repository format 2) |
 
 ## 4. Execution order
@@ -91,7 +91,7 @@ completion evidence.
    then P0-7 (stat cache), then P0-8/P0-9.
 3. R2.5: P1-1 hunk merge, then P1-2 ADR, then P1-3.
 4. R3: revise RFC 0003, then build a local two-process harness, then implement ✔ (2026-11-12).
-5. R4 → R5 → R6 → R7 as gated above.
+5. R4 ✔ (2026-11-12) → R5 → R6 → R7 as gated above.
 
 Open owner decisions: **LICENSE** (none is asserted: the license metadata was
 removed pending the owner's choice), the branch model (P1-2), and whether

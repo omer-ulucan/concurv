@@ -185,6 +185,7 @@ fn malformed_traffic_is_refused_and_changes_nothing() {
             branch: "main".into(),
             expected: None,
             proposed: "00".repeat(32),
+            attestation: None,
         },
     )
     .unwrap();
@@ -197,6 +198,7 @@ fn malformed_traffic_is_refused_and_changes_nothing() {
             branch: "main".into(),
             expected: None,
             proposed: "not hex".into(),
+            attestation: None,
         },
     )
     .unwrap();
@@ -209,6 +211,7 @@ fn malformed_traffic_is_refused_and_changes_nothing() {
             branch: "evil".into(),
             expected: None,
             proposed: "11".repeat(32),
+            attestation: None,
         },
     )
     .unwrap();
@@ -225,6 +228,7 @@ fn malformed_traffic_is_refused_and_changes_nothing() {
                 branch: name.into(),
                 expected: None,
                 proposed: before["main"].head.to_hex(),
+                attestation: None,
             },
         )
         .unwrap();
