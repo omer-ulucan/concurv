@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use concurv_core::{ObjectId, SnapshotId};
 use concurv_workspace::graph::ancestors;
@@ -37,28 +37,40 @@ fn run(dir: &Path, args: &[&str]) -> (i32, Value) {
     (o.status.code().unwrap_or(-1), v)
 }
 
-/// Deterministic pseudo-random delays (xorshift).
+/// Deterministic pseudo-random delays (xorshift), microsecond resolution.
 struct Rng(u64);
 impl Rng {
-    fn next(&mut self, max_ms: u64) -> Duration {
+    fn next(&mut self, max: Duration) -> Duration {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;
-        Duration::from_millis(self.0 % max_ms)
+        let max_us = u64::try_from(max.as_micros()).unwrap_or(u64::MAX).max(1);
+        Duration::from_micros(self.0 % max_us)
     }
 }
 
-/// Start `args` in every workspace at once, kill each after a random delay.
-/// Returns the JSON documents of processes that finished successfully.
-fn race(ws: &[PathBuf], args: &[&str], rng: &mut Rng, killed: &mut usize) -> Vec<(usize, Value)> {
-    let children: Vec<(usize, Child)> = ws
+/// Start `args` in every workspace at once and kill each at a random moment
+/// within `span` of the start. `span` is calibrated to how long the commands
+/// take on this machine, so kills land mid-command on fast and slow machines
+/// alike. Returns the JSON documents of processes that finished successfully.
+fn race(
+    ws: &[PathBuf],
+    args: &[&str],
+    rng: &mut Rng,
+    span: Duration,
+    killed: &mut usize,
+) -> Vec<(usize, Value)> {
+    let start = Instant::now();
+    let children: Vec<(usize, Child, Duration)> = ws
         .iter()
         .enumerate()
-        .map(|(i, d)| (i, cmd(d, args).spawn().unwrap()))
+        .map(|(i, d)| (i, cmd(d, args).spawn().unwrap(), rng.next(span)))
         .collect();
     let mut done = Vec::new();
-    for (i, mut child) in children {
-        sleep(rng.next(60));
+    for (i, mut child, deadline) in children {
+        if let Some(rest) = deadline.checked_sub(start.elapsed()) {
+            sleep(rest);
+        }
         if child.try_wait().unwrap().is_none() {
             let _ = child.kill();
             *killed += 1;
@@ -104,8 +116,32 @@ fn killed_processes_never_lose_acknowledged_saves() {
         })
         .collect();
 
-    let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+    // Calibrate: how long all workspaces take to save, update and publish at
+    // once, without kills. Kill moments are drawn from that span.
     let mut acked: Vec<(usize, SnapshotId)> = Vec::new();
+    for (i, d) in ws.iter().enumerate() {
+        fs::write(d.join(format!("calibration{i}.txt")), "c").unwrap();
+    }
+    let mut span = Duration::ZERO;
+    for args in [
+        &["save", "-m", "calibration"][..],
+        &["update"],
+        &["publish"],
+    ] {
+        let t = Instant::now();
+        let children: Vec<Child> = ws.iter().map(|d| cmd(d, args).spawn().unwrap()).collect();
+        for (i, child) in children.into_iter().enumerate() {
+            let o = child.wait_with_output().unwrap();
+            if let Ok(v) = serde_json::from_slice::<Value>(&o.stdout)
+                && let Some(s) = v["data"]["snapshot"].as_str()
+            {
+                acked.push((i, snapshot(s)));
+            }
+        }
+        span = span.max(t.elapsed());
+    }
+    let span = (span * 5 / 4).max(Duration::from_millis(5));
+    let mut rng = Rng(0x2545_f491_4f6c_dd1d);
     let (mut killed, mut completed) = (0, 0);
     for round in 0..ROUNDS {
         for (i, d) in ws.iter().enumerate() {
@@ -117,6 +153,7 @@ fn killed_processes_never_lose_acknowledged_saves() {
             &ws,
             &["save", "-m", &format!("round {round}")],
             &mut rng,
+            span,
             &mut killed,
         ) {
             completed += 1;
@@ -127,11 +164,11 @@ fn killed_processes_never_lose_acknowledged_saves() {
         for d in &ws {
             recover(d);
         }
-        completed += race(&ws, &["update"], &mut rng, &mut killed).len();
+        completed += race(&ws, &["update"], &mut rng, span, &mut killed).len();
         for d in &ws {
             recover(d);
         }
-        completed += race(&ws, &["publish"], &mut rng, &mut killed).len();
+        completed += race(&ws, &["publish"], &mut rng, span, &mut killed).len();
 
         // After every round: reopening works and nothing is corrupt.
         let (code, v) = run(&primary, &["verify", "--full"]);
@@ -178,7 +215,7 @@ fn killed_processes_never_lose_acknowledged_saves() {
     }
     assert_eq!(run(&primary, &["verify", "--full"]).0, 0);
     eprintln!(
-        "processes killed: {killed}, completed: {completed}, acknowledged saves: {}",
+        "kill span {span:?}; processes killed: {killed}, completed: {completed}, acknowledged saves: {}",
         acked.len()
     );
     assert!(killed > 0, "the test must actually kill processes");
@@ -223,7 +260,7 @@ fn killed_branch_switches_are_finished_by_running_them_again() {
     // Calibrate: kill anywhere within the duration of one full switch.
     let t = std::time::Instant::now();
     assert_eq!(run(&a, &["branch", "switch", "main"]).0, 0);
-    let span = (t.elapsed().as_millis() as u64 * 5 / 4).max(20);
+    let span = (t.elapsed() * 5 / 4).max(Duration::from_millis(20));
 
     let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
     let (mut killed, mut resumed) = (0, 0);
@@ -272,7 +309,7 @@ fn killed_branch_switches_are_finished_by_running_them_again() {
         assert_eq!(code, 0, "round {round}: {v}");
     }
     eprintln!(
-        "switch span {span} ms; processes killed: {killed}, interrupted switches resumed: {resumed}"
+        "switch span {span:?}; processes killed: {killed}, interrupted switches resumed: {resumed}"
     );
     assert!(killed > 0, "the test must actually kill processes");
     assert!(resumed > 0, "some kill must land inside a switch");
