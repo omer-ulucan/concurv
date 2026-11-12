@@ -52,6 +52,11 @@ and/or symbols, for a while":
   `intents.json` (each relay device can replace only the intents it
   submitted), drops expired ones, and never makes them part of
   history. Expiry is judged by each party's own clock.
+- Failures: a relay that cannot exchange intents (an older relay, a lost
+  connection at that step) is ignored, since intents are advisory. A failure to
+  write the local cache is reported: by `fetch`, before it records
+  anything (retrying is safe); not by `push`, whose publish stands either
+  way (the next `fetch` or `push` rewrites the cache).
 
 ## 3. Overlap warnings (`concurv overlaps`, and in `status`)
 
