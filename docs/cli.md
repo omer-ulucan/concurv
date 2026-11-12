@@ -9,7 +9,8 @@ Every command runs in the workspace containing the current directory (or `-C`).
 | `concurv status [--no-cache]` | changes of working copy vs this workspace's head; warns about interrupted restores. Uses the stat cache on Unix (ADR 0005); `--no-cache` hashes every file | no |
 | `concurv diff [--no-cache]` | unified text diffs (Git style, incl. `\ No newline at end of file`; CRLF kept); binary/large/symlink changes are summarized | no |
 | `concurv save -m <msg>` | durably snapshot the working copy and advance **this workspace's head**. Does not publish | workspace history |
-| `concurv publish` | CAS fast-forward of the branch this workspace tracks (default `main`) to the workspace head | shared branch |
+| `concurv publish [--check]` | CAS fast-forward of the branch this workspace tracks (default `main`) to the workspace head. A branch protected by the `concurv-policy.json` of its current head also needs a passing attestation for exactly this head (RFC 0005), else exit 44; `--check` runs `check` first | shared branch |
+| `concurv check [--branch B] [--trust]` | run the governing policy's checks on this workspace's head, in a fresh checkout of the snapshot (never the working copy), with a cleared environment and timeouts, and record an attestation (pass or fail). Refused (45) unless this policy version was approved on this device; `--trust` approves it. The first attestation upgrades the repository to format 3 | attestation objects (+ format) |
 | `concurv update [--allow-conflicts \| --abort]` | bring the **tracked** branch into this workspace: fast-forward, or a three-way merge into a new snapshot (file level, plus line-level merge of text files whose edits do not overlap, ADR 0006). `--allow-conflicts`: write conflicts into the working copy and start a pending merge; `--abort`: give a pending merge up | working copy, workspace head |
 | `concurv merge <branch> [--allow-conflicts] \| --abort` | integrate **another** branch, or a remote-tracking reference `remote/<remote>/<branch>` (RFC 0003 §5), with the rules of `update`; the workspace keeps its branch, and only a later `publish` (CAS) publishes the result. Merging the tracked branch is refused (use `update`). `--abort` = `update --abort` (ADR 0007) | working copy, workspace head |
 | `concurv workspace add <path> [--name N] [--branch B]` | create a workspace in a new or empty directory, tracking `B` (default: the current workspace's branch), and check out that branch there | creates workspace |
@@ -29,7 +30,7 @@ Every command runs in the workspace containing the current directory (or `-C`).
 | `concurv remote list` | remotes with URL, fingerprint and remote-tracking references | no |
 | `concurv remote remove <name>` | delete the remote's configuration and token and, in one operation, its remote-tracking references (no local branch changes) | config, view |
 | `concurv fetch [<remote>]` | download the relay's published branches (RFC 0003 §5): objects are verified and checked for completeness before anything is stored; remote-tracking references `remote/<remote>/<b>` move to the relay's heads; local branches that are behind fast-forward, new ones are created; diverged local branches stay. Never changes working files or workspace heads. A relay whose head went backwards is reported, not followed. Default remote: the only one, else `origin` | objects, remote-tracking refs, local branches (fast-forward only) |
-| `concurv push [<remote>] [--branch B]` | publish local branch `B` (default: the tracked branch) at the relay by compare-and-swap, only as a fast-forward of the relay's head; refused (42) if the relay has work this repository has not fetched or that diverged; a lost connection is retried and never publishes twice | the relay's branch, remote-tracking ref |
+| `concurv push [<remote>] [--branch B]` | publish local branch `B` (default: the tracked branch) at the relay by compare-and-swap, only as a fast-forward of the relay's head; refused (42) if the relay has work this repository has not fetched or that diverged; a lost connection is retried and never publishes twice. If the policy in the relay's head protects the branch, a recorded passing attestation for the head is uploaded and vouched for (the device needs scope `attest`; else 74, or 44 without one) | the relay's branch, remote-tracking ref |
 | `concurv clone <url> <dir> --fingerprint <fp> [--token-file F] [--name origin]` | `init` in `<dir>` (missing or empty), `remote add`, `fetch`, then check out `main` if the relay has it | creates repo |
 
 Global flags: `--json`, `-C <dir>`. Sync commands use the token stored for the remote,
@@ -68,7 +69,8 @@ changes behaviour, not the JSON shape.)
   `interrupted_restore` (null or `{target, backup, origin, branch}`; `origin` and `branch` are set for an interrupted `branch switch`: finish it with `branch switch <branch>`)
 - `diff`: `files[]` (`path`, `kind`, `unified` or null, `note` or null)
 - `save`: `created`, `snapshot`, `operation`, `changes[]`
-- `publish`: `branch`, `from` (previous branch head or null), `to`, `published` (false if already there), `operation`
+- `publish`: `branch`, `from` (previous branch head or null), `to`, `published` (false if already there), `operation`, `attestation` (the attestation that authorized a protected publish, or null)
+- `check`: `attestation`, `passed`, `candidate`, `branch`, `policy` (blob id), `environment` (`os`, `arch`, `concurv`), `checks[]` (`name`, `argv[]`, `exit_code` (−1000001: timeout, −1000002: could not start), `duration_ms`, `output` (blob id of combined stdout+stderr)), `newly_trusted`
 - `update`, `merge`: `branch` (the branch integrated), `result` ∈ `up_to_date|fast_forward|merged|conflicted|aborted`, `conflict` (pending-merge id or null), `conflicts[]` (`path`, `kind` ∈ `both_modified|both_added|delete_modify|file_directory`, `markers`, `side_files[]`), `content_merged[]` (paths merged line by line), for `aborted` also `backup`, `head`, `written`, `deleted`, `operation`
 - `git export`: `branch`, `tip` (Git commit), `previous` (Git branch before, or null), `exported` (new commits), `reused` (already present), `updated`
 - `git import`: `branch`, `git_tip`, `tip` (snapshot now at `main`), `commits`, `written`
@@ -111,6 +113,8 @@ changes behaviour, not the JSON shape.)
 | 41 | `CONCURV_STALE_HEAD` | op head or workspace head moved during compare-and-swap |
 | 42 | `CONCURV_DIVERGED` | `publish` refused: the branch has work this workspace has not integrated (run `update`); `git export` refused: the Git branch has commits outside the exported branch's history; `branch switch` refused: saves in this workspace are on neither the old nor the new branch |
 | 43 | `CONCURV_CONFLICT` | `update`/`merge` refused: conflicting changes (without `--allow-conflicts`), file/directory conflict, ambiguous merge base, or a merge already pending; `save` refused: unresolved conflicts; `branch switch` and `branch create --switch` refused during a pending merge. Nothing modified |
+| 44 | `CONCURV_POLICY_FAIL` | a protected branch (RFC 0005) refused the publish or push: no recorded passing attestation for exactly this candidate under the current policy (stale, failing, other branch, other OS), an invalid policy, or a policy that excludes this OS for `check` |
+| 45 | `CONCURV_UNTRUSTED_POLICY` | `check`: this version of the branch policy has not been approved on this device (`--trust`); nothing ran |
 | 50 | `CONCURV_NOT_FOUND` | id/prefix not found or not a snapshot; workspace not registered; nothing to undo; unknown branch (`branch switch`, `merge`, `workspace add --branch`, `git export --from`, `push`); unknown remote |
 | 51 | `CONCURV_AMBIGUOUS_ID` | prefix matches several objects |
 | 60 | `CONCURV_EXTERNAL_TOOL` | `git` is not installed or a git command failed |
@@ -135,7 +139,7 @@ older than R3.
 |---|---|
 | `concurvd init <dir>` | create a relay in a new or empty directory: object store, empty state and device registry, a new TLS identity; prints the fingerprint clients pin |
 | `concurvd fingerprint <dir>` | print the fingerprint |
-| `concurvd device add <dir> <name> [--scope S]…` | register a device and print its token once (default scopes: `read`, `write`, `publish:*`; `publish:<branch>` limits publishing to one branch) |
+| `concurvd device add <dir> <name> [--scope S]…` | register a device and print its token once (default scopes: `read`, `write`, `publish:*`; `publish:<branch>` limits publishing to one branch; `attest` lets it vouch for attestations required by protected branches, RFC 0005 §7) |
 | `concurvd device list <dir>` | devices, scopes, revocation |
 | `concurvd device revoke <dir> <name>` | the token stops working at the next connection |
 | `concurvd serve <dir> [--listen ADDR] [--max-connections N] [--idle-timeout SECS]` | serve until stopped (default `127.0.0.1:7461`; port 0 picks a free port). The first line of output is `listening on <addr>` (with `--json`: `data.listening`) |

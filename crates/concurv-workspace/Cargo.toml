@@ -14,6 +14,8 @@ concurv-refs.workspace = true
 blake3.workspace = true
 ignore = "0.4"
 similar.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

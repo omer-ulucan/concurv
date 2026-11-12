@@ -1,7 +1,8 @@
 //! `concurv publish` and `concurv update` (RFC 0004 §6, §7).
 
 use concurv_core::{
-    ChangeId, ConcurvError, ConflictId, ErrorCode, OperationId, RepoPath, Result, SnapshotId,
+    AttestationId, ChangeId, ConcurvError, ConflictId, ErrorCode, OperationId, RepoPath, Result,
+    SnapshotId,
 };
 use concurv_objects::{Conflict, ConflictEntry, EntryKind, ObjectStore, Operation, Snapshot};
 
@@ -24,6 +25,9 @@ pub struct PublishOutcome {
     pub to: SnapshotId,
     /// Operation recorded, or `None` if the branch was already at `to`.
     pub operation: Option<OperationId>,
+    /// The attestation that authorized publishing to a protected branch
+    /// (RFC 0005), if the branch is protected.
+    pub attestation: Option<AttestationId>,
 }
 
 fn workspace_branch(branch: Option<String>) -> Result<String> {
@@ -54,6 +58,7 @@ pub fn publish(repo: &Repo) -> Result<PublishOutcome> {
             from,
             to: head,
             operation: None,
+            attestation: None,
         });
     }
     if let Some(m) = from
@@ -67,6 +72,37 @@ pub fn publish(repo: &Repo) -> Result<PublishOutcome> {
             ),
         ));
     }
+    // R4 (RFC 0005 §6): a protected branch needs a passing attestation for
+    // exactly this candidate, under the policy of the branch's current head.
+    let mut attestation = None;
+    if let crate::policy::Protection::Required { policy_id, policy } =
+        crate::policy::protection(repo.store(), &branch, from)?
+    {
+        let (found, reasons) =
+            crate::check::find_authorizing(repo, head, &branch, policy_id, &policy)?;
+        match found {
+            Some(id) => attestation = Some(id),
+            None => {
+                let detail = if reasons.is_empty() {
+                    "no attestation is recorded for it".to_owned()
+                } else {
+                    format!(
+                        "no recorded attestation qualifies:\n  {}",
+                        reasons.join("\n  ")
+                    )
+                };
+                return Err(ConcurvError::new(
+                    ErrorCode::PolicyFail,
+                    format!(
+                        "`{branch}` is protected by its policy ({}): publishing {head} needs a passing \
+                         attestation, and {detail}. Run `concurv check` (or `concurv publish --check`); \
+                         nothing was published",
+                        &policy_id.to_hex()[..12]
+                    ),
+                ));
+            }
+        }
+    }
     let mut view = op.view.clone();
     view.branches.insert(branch.clone(), head);
     let new_op = Operation {
@@ -75,7 +111,10 @@ pub fn publish(repo: &Repo) -> Result<PublishOutcome> {
         device_id: repo.device_id(),
         workspace_id: Some(repo.workspace_id()),
         kind: "publish".into(),
-        description: format!("publish {head} to {branch}"),
+        description: match attestation {
+            Some(a) => format!("publish {head} to {branch} (attestation {a})"),
+            None => format!("publish {head} to {branch}"),
+        },
         backup: None,
         undoes: None,
         checked_out: None,
@@ -87,6 +126,7 @@ pub fn publish(repo: &Repo) -> Result<PublishOutcome> {
         from,
         to: head,
         operation: Some(operation),
+        attestation,
     })
 }
 

@@ -489,6 +489,48 @@ Exit codes of sync: 70 network, 71/72 protocol, 73 bad or revoked token, 74
 missing permission, 75 the relay's certificate does not match the
 fingerprint (nothing was sent). See `docs/cli.md`.
 
+## 8b. Protected branches: publish only what passed its checks
+
+A branch can require that every new head passed the project's checks
+(RFC 0005). Put a `concurv-policy.json` at the root of the project:
+
+```json
+{
+  "concurv_policy": 1,
+  "protect": ["main"],
+  "checks": [ { "name": "test", "argv": ["cargo", "test", "--locked"], "timeout_s": 1800 } ],
+  "sandbox": "none"
+}
+```
+
+The policy that counts is the one in the branch's **current head**: it
+starts to apply once you publish it, and a candidate that edits it is
+still judged by the published version. From then on:
+
+```console
+$ concurv save -m "work"
+$ concurv publish                 # exit 44: main is protected, no attestation yet
+$ concurv check --trust           # runs the checks on the saved snapshot; prints PASSED/FAILED
+$ concurv publish                 # accepted: a passing attestation exists for exactly this head
+$ concurv publish --check         # or both in one step
+```
+
+- `check` writes the **saved snapshot** into a fresh directory and runs the
+  checks there, so unsaved or ignored files never affect the result. Edit
+  and save again, and the old attestation no longer applies.
+- Checks are commands from the repository and run **without isolation**
+  (`"sandbox": "none"` says so). Nothing runs until you approve that
+  version of the policy on your machine with `--trust`; a changed policy
+  needs a new approval.
+- After `update` or `merge`, the merged result needs its own passing
+  check: two branches that pass separately can fail together, and then
+  nothing is published.
+- At a relay, the same policy protects the relay's branch. Pushing to it
+  takes a passing attestation from a device with the `attest` scope
+  (`concurvd device add <dir> ci --scope read --scope write --scope
+  'publish:*' --scope attest`). `push` uploads and vouches for it
+  automatically.
+
 ## 9. Working with Git and GitHub
 
 concurv can write its history into a Git repository, and start from an

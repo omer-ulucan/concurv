@@ -23,8 +23,10 @@ non-overlapping edits, recorded conflicts that you resolve and save,
 workspace-scoped `undo`, Git-compatible ignores, and Git export/import.
 Stress-tested with concurrent writers, killed processes (including the
 relay) and simulated disconnects at every byte of a transfer; see
-`docs/ROADMAP_STATUS.md`. **Not yet:** verified integration (R4, designed in
-RFC 0005), agent coordination (R5).
+`docs/ROADMAP_STATUS.md`. Since alpha.2, `main` also has **protected branches**
+(R4): a branch can require a passing, recorded check of exactly the snapshot
+about to be published (`concurv check`, RFC 0005). **Not yet:** agent
+coordination (R5).
 
 > **Alpha:** the on-disk format and the CLI/JSON contract may still change
 > before 0.1.0. **No license has been chosen yet**: until one is added, the
@@ -175,7 +177,7 @@ Workspace layout: `crates/concurv-{core,objects,refs,ops,workspace,git,sync,cli,
 | `docs/rfcs/0002-durability-and-transactions.md` | write ordering, fsync, commit point, recovery |
 | `docs/rfcs/0003-sync-protocol.md` | sync between machines: relay, pinned TLS, devices and scopes, wire protocol, fetch/push rules, quarantine (implemented, version 1) |
 | `docs/rfcs/0004-workspaces-and-concurrency.md` | workspaces, save vs publish, update and merge, locks and concurrency |
-| `docs/rfcs/0005-verified-integration.md` | R4 design: policies, attestations, protected branches (draft, not implemented) |
+| `docs/rfcs/0005-verified-integration.md` | protected branches: policies, `concurv check`, attestations, relay rules (implemented) |
 | `docs/adr/0001-storage-format.md` | why a native BLAKE3 store with one mutable pointer |
 | `docs/adr/0002-git-interop.md` | the Git bridge: how export/import work, what is and isn't preserved |
 | `docs/adr/0003-project-rename-concurv.md` | the ARC → concurv rename and every identifier it changed |

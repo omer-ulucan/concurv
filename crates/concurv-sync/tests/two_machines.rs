@@ -247,7 +247,7 @@ fn stale_publish_is_refused_and_retries_are_idempotent() {
     c1.upload(a.store(), &twice).unwrap();
     c2.upload(a.store(), &ids).unwrap();
     let rid = RandomId::generate().unwrap().to_hex();
-    let r = c1.publish(&rid, "main", Some(base), s1).unwrap();
+    let r = c1.publish(&rid, "main", Some(base), s1, None).unwrap();
     assert_eq!((r.seq, r.replayed), (2, false));
     // c2 observed `base` too: its compare-and-swap is stale.
     let e = c2
@@ -256,6 +256,7 @@ fn stale_publish_is_refused_and_retries_are_idempotent() {
             "main",
             Some(base),
             s2,
+            None,
         )
         .unwrap_err();
     assert_eq!(e.code, ErrorCode::StaleHead, "{e}");
@@ -267,11 +268,11 @@ fn stale_publish_is_refused_and_retries_are_idempotent() {
     // A retry of the first publish (its reply lost) returns the original
     // result and does not publish again.
     let mut c3 = connect(&env, &env.alice);
-    let r = c3.publish(&rid, "main", Some(base), s1).unwrap();
+    let r = c3.publish(&rid, "main", Some(base), s1, None).unwrap();
     assert_eq!((r.seq, r.replayed), (2, true));
     assert_eq!(env.heads()["main"].seq, 2);
     // Reusing the request id for another publish is a protocol error.
-    let e = c3.publish(&rid, "main", Some(s1), s2).unwrap_err();
+    let e = c3.publish(&rid, "main", Some(s1), s2, None).unwrap_err();
     assert_eq!(e.code, ErrorCode::Protocol);
     // Heads only move forward, even with the right `expected`.
     let mut c4 = connect(&env, &env.alice);
@@ -281,6 +282,7 @@ fn stale_publish_is_refused_and_retries_are_idempotent() {
             "main",
             Some(s1),
             base,
+            None,
         )
         .unwrap_err();
     assert_eq!(e.code, ErrorCode::Diverged);
@@ -294,6 +296,7 @@ fn stale_publish_is_refused_and_retries_are_idempotent() {
             "main",
             Some(s1),
             s3,
+            None,
         )
         .unwrap_err();
     assert_eq!(e.code, ErrorCode::ObjectMissing);

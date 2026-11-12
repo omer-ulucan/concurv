@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::Duration;
 
-use concurv_core::{ConcurvError, ErrorCode, OperationId, RandomId, Result, SnapshotId};
+use concurv_core::{
+    AttestationId, ConcurvError, ErrorCode, OperationId, RandomId, Result, SnapshotId,
+};
 use concurv_objects::encoding::validate_branch_name;
 use concurv_objects::fs::TempSession;
 use concurv_objects::{ObjectStore, Operation, RemoteHead, View};
@@ -426,15 +428,15 @@ fn push_once(
     local: SnapshotId,
     tracked: Option<SnapshotId>,
     request_id: &str,
-    sent: &mut Option<Option<SnapshotId>>,
+    sent: &mut Option<(Option<SnapshotId>, Option<AttestationId>)>,
     opts: &SyncOptions,
 ) -> Result<Attempt> {
     let store = repo.store();
     let mut conn = connect(repo, cfg, opts)?;
     // A previous attempt may have published and lost the reply: ask again
     // with the same request id; the relay answers with the original result.
-    if let Some(expected) = *sent {
-        match conn.publish(request_id, branch, expected, local) {
+    if let Some((expected, attestation)) = *sent {
+        match conn.publish(request_id, branch, expected, local, attestation) {
             Ok(r) => {
                 conn.close();
                 return Ok(Attempt {
@@ -501,13 +503,48 @@ fn push_once(
         }
         Relation::LocalAhead | Relation::LocalOnly | Relation::RemoteOnly => {}
     }
+    // R4 (RFC 0005 §7): if the relay's policy protects the branch, bring a
+    // passing attestation for exactly this head and vouch for it.
+    let attestation = match concurv_workspace::policy::protection(
+        store,
+        branch,
+        remote.map(|r| r.head),
+    )? {
+        concurv_workspace::policy::Protection::None => None,
+        concurv_workspace::policy::Protection::Required { policy_id, policy } => {
+            let (found, reasons) = concurv_workspace::check::find_authorizing(
+                repo, local, branch, policy_id, &policy,
+            )?;
+            match found {
+                Some(a) => Some(a),
+                None => {
+                    return Err(ConcurvError::new(
+                        ErrorCode::PolicyFail,
+                        format!(
+                            "the relay's {branch} is protected by its policy: pushing {local} needs a \
+                             passing attestation ({}). Run `concurv check --branch {branch}`; nothing was pushed",
+                            if reasons.is_empty() {
+                                "none is recorded".to_owned()
+                            } else {
+                                reasons.join("; ")
+                            }
+                        ),
+                    ));
+                }
+            }
+        }
+    };
     let relay_heads: Vec<SnapshotId> = heads.values().map(|h| h.head).collect();
-    let send = objects_to_send(store, &[local], &relay_heads)?;
+    let mut send = objects_to_send(store, &[local], &relay_heads)?;
+    send.extend(attestation.map(|a| a.object_id()));
     let lacking: HashSet<_> = conn.missing(&send)?.into_iter().collect();
     let upload: Vec<_> = send.into_iter().filter(|i| lacking.contains(i)).collect();
     conn.upload(store, &upload)?;
-    *sent = Some(attempt.from);
-    let reply = conn.publish(request_id, branch, attempt.from, local)?;
+    if let Some(a) = attestation {
+        conn.attest(a)?;
+    }
+    *sent = Some((attempt.from, attestation));
+    let reply = conn.publish(request_id, branch, attempt.from, local, attestation)?;
     conn.close();
     attempt.result = PushResult::Pushed;
     attempt.seq = Some(reply.seq);

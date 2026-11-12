@@ -3,7 +3,7 @@
 Legend: `not started` · `in progress` · `gate passed` · `blocked`.
 A stage is `gate passed` only with the evidence listed next to it.
 The plan itself (stages, gates, backlog, acceptance tests) lives in
-**`docs/ROADMAP_REVISED.md`**. Last updated: 2026-11-12 (R3 sync; local CI gate).
+**`docs/ROADMAP_REVISED.md`**. Last updated: 2026-11-12 (R4 verified integration).
 
 | Stage | Status | Evidence / blockers |
 |---|---|---|
@@ -13,7 +13,7 @@ The plan itself (stages, gates, backlog, acceptance tests) lives in
 | R2 — Private workspaces + concurrency | **gate passed** (2026-11-01) | CI run [41359891403](https://github.com/omer-ulucan/concurv/actions/runs/41359891403) on `main` @ `0689e96`: all four slices (RFC 0004, ADR 0002) green on Linux, macOS and Windows; 2/5/10 concurrent writers and killed-process tests pass. Git tags not supported (scoped). See "R2 evidence" below. |
 | R2.5 — Local merge & branch semantics | **in progress** (gate re-opened 2026-11-01) | Line-level merge (ADR 0006) verified. Branch model: the owner approved ADR 0007 **in principle** and requested refinements; they are implemented and tested (see "R2.5 branch-model refinements" below). Remaining gate item: the owner's final acceptance of ADR 0007 |
 | R3 — Two-PC authenticated sync | **gate passed** (2026-11-12, Windows and Linux) | Local CI gate on `3f85c0b`: Windows 216 passed, Linux 220 passed; relay `concurvd`, pinned TLS, devices and scopes, fetch/push/clone, two-process harness, disconnect, malformed-object, auth, crash/restart tests (RFC 0003 v1). macOS not run. See "R3 evidence" below |
-| R4 — Verified integration | not started | design draft: RFC 0005 |
+| R4 — Verified integration | **gate passed** (2026-11-12, Windows and Linux) | Local CI gate on `5a4863b`: Windows 227 passed, Linux 231 passed; protected branches, `concurv check`, attestations bound to candidate, branch, policy version, checks and OS, at the relay too (RFC 0005). macOS not run. See "R4 evidence" below |
 | R5 — Agent-aware coordination | not started | — |
 | R6 — Developer beta + Git ecosystem | not started | design only: ADR 0002 |
 | R7 — Advanced VCS | not started | — |
@@ -83,10 +83,10 @@ What the gate does **not** prove (still true, by design of the tests):
 
 ## Next
 
-R1, R1.5, R2 and R3 are complete; R2.5 awaits the owner's final acceptance
-of ADR 0007; R0 (competitor harness) remains open. Next: R4, verified
-integration (draft design: `docs/rfcs/0005-verified-integration.md`), then
-R5. macOS evidence needs hosted CI or a Mac running `scripts/ci-local.sh`.
+R1, R1.5, R2, R3 and R4 are complete; R2.5 awaits the owner's final acceptance
+of ADR 0007; R0 (competitor harness) remains open. Next: R5, agent
+coordination (`docs/rfcs/0006-agent-coordination.md`), then R6.
+macOS evidence needs hosted CI or a Mac running `scripts/ci-local.sh`.
 
 ## R2 evidence (gate passed 2026-11-01)
 
@@ -270,3 +270,28 @@ What the R3 gate does **not** prove: macOS (not run since R2.5); real
 wide-area networks (latency, NAT, middleboxes); a relay under sustained load
 or long uptime; relay high availability; power loss (fault injection
 simulates crashes of the process, not of the machine).
+
+## R4 evidence (gate passed 2026-11-12, Windows and Linux)
+
+Local CI gate (`scripts/ci-local.sh`, Windows and then WSL, same commit) on
+`feat/r4-verified` @ `5a4863b`, rustc 1.99.1, `--locked`, `--no-fail-fast`:
+Windows 11 **227 passed**, Linux (WSL 2) **231 passed**, 0 failed, 0
+ignored; fmt, clippy `-D warnings`, release build and MSRV 1.89 check pass
+on both. macOS not run.
+
+Gate statement (roadmap §2): *"Candidate-hash + policy +
+environment-bound attestation; stale attestation rejected; failing merged
+test blocks publish; no TOCTOU; sandbox policy explicit."*
+
+| Requirement | Tests |
+|---|---|
+| Candidate-hash + policy + environment-bound attestation | object kind 6 binds candidate, branch, policy blob, checks and environment (RFC 0005 §4); `verified_integration.rs::attestations_record_their_environment` (an attestation from another OS does not qualify) |
+| Stale attestation rejected | `stale_attestations_are_refused`: another candidate, a newer policy version, another branch; a forged result contradicting the exit codes cannot even be decoded |
+| Failing merged test blocks publish | `a_failing_merged_test_blocks_publication`: two workspaces each pass alone, the merge fails, nothing is published, the green attestation of an unmerged head never authorizes the merge; at the relay, `protected.rs` (missing, unvouched, failing and other-candidate attestations refused; devices without `attest` cannot vouch) |
+| No TOCTOU | `checks_see_the_candidate_not_the_working_copy`: checks run on a fresh checkout of the snapshot (an ignored file on disk does not help), and `publish` moves the branch to exactly the attested snapshot under the repository lock |
+| Sandbox policy explicit | the policy must state `"sandbox": "none"` (unknown values refused); `untrusted_policies_never_run`: nothing runs and nothing is written until this policy version is approved on the device |
+| Also | a candidate cannot weaken its own policy (`a_candidate_cannot_weaken_its_own_policy`); timeouts, missing programs, invalid policies and foreign-OS policies fail closed; CLI exit codes 44/45 and JSON (`verified_cli.rs`) |
+
+What the R4 gate does **not** prove: that a runner really ran the checks
+(attestations are claims of an authenticated device; signatures are R7);
+isolation of checks (`sandbox: none`); macOS.

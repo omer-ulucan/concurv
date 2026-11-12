@@ -13,8 +13,8 @@ use rustls::{ServerConfig, ServerConnection, StreamOwned};
 
 use crate::proto::{
     self, HeadInfo, MAX_QUERY_IDS, MAX_UPLOAD_BATCH, OBJECT_FORMAT, PROTOCOL, Request, Response,
-    VERSION, network, parse_ids, parse_snapshot, read_message, read_object, write_message,
-    write_object,
+    VERSION, network, parse_id, parse_ids, parse_snapshot, read_message, read_object,
+    write_message, write_object,
 };
 use crate::relay::{Device, PublishRequest, Relay, Session};
 use crate::tls::server_config;
@@ -366,11 +366,23 @@ fn request<S: Read + Write>(
             write_message(s, &Response::Stored { received: count })?;
             Ok(true)
         }
+        Request::Attest { id } => {
+            let id = parse_id(&id)?;
+            let r = relay
+                .attest(
+                    device,
+                    session.as_ref().map(|x| x.staging()),
+                    concurv_core::AttestationId::from_object_id(id),
+                )
+                .map(|()| Response::Attested { id: id.to_hex() });
+            answer(s, r)
+        }
         Request::Publish {
             request_id,
             branch,
             expected,
             proposed,
+            attestation,
         } => {
             let parsed = (|| -> Result<PublishRequest> {
                 Ok(PublishRequest {
@@ -378,6 +390,10 @@ fn request<S: Read + Write>(
                     branch,
                     expected: expected.as_deref().map(parse_snapshot).transpose()?,
                     proposed: parse_snapshot(&proposed)?,
+                    attestation: attestation
+                        .as_deref()
+                        .map(|a| parse_id(a).map(concurv_core::AttestationId::from_object_id))
+                        .transpose()?,
                 })
             })();
             let req = match parsed {

@@ -416,6 +416,15 @@ impl Connection {
         Ok(())
     }
 
+    /// Vouch for attestation `id` (uploaded before, or already at the
+    /// relay). Needs the `attest` scope.
+    pub fn attest(&mut self, id: concurv_core::AttestationId) -> Result<()> {
+        match self.call(&Request::Attest { id: id.to_hex() })? {
+            Response::Attested { id: got } if got == id.to_hex() => Ok(()),
+            other => Err(into_error(other)),
+        }
+    }
+
     /// Compare-and-swap of `branch` at the relay.
     pub fn publish(
         &mut self,
@@ -423,12 +432,14 @@ impl Connection {
         branch: &str,
         expected: Option<SnapshotId>,
         proposed: SnapshotId,
+        attestation: Option<concurv_core::AttestationId>,
     ) -> Result<PublishReply> {
         let req = Request::Publish {
             request_id: request_id.to_owned(),
             branch: branch.to_owned(),
             expected: expected.map(|e| e.to_hex()),
             proposed: proposed.to_hex(),
+            attestation: attestation.map(|a| a.to_hex()),
         };
         match self.call(&req)? {
             Response::Published {

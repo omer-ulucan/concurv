@@ -79,7 +79,8 @@ All integers are **big-endian**. Every object is:
 ```
 offset  size  field
 0       4     magic  = "CNV1" (0x43 0x4e 0x56 0x31)
-4       1     kind   : 1 = blob, 2 = tree, 3 = snapshot, 4 = operation, 5 = conflict (since R2 slice 2c)
+4       1     kind   : 1 = blob, 2 = tree, 3 = snapshot, 4 = operation, 5 = conflict (since R2 slice 2c),
+                     6 = attestation (since R4, repository format 3; layout in RFC 0005 §4)
 5       8     payload_len : u64
 13      N     payload (exactly payload_len bytes)
 ```
@@ -266,6 +267,9 @@ A header announcing a larger non-blob payload is rejected before allocation.
   remote is added. Builds that only know format 1 refuse a format-2
   repository with `CONCURV_UNSUPPORTED_FORMAT` (exit 12) instead of
   misreading it.
+- **Repository format 3** (`concurv-repo-format 3`, since R4): the store may
+  also contain attestation objects (kind 6, RFC 0005). Upgraded from format
+  1 or 2 by the first `concurv check`; earlier builds refuse it (exit 12).
 - New object kinds (conflict, attestation) get new kind bytes; old decoders
   reject them with `CONCURV_UNSUPPORTED_FORMAT` rather than misparse.
 

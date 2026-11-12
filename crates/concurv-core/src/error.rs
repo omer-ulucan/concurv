@@ -62,6 +62,11 @@ pub enum ErrorCode {
     PermissionDenied,
     /// The relay's TLS certificate does not match the pinned fingerprint.
     RelayIdentity,
+    /// A protected branch's policy is not satisfied (no valid passing
+    /// attestation for the candidate, or an invalid policy; RFC 0005).
+    PolicyFail,
+    /// A branch policy's checks were not approved to run on this device.
+    UntrustedPolicy,
     /// Internal invariant violation (a bug).
     Internal,
 }
@@ -96,12 +101,14 @@ impl ErrorCode {
             Self::AuthFailed => "CONCURV_AUTH_FAILED",
             Self::PermissionDenied => "CONCURV_PERMISSION_DENIED",
             Self::RelayIdentity => "CONCURV_RELAY_IDENTITY",
+            Self::PolicyFail => "CONCURV_POLICY_FAIL",
+            Self::UntrustedPolicy => "CONCURV_UNTRUSTED_POLICY",
             Self::Internal => "CONCURV_INTERNAL",
         }
     }
 
     /// Every code, in declaration order.
-    pub const ALL: [ErrorCode; 27] = [
+    pub const ALL: [ErrorCode; 29] = [
         Self::InvalidArgument,
         Self::NotARepo,
         Self::AlreadyInitialized,
@@ -129,6 +136,8 @@ impl ErrorCode {
         Self::AuthFailed,
         Self::PermissionDenied,
         Self::RelayIdentity,
+        Self::PolicyFail,
+        Self::UntrustedPolicy,
     ];
 
     /// Parse the stable string form (e.g. from a relay's error message).
@@ -164,6 +173,8 @@ impl ErrorCode {
             Self::AuthFailed => 73,
             Self::PermissionDenied => 74,
             Self::RelayIdentity => 75,
+            Self::PolicyFail => 44,
+            Self::UntrustedPolicy => 45,
         }
     }
 }

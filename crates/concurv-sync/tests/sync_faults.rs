@@ -62,6 +62,7 @@ fn relay_with_base(dir: &std::path::Path, from: &ObjectStore, base: SnapshotId) 
                 branch: "main".into(),
                 expected: None,
                 proposed: base,
+                attestation: None,
             },
         )
         .unwrap();
@@ -89,6 +90,7 @@ fn publish_next(
                 branch: "main".into(),
                 expected: Some(base),
                 proposed: next,
+                attestation: None,
             },
         )
         .map(|p| p.replayed)

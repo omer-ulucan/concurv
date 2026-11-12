@@ -25,13 +25,16 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use concurv_core::{ConcurvError, ErrorCode, ObjectId, RandomId, Result, SnapshotId};
+use concurv_core::{
+    AttestationId, ConcurvError, ErrorCode, ObjectId, RandomId, Result, SnapshotId,
+};
 use concurv_objects::encoding::validate_branch_name;
 use concurv_objects::fs::{
     FileLock, TempSession, clean_tmp_root, create_dir_durable, write_file_atomic,
 };
 use concurv_objects::{Faults, ObjectStore};
 use concurv_workspace::graph::is_ancestor;
+use concurv_workspace::policy::{self, Protection};
 use concurv_workspace::refname;
 use serde::{Deserialize, Serialize};
 
@@ -45,6 +48,8 @@ const STATE_FORMAT: &str = "concurv-relay-state 1";
 const DEVICES_FORMAT: &str = "concurv-relay-devices 1";
 /// Publish results remembered for retries with the same request id.
 pub const REQUEST_MEMORY: usize = 1024;
+/// Attestations vouched for that the relay remembers.
+pub const ATTESTED_MEMORY: usize = 4096;
 const TOKEN_PREFIX: &str = "cvt1_";
 const TOKEN_CONTEXT: &str = "concurv 2026-11 relay device token v1";
 
@@ -81,6 +86,9 @@ pub enum Scope {
     Write,
     /// Publish to one branch, or to every branch (`None`, written `publish:*`).
     Publish(Option<String>),
+    /// Vouch for attestations (RFC 0005 §7): run checks whose results a
+    /// protected branch accepts.
+    Attest,
 }
 
 impl Scope {
@@ -89,6 +97,7 @@ impl Scope {
         match s {
             "read" => Ok(Self::Read),
             "write" => Ok(Self::Write),
+            "attest" => Ok(Self::Attest),
             "publish:*" => Ok(Self::Publish(None)),
             _ => match s.strip_prefix("publish:") {
                 Some(b) if refname::git_refname_ok(b) && refname::portable(b).is_ok() => {
@@ -108,6 +117,7 @@ impl std::fmt::Display for Scope {
         match self {
             Self::Read => f.write_str("read"),
             Self::Write => f.write_str("write"),
+            Self::Attest => f.write_str("attest"),
             Self::Publish(None) => f.write_str("publish:*"),
             Self::Publish(Some(b)) => write!(f, "publish:{b}"),
         }
@@ -146,6 +156,15 @@ impl Device {
             Ok(())
         } else {
             Err(self.denied("upload objects (scope `write`)"))
+        }
+    }
+
+    /// Require the attest scope.
+    pub fn require_attest(&self) -> Result<()> {
+        if self.scopes.contains(&Scope::Attest) {
+            Ok(())
+        } else {
+            Err(self.denied("vouch for attestations (scope `attest`)"))
         }
     }
 
@@ -207,6 +226,14 @@ struct RequestRecord {
     seq: u64,
 }
 
+/// An attestation a device with the `attest` scope vouched for.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AttestedRecord {
+    id: String,
+    device: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StateFile {
@@ -214,6 +241,8 @@ struct StateFile {
     relay: String,
     branches: BTreeMap<String, HeadRecord>,
     requests: Vec<RequestRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    attested: Vec<AttestedRecord>,
 }
 
 /// A published head as the relay holds it.
@@ -231,6 +260,7 @@ struct State {
     relay: String,
     branches: BTreeMap<String, Head>,
     requests: Vec<RequestRecord>,
+    attested: Vec<AttestedRecord>,
 }
 
 fn damaged(what: &str, path: &Path, why: impl std::fmt::Display) -> ConcurvError {
@@ -263,6 +293,7 @@ impl State {
             relay: f.relay,
             branches,
             requests: f.requests,
+            attested: f.attested,
         })
     }
 
@@ -284,6 +315,7 @@ impl State {
                 })
                 .collect(),
             requests: self.requests.clone(),
+            attested: self.attested.clone(),
         };
         serde_json::to_vec_pretty(&f)
             .map_err(|e| ConcurvError::internal(format!("cannot encode relay state: {e}")))
@@ -310,6 +342,8 @@ pub struct PublishRequest {
     pub expected: Option<SnapshotId>,
     /// New head.
     pub proposed: SnapshotId,
+    /// Attestation for a protected branch (RFC 0005 §7).
+    pub attestation: Option<AttestationId>,
 }
 
 /// Result of a successful publish.
@@ -456,6 +490,7 @@ impl Relay {
             relay: relay.clone(),
             branches: BTreeMap::new(),
             requests: Vec::new(),
+            attested: Vec::new(),
         };
         write_file_atomic(&tmp, &dir.join("state.json"), &state.encode()?, &faults)?;
         let devices = DevicesFile {
@@ -709,6 +744,56 @@ impl Relay {
             .collect()
     }
 
+    /// Record that `device` (scope `attest`) vouches for attestation `id`,
+    /// which must be stored or in this session's `staging` (then adopted).
+    /// The object is decoded and checked for consistency first.
+    pub fn attest(
+        &self,
+        device: &Device,
+        staging: Option<&ObjectStore>,
+        id: AttestationId,
+    ) -> Result<()> {
+        device.require_attest()?;
+        let oid = id.object_id();
+        if !self.store.contains(&oid) {
+            match staging {
+                Some(s) if s.contains(&oid) => {
+                    s.read_attestation(&id)?;
+                    self.store.adopt(s, &oid)?;
+                }
+                _ => {
+                    return Err(ConcurvError::new(
+                        ErrorCode::ObjectMissing,
+                        format!("upload attestation {id} before vouching for it"),
+                    ));
+                }
+            }
+        }
+        self.store.read_attestation(&id)?;
+        let _l = self.lock()?;
+        let path = self.dir.join("state.json");
+        let mut state = State::load(&path)?;
+        if state
+            .attested
+            .iter()
+            .any(|r| r.id == id.to_hex() && r.device == device.name)
+        {
+            return Ok(());
+        }
+        state.attested.push(AttestedRecord {
+            id: id.to_hex(),
+            device: device.name.clone(),
+        });
+        let excess = state.attested.len().saturating_sub(ATTESTED_MEMORY);
+        state.attested.drain(..excess);
+        write_file_atomic(
+            self.store.tmp_dir(),
+            &path,
+            &state.encode()?,
+            &self.opts.faults,
+        )
+    }
+
     /// Compare-and-swap of a published head (RFC 0003 §3.8). Under the
     /// relay lock: a retried request returns its first result; the branch
     /// must still be at `expected`; the proposed snapshot's graph must be
@@ -757,6 +842,35 @@ impl Relay {
                 observed: current,
                 missing: Vec::new(),
             }));
+        }
+        // R4 (RFC 0005 §7): the policy in the relay's current head decides;
+        // a protected branch needs a passing attestation for exactly this
+        // proposal that a device with the `attest` scope vouched for.
+        if let Protection::Required { policy_id, policy } =
+            policy::protection(&self.store, &req.branch, current.map(|c| c.head))?
+        {
+            let refuse = |why: String| {
+                Box::<PublishError>::from(ConcurvError::new(
+                    ErrorCode::PolicyFail,
+                    format!(
+                        "branch {} is protected by its policy: {why}; nothing was published",
+                        req.branch
+                    ),
+                ))
+            };
+            let Some(id) = req.attestation else {
+                return Err(refuse(
+                    "a passing attestation is required (`concurv check`, then push)".into(),
+                ));
+            };
+            if !state.attested.iter().any(|r| r.id == id.to_hex()) {
+                return Err(refuse(format!(
+                    "attestation {id} was not vouched for by a device with the `attest` scope"
+                )));
+            }
+            let a = self.store.read_attestation(&id)?;
+            policy::satisfies(&a, req.proposed, &req.branch, policy_id, &policy)
+                .map_err(|why| refuse(format!("attestation {id} does not qualify: {why}")))?;
         }
         if current.is_none() {
             validate_branch_name(&req.branch)?;

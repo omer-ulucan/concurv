@@ -62,6 +62,7 @@ MSYS_NO_PATHCONV=1 wsl.exe -d "$distro" --exec bash -lc '
 ' bash "$wslrepo" "$sha" "$tag" "$wslout"
 
 cd "$out"
-sha256sum ./*.zip ./*.tar.gz | sed 's| \./| |' >SHA256SUMS
+# Standard "hash  name" lines (Git Bash prints "hash *./name").
+sha256sum ./*.zip ./*.tar.gz | sed -E 's# [*]?\./#  #' >SHA256SUMS
 cat SHA256SUMS
 echo "release-local: archives in $out"
