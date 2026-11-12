@@ -71,8 +71,9 @@ pub enum Request {
         /// Object ids.
         ids: Vec<String>,
     },
-    /// `count` object frames follow; the relay keeps them in this session's
-    /// quarantine until a publish needs them.
+    /// Announce `count` object frames. The relay answers `ready` (or an
+    /// error, and nothing is sent); then the frames follow, and the relay
+    /// keeps them in this session's quarantine until a publish needs them.
     Upload {
         /// Number of object frames that follow.
         count: u32,
@@ -135,7 +136,11 @@ pub enum Response {
         /// The subset of the queried ids the relay lacks.
         ids: Vec<String>,
     },
-    /// Answer to `upload`.
+    /// First answer to `upload`: the relay accepts the batch; send the
+    /// object frames now. (A refusal is an `error` instead, before any
+    /// object is sent.)
+    Ready {},
+    /// Final answer to `upload`, after every object was received.
     Stored {
         /// Objects received and verified.
         received: u32,
