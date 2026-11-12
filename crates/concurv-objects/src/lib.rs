@@ -6,8 +6,8 @@ pub mod fs;
 pub mod store;
 
 pub use encoding::{
-    Conflict, ConflictEntry, ConflictKind, EntryKind, ObjectKind, Operation, RemoteHead, Snapshot,
-    Tree, TreeEntry, View, WorkspaceView,
+    Attestation, CheckRecord, Conflict, ConflictEntry, ConflictKind, EntryKind, ObjectKind,
+    Operation, RemoteHead, Snapshot, Tree, TreeEntry, View, WorkspaceView,
 };
 pub use fs::{ALL_FAULT_POINTS, FaultMode, FaultPoint, Faults};
 pub use store::{ObjectStore, hash_blob_stream};

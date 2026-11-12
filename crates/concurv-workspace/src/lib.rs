@@ -3,11 +3,13 @@
 //! `publish`/`update` with file-level merge, history and `verify`.
 
 pub mod branches;
+pub mod check;
 pub mod conflicts;
 pub mod graph;
 pub mod ignore;
 pub mod integrate;
 pub mod merge;
+pub mod policy;
 pub mod reconcile;
 pub mod refname;
 pub mod repo;

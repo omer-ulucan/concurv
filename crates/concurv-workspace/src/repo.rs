@@ -29,6 +29,10 @@ pub const REPO_FORMAT: &str = "concurv-repo-format 1\n";
 /// format 1 when its first remote is added; builds that only know format 1
 /// refuse it with `CONCURV_UNSUPPORTED_FORMAT` instead of misreading it.
 pub const REPO_FORMAT_2: &str = "concurv-repo-format 2\n";
+/// Repository format 3 (since R4): the store may also contain attestation
+/// objects (object kind 6, RFC 0005). Upgraded from 1 or 2 by the first
+/// `concurv check`.
+pub const REPO_FORMAT_3: &str = "concurv-repo-format 3\n";
 /// Contents of `.concurv/format` in a secondary workspace.
 pub const WORKSPACE_FORMAT: &str = "concurv-workspace-format 1\n";
 /// Default branch created by `init`.
@@ -130,8 +134,17 @@ pub(crate) fn check_meta_dir(root: &Path) -> Result<Option<PathBuf>> {
     }
 }
 
+fn repo_format_number(format: &str) -> Option<u32> {
+    match format {
+        REPO_FORMAT => Some(1),
+        REPO_FORMAT_2 => Some(2),
+        REPO_FORMAT_3 => Some(3),
+        _ => None,
+    }
+}
+
 fn is_repo_format(format: &str) -> bool {
-    format == REPO_FORMAT || format == REPO_FORMAT_2
+    repo_format_number(format).is_some()
 }
 
 fn unsupported(format: &str, p: &Path) -> ConcurvError {
@@ -411,33 +424,47 @@ impl Repo {
 
     // ---------------------------------------------------------------- format
 
-    /// True if the repository is format 2 (may hold remote-tracking
-    /// references).
-    pub fn supports_remotes(&self) -> Result<bool> {
-        Ok(read_format(&self.store_meta)? == REPO_FORMAT_2)
+    /// The repository format number (1, 2 or 3).
+    pub fn format_version(&self) -> Result<u32> {
+        let format = read_format(&self.store_meta)?;
+        repo_format_number(&format).ok_or_else(|| unsupported(&format, &self.store_meta))
     }
 
-    /// Upgrade the repository from format 1 to format 2 (one atomic file
-    /// replacement, under the repository lock). Nothing else changes: every
-    /// format-1 operation is also a valid format-2 operation. Returns true if
-    /// this call upgraded it.
+    /// True if the repository is format 2 or later (may hold remote-tracking
+    /// references).
+    pub fn supports_remotes(&self) -> Result<bool> {
+        Ok(self.format_version()? >= 2)
+    }
+
+    /// Upgrade the repository to at least format 2 (see
+    /// [`Self::upgrade_format`]). Returns true if this call upgraded it.
     pub fn upgrade_for_remotes(&self, lock: &RepoLock) -> Result<bool> {
+        self.upgrade_format(lock, 2)
+    }
+
+    /// Upgrade the repository to at least format `min` by one atomic
+    /// replacement of `.concurv/format` under the repository lock. Nothing
+    /// else changes: every object and operation of a lower format is valid
+    /// in a higher one. Never downgrades. Returns true if this call upgraded.
+    pub fn upgrade_format(&self, lock: &RepoLock, min: u32) -> Result<bool> {
         if lock.meta_dir() != self.store_meta {
             return Err(ConcurvError::internal(
                 "lock belongs to a different repository",
             ));
         }
-        let format = read_format(&self.store_meta)?;
-        if format == REPO_FORMAT_2 {
+        let current = self.format_version()?;
+        if current >= min {
             return Ok(false);
         }
-        if format != REPO_FORMAT {
-            return Err(unsupported(&format, &self.store_meta));
-        }
+        let target = match min {
+            2 => REPO_FORMAT_2,
+            3 => REPO_FORMAT_3,
+            _ => return Err(ConcurvError::internal("unknown repository format")),
+        };
         write_file_atomic(
             self.store.tmp_dir(),
             &self.store_meta.join("format"),
-            REPO_FORMAT_2.as_bytes(),
+            target.as_bytes(),
             &self.opts.faults,
         )?;
         Ok(true)

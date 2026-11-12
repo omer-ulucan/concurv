@@ -374,6 +374,8 @@ dependencies = [
  "concurv-refs",
  "ignore",
  "proptest",
+ "serde",
+ "serde_json",
  "similar",
  "tempfile",
 ]

@@ -6,12 +6,13 @@ use std::path::{Path, PathBuf};
 
 use concurv_core::ids::is_lower_hex;
 use concurv_core::{
-    BlobId, ConcurvError, ConflictId, ErrorCode, ObjectId, OperationId, Result, SnapshotId, TreeId,
+    AttestationId, BlobId, ConcurvError, ConflictId, ErrorCode, ObjectId, OperationId, Result,
+    SnapshotId, TreeId,
 };
 
 use crate::encoding::{
-    Conflict, HEADER_LEN, MAX_STRUCTURED_PAYLOAD, ObjectHasher, ObjectKind, Operation, Snapshot,
-    Tree, decode_header, decode_object, encode_header, encode_object, hash_object,
+    Attestation, Conflict, HEADER_LEN, MAX_STRUCTURED_PAYLOAD, ObjectHasher, ObjectKind, Operation,
+    Snapshot, Tree, decode_header, decode_object, encode_header, encode_object, hash_object,
 };
 use crate::fs::{Faults, TempFile, create_dir_durable, rename_durable};
 
@@ -485,6 +486,18 @@ impl ObjectStore {
     pub fn read_conflict(&self, id: &ConflictId) -> Result<Conflict> {
         let p = self.read_object(&id.object_id(), ObjectKind::Conflict)?;
         Conflict::decode(&p).map_err(|e| ctx(e, &id.object_id()))
+    }
+
+    /// Store an attestation (RFC 0005).
+    pub fn write_attestation(&self, a: &Attestation) -> Result<AttestationId> {
+        self.write_object(ObjectKind::Attestation, &a.encode()?)
+            .map(AttestationId::from_object_id)
+    }
+    /// Load a verified attestation (its result is checked against its
+    /// exit codes while decoding).
+    pub fn read_attestation(&self, id: &AttestationId) -> Result<Attestation> {
+        let p = self.read_object(&id.object_id(), ObjectKind::Attestation)?;
+        Attestation::decode(&p).map_err(|e| ctx(e, &id.object_id()))
     }
 
     // -------------------------------------------------------------- listing

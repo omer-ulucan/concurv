@@ -92,8 +92,24 @@ enum Cmd {
         #[command(subcommand)]
         cmd: WorkspaceCmd,
     },
-    /// Move this workspace's branch forward to the workspace head (CAS).
-    Publish,
+    /// Move this workspace's branch forward to the workspace head (CAS). A
+    /// protected branch also needs a passing attestation (RFC 0005).
+    Publish {
+        /// Run the branch policy's checks on the head first (`concurv check`).
+        #[arg(long)]
+        check: bool,
+    },
+    /// Run the branch policy's checks on this workspace's head in a fresh
+    /// checkout and record an attestation (RFC 0005). Publishes nothing.
+    Check {
+        /// Branch whose policy applies (default: the tracked branch).
+        #[arg(long)]
+        branch: Option<String>,
+        /// Approve this version of the policy on this device first (its checks
+        /// run repository commands without isolation).
+        #[arg(long)]
+        trust: bool,
+    },
     /// Create, list and switch branches (ADR 0007).
     Branch {
         #[command(subcommand)]
@@ -290,7 +306,8 @@ impl Cmd {
             Cmd::Workspace {
                 cmd: WorkspaceCmd::List,
             } => "workspace list",
-            Cmd::Publish => "publish",
+            Cmd::Publish { .. } => "publish",
+            Cmd::Check { .. } => "check",
             Cmd::Branch {
                 cmd: BranchCmd::Create { .. },
             } => "branch create",
@@ -670,10 +687,25 @@ fn run(cli: Cli) -> Result<Output> {
             let repo = Repo::discover(&cwd, opts())?;
             cmd_branch(&repo, cmd)
         }
-        Cmd::Publish => {
+        Cmd::Publish { check } => {
             let repo = Repo::discover(&cwd, opts())?;
+            let mut checked = None;
+            if check {
+                let c = concurv_workspace::check::check(
+                    &repo,
+                    &concurv_workspace::check::CheckOptions::default(),
+                )?;
+                if !c.passed {
+                    let (_, human) = check_output(&c);
+                    return Err(ConcurvError::new(
+                        ErrorCode::PolicyFail,
+                        format!("{human}\nnothing was published"),
+                    ));
+                }
+                checked = Some(c);
+            }
             let o = publish(&repo)?;
-            let human = match o.operation {
+            let mut human = match o.operation {
                 Some(_) => format!(
                     "Published {} to `{}` (was {}).",
                     o.to,
@@ -683,6 +715,13 @@ fn run(cli: Cli) -> Result<Output> {
                 ),
                 None => format!("`{}` is already at {}; nothing to publish.", o.branch, o.to),
             };
+            if let Some(a) = o.attestation {
+                human.push_str(&format!(
+                    "\nAuthorized by attestation {} (policy checks passed).",
+                    &a.to_hex()[..12]
+                ));
+            }
+            let _ = checked;
             ok(
                 json!({
                     "branch": o.branch,
@@ -690,9 +729,23 @@ fn run(cli: Cli) -> Result<Output> {
                     "to": o.to.to_hex(),
                     "published": o.operation.is_some(),
                     "operation": o.operation.map(|s| s.to_hex()),
+                    "attestation": o.attestation.map(|a| a.to_hex()),
                 }),
                 human,
             )
+        }
+        Cmd::Check { branch, trust } => {
+            let repo = Repo::discover(&cwd, opts())?;
+            let c = concurv_workspace::check::check(
+                &repo,
+                &concurv_workspace::check::CheckOptions {
+                    branch,
+                    candidate: None,
+                    trust,
+                },
+            )?;
+            let (data, human) = check_output(&c);
+            ok(data, human)
         }
         Cmd::Git {
             cmd:
@@ -1533,4 +1586,62 @@ mod tests {
         assert_eq!(format_time(951_782_400_000), "2000-02-29 00:00:00 UTC");
         assert_eq!(format_time(-1000), "1969-12-31 23:59:59 UTC");
     }
+}
+
+fn check_output(c: &concurv_workspace::check::CheckOutcome) -> (Value, String) {
+    let r = &c.record;
+    let mut human = format!(
+        "{} {} for `{}` under policy {}: attestation {}{}\n",
+        if c.passed { "PASSED" } else { "FAILED" },
+        &r.candidate.to_hex()[..12],
+        r.branch,
+        &r.policy.to_hex()[..12],
+        c.attestation,
+        if c.newly_trusted {
+            " (policy approved on this device)"
+        } else {
+            ""
+        }
+    );
+    let mut checks = Vec::new();
+    for k in &r.checks {
+        let status = match k.exit_code {
+            0 => "ok".to_owned(),
+            concurv_objects_exit::TIMEOUT => "timed out".to_owned(),
+            concurv_objects_exit::NOT_STARTED => "could not start".to_owned(),
+            n => format!("exit {n}"),
+        };
+        human.push_str(&format!(
+            "  {}: {status} ({} ms; output {})\n",
+            k.name,
+            k.duration_ms,
+            &k.output.to_hex()[..12]
+        ));
+        checks.push(json!({
+            "name": k.name,
+            "argv": k.argv,
+            "exit_code": k.exit_code,
+            "duration_ms": k.duration_ms,
+            "output": k.output.to_hex(),
+        }));
+    }
+    (
+        json!({
+            "attestation": c.attestation.to_hex(),
+            "passed": c.passed,
+            "candidate": r.candidate.to_hex(),
+            "branch": r.branch,
+            "policy": r.policy.to_hex(),
+            "environment": serde_json::from_str::<Value>(&r.environment).unwrap_or(Value::Null),
+            "checks": checks,
+            "newly_trusted": c.newly_trusted,
+        }),
+        human,
+    )
+}
+
+/// Reserved exit codes of attestations (RFC 0005 §4).
+mod concurv_objects_exit {
+    pub const TIMEOUT: i64 = -1_000_001;
+    pub const NOT_STARTED: i64 = -1_000_002;
 }

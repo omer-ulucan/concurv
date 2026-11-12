@@ -39,6 +39,8 @@ pub enum ObjectKind {
     Operation = 4,
     /// Pending merge with unresolved conflicts (RFC 0004 §11).
     Conflict = 5,
+    /// Result of running a branch policy's checks on a candidate (RFC 0005).
+    Attestation = 6,
 }
 
 impl ObjectKind {
@@ -50,6 +52,7 @@ impl ObjectKind {
             3 => Ok(Self::Snapshot),
             4 => Ok(Self::Operation),
             5 => Ok(Self::Conflict),
+            6 => Ok(Self::Attestation),
             other => Err(ConcurvError::new(
                 ErrorCode::UnsupportedFormat,
                 format!("unknown object kind {other}"),
@@ -65,6 +68,7 @@ impl ObjectKind {
             Self::Snapshot => "snapshot",
             Self::Operation => "operation",
             Self::Conflict => "conflict",
+            Self::Attestation => "attestation",
         }
     }
 }
@@ -876,6 +880,139 @@ fn decode_remotes(r: &mut Reader<'_>) -> Result<BTreeMap<String, BTreeMap<String
         remotes.insert(remote, branches);
     }
     Ok(remotes)
+}
+
+// ---------------------------------------------------------------------------
+// Attestation (RFC 0005; since R4, repository format 3)
+
+/// Exit code recorded for a check stopped at its timeout.
+pub const EXIT_TIMEOUT: i64 = -1_000_001;
+/// Exit code recorded for a check whose program could not be started.
+pub const EXIT_NOT_STARTED: i64 = -1_000_002;
+/// Most checks in one attestation (and one policy).
+pub const MAX_CHECKS: u32 = 64;
+/// Most arguments of one check.
+pub const MAX_ARGS: u32 = 256;
+
+/// One check as run for an attestation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CheckRecord {
+    /// Name from the policy.
+    pub name: String,
+    /// Program and arguments, as in the policy.
+    pub argv: Vec<String>,
+    /// Exit code, or [`EXIT_TIMEOUT`] / [`EXIT_NOT_STARTED`].
+    pub exit_code: i64,
+    /// Wall-clock duration.
+    pub duration_ms: u64,
+    /// Its combined stdout and stderr, stored as a blob.
+    pub output: BlobId,
+}
+
+/// Evidence that a branch policy's checks ran on one candidate snapshot in
+/// one environment, and with which results (RFC 0005 §4).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Attestation {
+    /// The snapshot that was checked.
+    pub candidate: SnapshotId,
+    /// Blob id of the policy file that defined the checks.
+    pub policy: BlobId,
+    /// Branch the candidate is meant for.
+    pub branch: String,
+    /// Device that ran the checks.
+    pub device_id: DeviceId,
+    /// Start time, ms since the epoch.
+    pub started_ms: i64,
+    /// End time, ms since the epoch.
+    pub finished_ms: i64,
+    /// Canonical JSON describing the environment (OS, architecture,
+    /// concurv version).
+    pub environment: String,
+    /// The checks, in policy order.
+    pub checks: Vec<CheckRecord>,
+}
+
+impl Attestation {
+    /// True if there is at least one check and every check exited 0.
+    pub fn passed(&self) -> bool {
+        !self.checks.is_empty() && self.checks.iter().all(|c| c.exit_code == 0)
+    }
+
+    /// Canonical payload bytes.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        validate_branch_name(&self.branch)?;
+        let mut w = Writer(Vec::new());
+        w.id(&self.candidate.object_id());
+        w.id(&self.policy.object_id());
+        w.string(&self.branch)?;
+        w.rid(&self.device_id.random_id());
+        w.i64(self.started_ms);
+        w.i64(self.finished_ms);
+        w.string(&self.environment)?;
+        w.count(self.checks.len(), MAX_CHECKS, "checks")?;
+        for c in &self.checks {
+            w.string(&c.name)?;
+            w.count(c.argv.len(), MAX_ARGS, "check arguments")?;
+            for a in &c.argv {
+                w.string(a)?;
+            }
+            w.i64(c.exit_code);
+            w.u64(c.duration_ms);
+            w.id(&c.output.object_id());
+        }
+        w.u8(u8::from(self.passed()));
+        Ok(w.0)
+    }
+
+    /// Strictly decode a payload. The recorded result must agree with the
+    /// recorded exit codes.
+    pub fn decode(payload: &[u8]) -> Result<Self> {
+        let mut r = Reader::new(payload);
+        let candidate = SnapshotId::from_object_id(r.id()?);
+        let policy = BlobId::from_object_id(r.id()?);
+        let branch = r.string()?;
+        validate_branch_name(&branch).map_err(|e| corrupt(e.message))?;
+        let device_id = DeviceId::from_random(r.rid()?);
+        let started_ms = r.i64()?;
+        let finished_ms = r.i64()?;
+        let environment = r.string()?;
+        let n = r.count(MAX_CHECKS, "checks")?;
+        let mut checks = Vec::with_capacity(n as usize);
+        for _ in 0..n {
+            let name = r.string()?;
+            let argc = r.count(MAX_ARGS, "check arguments")?;
+            let mut argv = Vec::with_capacity(argc as usize);
+            for _ in 0..argc {
+                argv.push(r.string()?);
+            }
+            let exit_code = r.i64()?;
+            let duration_ms = r.u64()?;
+            let output = BlobId::from_object_id(r.id()?);
+            checks.push(CheckRecord {
+                name,
+                argv,
+                exit_code,
+                duration_ms,
+                output,
+            });
+        }
+        let result = r.flag()?;
+        r.finish()?;
+        let a = Self {
+            candidate,
+            policy,
+            branch,
+            device_id,
+            started_ms,
+            finished_ms,
+            environment,
+            checks,
+        };
+        if a.passed() != result {
+            return Err(corrupt("attestation result disagrees with its checks"));
+        }
+        Ok(a)
+    }
 }
 
 /// Convenience: typed id of a blob payload.

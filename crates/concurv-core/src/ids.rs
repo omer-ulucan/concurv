@@ -149,6 +149,10 @@ typed_object_id!(
     /// Id of a conflict object (a pending merge, RFC 0004 §11).
     ConflictId
 );
+typed_object_id!(
+    /// Id of an attestation object (RFC 0005, R4).
+    AttestationId
+);
 
 /// A 16-byte random logical id.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
