@@ -150,6 +150,22 @@ enum Cmd {
         #[arg(long)]
         abort: bool,
     },
+    /// Advisory intents: tell other workspaces and agents what you are about
+    /// to change (RFC 0006). Never a lock.
+    Intent {
+        #[command(subcommand)]
+        cmd: IntentCmd,
+    },
+    /// Warn about overlapping work: other workspaces' unpublished saves,
+    /// upstream work not integrated yet, changed definitions you use, and
+    /// intents (read-only, advisory).
+    Overlaps,
+    /// The operation log as versioned JSON lines, oldest first (RFC 0006).
+    Events {
+        /// Number of most recent operations.
+        #[arg(short = 'n', long, default_value_t = 1000)]
+        limit: usize,
+    },
     /// Manage remotes: relays this repository syncs with (RFC 0003).
     Remote {
         #[command(subcommand)]
@@ -186,6 +202,31 @@ enum Cmd {
         /// Name of the remote.
         #[arg(long, default_value = "origin")]
         name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum IntentCmd {
+    /// Declare that this workspace is about to change paths or symbols.
+    Declare {
+        /// Path patterns (ignore-file syntax, e.g. `src/parser/**`).
+        patterns: Vec<String>,
+        /// Symbols (function, type… names); repeatable.
+        #[arg(long = "symbol")]
+        symbols: Vec<String>,
+        /// Lifetime: e.g. 30m, 2h, 1d (1 minute to 7 days).
+        #[arg(long, default_value = "1h")]
+        ttl: String,
+        /// Free text for others.
+        #[arg(long, default_value = "")]
+        note: String,
+    },
+    /// Active intents: this repository's and those fetched from relays.
+    List,
+    /// Release this workspace's intents (all, or one by id prefix).
+    Release {
+        /// Intent id or prefix.
+        id: Option<String>,
     },
 }
 
@@ -338,6 +379,17 @@ impl Cmd {
             Cmd::Fetch { .. } => "fetch",
             Cmd::Push { .. } => "push",
             Cmd::Clone { .. } => "clone",
+            Cmd::Intent {
+                cmd: IntentCmd::Declare { .. },
+            } => "intent declare",
+            Cmd::Intent {
+                cmd: IntentCmd::List,
+            } => "intent list",
+            Cmd::Intent {
+                cmd: IntentCmd::Release { .. },
+            } => "intent release",
+            Cmd::Overlaps => "overlaps",
+            Cmd::Events { .. } => "events",
         }
     }
 }
@@ -964,6 +1016,114 @@ fn run(cli: Cli) -> Result<Output> {
             );
             ok(data, human)
         }
+        Cmd::Intent {
+            cmd:
+                IntentCmd::Declare {
+                    patterns,
+                    symbols,
+                    ttl,
+                    note,
+                },
+        } => {
+            let repo = Repo::discover(&cwd, opts())?;
+            let i = concurv_workspace::coord::declare(
+                &repo,
+                &patterns,
+                &symbols,
+                parse_ttl(&ttl)?,
+                &note,
+            )?;
+            ok(
+                intent_json(&i),
+                format!(
+                    "Declared intent {} until {} (advisory; others are warned, nothing is locked).",
+                    &i.id[..12],
+                    format_time(i.expires_ms)
+                ),
+            )
+        }
+        Cmd::Intent {
+            cmd: IntentCmd::List,
+        } => {
+            let repo = Repo::discover(&cwd, opts())?;
+            let all = concurv_workspace::coord::all_intents(&repo);
+            let mut human = String::new();
+            for i in &all {
+                human.push_str(&format!(
+                    "{}  {} ({}) until {}: {}{}{}\n",
+                    &i.id[..12],
+                    i.workspace,
+                    i.who,
+                    format_time(i.expires_ms),
+                    i.paths.join(" "),
+                    if i.symbols.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" symbols {}", i.symbols.join(","))
+                    },
+                    if i.note.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" — {}", i.note)
+                    }
+                ));
+            }
+            if all.is_empty() {
+                human.push_str("No active intents.");
+            }
+            ok(
+                json!({ "intents": all.iter().map(intent_json).collect::<Vec<_>>() }),
+                human,
+            )
+        }
+        Cmd::Intent {
+            cmd: IntentCmd::Release { id },
+        } => {
+            let repo = Repo::discover(&cwd, opts())?;
+            let n = concurv_workspace::coord::release(&repo, id.as_deref())?;
+            ok(
+                json!({ "released": n }),
+                format!("Released {n} intent(s) of this workspace."),
+            )
+        }
+        Cmd::Overlaps => {
+            let repo = Repo::discover(&cwd, opts())?;
+            let v = concurv_workspace::coord::overlaps(&repo)?;
+            let mut human = String::new();
+            for o in &v {
+                human.push_str(&format!(
+                    "{:<10} {}  ({}{})\n",
+                    o.level.as_str(),
+                    o.path,
+                    o.source,
+                    o.symbol
+                        .as_ref()
+                        .map_or(String::new(), |s| format!(", symbol {s}"))
+                ));
+            }
+            if v.is_empty() {
+                human.push_str("No overlapping work found.");
+            }
+            ok(
+                json!({ "overlaps": v.iter().map(|o| json!({
+                    "level": o.level.as_str(),
+                    "source": o.source,
+                    "path": o.path,
+                    "symbol": o.symbol,
+                })).collect::<Vec<_>>() }),
+                human,
+            )
+        }
+        Cmd::Events { limit } => {
+            let repo = Repo::discover(&cwd, opts())?;
+            let ev = concurv_workspace::coord::events(&repo, limit)?;
+            let human = ev
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            ok(json!({ "events": ev }), human)
+        }
         Cmd::Undo => {
             let repo = Repo::discover(&cwd, opts())?;
             let o = undo(&repo)?;
@@ -1570,6 +1730,33 @@ fn cmd_branch(repo: &Repo, cmd: BranchCmd) -> Result<Output> {
             )
         }
     }
+}
+
+/// Parse a lifetime like `90s`, `30m`, `2h`, `1d` (a bare number is minutes).
+fn parse_ttl(s: &str) -> Result<i64> {
+    let bad = || {
+        ConcurvError::new(
+            ErrorCode::InvalidArgument,
+            format!("invalid --ttl {s:?}: use e.g. 30m, 2h or 1d"),
+        )
+    };
+    let (num, unit) = match s.char_indices().find(|(_, c)| !c.is_ascii_digit()) {
+        Some((i, _)) => (&s[..i], &s[i..]),
+        None => (s, "m"),
+    };
+    let n: i64 = num.parse().map_err(|_| bad())?;
+    let ms = match unit {
+        "s" => 1_000,
+        "m" => 60_000,
+        "h" => 3_600_000,
+        "d" => 86_400_000,
+        _ => return Err(bad()),
+    };
+    n.checked_mul(ms).ok_or_else(bad)
+}
+
+fn intent_json(i: &concurv_workspace::coord::Intent) -> Value {
+    serde_json::to_value(i).unwrap_or(Value::Null)
 }
 
 fn check_output(c: &concurv_workspace::check::CheckOutcome) -> (Value, String) {
