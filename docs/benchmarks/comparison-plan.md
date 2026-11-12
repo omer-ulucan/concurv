@@ -1,7 +1,10 @@
 # Competitive reproduction and comparison plan
 
-Status: **Plan written; no competitor scenario has been reproduced yet.**
-No result in this file is a measurement. Rows labelled *literature* come from
+Status: **Harness built; concurv and Git reproduced for S04, S05, S09, S10
+and S12 on Windows and Linux (2026-11-12, `bench/results/`). No other
+competitor has been run yet** (jj scripts exist but have not run; the R0
+gate needs at least one). Apart from the "Reproduced" section, no result
+in this file is a measurement. Rows labelled *literature* come from
 the project docs/issues listed under "Literature sources" at the end of this file;
 they become *reproduced* only after a script under `bench/scenarios/` runs and
 its output is committed together with tool versions and OS.
@@ -47,12 +50,34 @@ OS + version, filesystem, CPU, RAM, tool versions (`git --version`,
 
 Y = documented, P = partial, E = via external tool, ? = unverified.
 
-## Harness plan
+## Harness
 
-`bench/scenarios/<id>/<tool>.sh` — POSIX shell, creates a fresh temp dir,
-prints `RESULT: <pass|fail|unsupported> <detail>` and exits. A driver collects
-results into `bench/results/<date>-<host>.md`. Not yet created; tracked in
-`docs/ROADMAP_STATUS.md` as the remaining R0 gate item.
+`bench/scenarios/S<id>-<name>/<tool>.sh` (POSIX shell, fresh temporary
+directory, hermetic configuration) prints `RESULT: <pass|partial|fail|unsupported>
+<detail>`; `bench/scenarios/run.sh` writes `bench/results/<date>-<os>.md` with
+the environment record. See `bench/scenarios/README.md`.
+
+## Reproduced (2026-11-12)
+
+concurv `23cb8e5` (0.1.0-alpha.3 code); Git 2.46.0.windows.1 on Windows 11
+(NTFS) and Git 2.53.0 on Ubuntu 26.04 in WSL 2 (ext4). Full rows:
+`bench/results/2026-11-12-mingw64.md`, `bench/results/2026-11-12-linux.md`.
+
+| Scenario | concurv (both OSes) | Git, Windows | Git, Linux |
+|---|---|---|---|
+| S04 scoped undo | pass | partial: no undo; a reflog reset in A's worktree reverts only A | partial (same) |
+| S05 CAS publish | pass (second publish refused, exit 42) | pass (`update-ref` with old value) | pass |
+| S09 restore over unsaved edit | pass (refused; `--force` keeps a backup) | fail: `git restore --source` overwrote the edit, no backup | fail (same) |
+| S10 same size, same mtime | pass | **fail: reported clean** | pass |
+| S12 disjoint hunks | pass (overlap refused, exit 43) | pass (overlap: conflict markers) | pass |
+
+Notes. S09 uses `git restore --source=<commit> -- <file>`, the command that
+restores files; `git checkout <commit>` of a whole tree is a different
+operation that refuses to overwrite local changes. S10 on Windows: after
+the rewrite, size and modification time match the index and Git for
+Windows reported the file unchanged; on Linux the change time (which a
+rewrite always updates) exposed it. This is one machine and one Git
+version per OS, not a general claim about Git.
 
 ## Literature sources (retrieved 2026-11-01)
 

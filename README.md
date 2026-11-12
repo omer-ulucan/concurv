@@ -204,7 +204,7 @@ Workspace layout: `crates/concurv-{core,objects,refs,ops,workspace,git,sync,cli,
 | `docs/adr/0007-branch-model.md` | branches vs workspaces, naming, transactional switch, `merge`, reference kinds, R3 reconciliation rules |
 | `docs/adr/0008-tags.md` | tags: model, names, format 4, Git export and import of tags |
 | `docs/security/threat-model.md` | threats and mitigation status |
-| `docs/benchmarks/comparison-plan.md` | competitor reproduction plan (no results yet) |
+| `docs/benchmarks/comparison-plan.md` | competitor reproduction plan and the results reproduced so far (concurv and Git; `bench/scenarios/`, `bench/results/`) |
 | `bench/RESULTS.md` | `status`/`save` benchmark results (reproducible with `concurv-bench`) |
 | `docs/releases/` | release notes |
 | `CHANGELOG.md` | changes since the start of the project |
