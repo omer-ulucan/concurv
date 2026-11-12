@@ -7,7 +7,7 @@ The plan itself (stages, gates, backlog, acceptance tests) lives in
 
 | Stage | Status | Evidence / blockers |
 |---|---|---|
-| R0 — RFC & competitive reproduction | **in progress** | Done: RFCs and ADRs, threat model, comparison plan; **harness built** (`bench/scenarios/`, 2026-11-12) and **Git reproduced** for S04, S05, S09, S10, S12 on Windows and Linux with recorded versions (`bench/results/`). **Open gate item:** at least one competitor besides Git (jj scripts are written but jj is not installed; installing it needs the owner) |
+| R0 — RFC & competitive reproduction | **in progress** | Done: RFCs and ADRs, threat model, comparison plan; **harness built** (`bench/scenarios/`, 2026-11-12) and **Git reproduced** for S04, S05, S09, S10, S11, S12, S13 on Windows and Linux with recorded versions (`bench/results/`). **Open gate item:** at least one competitor besides Git (jj scripts are written but jj is not installed; installing it needs the owner) |
 | R1 — Native local VCS kernel | **gate passed** (2026-11-01) | CI run [41350688459](https://github.com/omer-ulucan/concurv/actions/runs/41350688459) on `main` @ `9b8ed23`: all gate checks pass on Linux, macOS and Windows. See evidence below. |
 | R1.5 — Daily VCS usability & safety | **gate passed** (2026-11-01) | CI run [41366633305](https://github.com/omer-ulucan/concurv/actions/runs/41366633305) on `main` @ `19ce0ed`: ignores (ADR 0004), ignored-file safety, `check-ignore`, benchmark, stat cache (ADR 0005), diff and case-collision tests, green on Linux, macOS and Windows. See "R1.5 evidence" below |
 | R2 — Private workspaces + concurrency | **gate passed** (2026-11-01) | CI run [41359891403](https://github.com/omer-ulucan/concurv/actions/runs/41359891403) on `main` @ `0689e96`: all four slices (RFC 0004, ADR 0002) green on Linux, macOS and Windows; 2/5/10 concurrent writers and killed-process tests pass. Git tags not supported (scoped). See "R2 evidence" below. |
@@ -375,3 +375,24 @@ build and MSRV 1.89 check pass on both. (The delete/rename commit alone,
 Not covered: deleting branches or tags at a relay (not supported), and a
 relay of v0.1.0-alpha.3 or older answering `push --tags` (it ends the
 session; the client reports the error, `fetch` simply gets no tags).
+
+## Workspace remove and the comparison harness (2026-11-12)
+
+`workspace remove` (backlog P1-8): local CI gate on `feat/workspace-remove`
+@ `7fc4472`, rustc 1.99.1, `--locked`, `--no-fail-fast`: Windows 11 **261
+passed**, Linux (WSL 2) **265 passed**, 0 failed, 0 ignored; fmt, clippy
+`-D warnings`, release build and MSRV 1.89 check pass on both. Tests:
+`concurv-workspace/tests/workspace_remove.rs` (primary, itself, unknown,
+unsaved changes, unpublished saves, pending merge with the directory out
+of reach, a deleted directory, files left on disk, undo refused, B1),
+CLI `branch_refs_cli.rs::workspace_remove_through_the_cli`.
+
+Comparison harness (R0, backlog P1-7): `bench/scenarios/` (S04, S05, S09,
+S10, S11, S12, S13 for concurv, Git and jj), run on an idle machine at
+`da9d347` on Windows 11 (NTFS) and Linux (WSL 2, ext4); results in
+`bench/results/` and summarized in `docs/benchmarks/comparison-plan.md`.
+concurv passes every scenario on both systems; Git fails S09 (restore over
+an unsaved edit) on both and S10 (same size, same mtime) on Windows; its
+`status` is faster at 10,000 files (Windows 153 ms vs 804 ms, Linux 9 ms vs
+67 ms). The jj scripts have not run (jj is not installed), so the R0 gate
+is still open.
