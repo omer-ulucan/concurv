@@ -3,8 +3,8 @@
 Status: **Approved in principle by the owner (2026-11-01); refinements
 implemented and verified** (CI run 41375647699 on `main` @ `79caf3f`; see
 `docs/ROADMAP_STATUS.md`, R2.5).
-Final acceptance is the owner's decision. Sections 7 and 8 (R3) are design
-only.
+Final acceptance is the owner's decision. Sections 7 and 8 describe sync,
+implemented by R3 (RFC 0003, 2026-11-12).
 
 ## Context
 
