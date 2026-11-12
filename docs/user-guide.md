@@ -8,16 +8,17 @@ sync does not exist yet (see `docs/ROADMAP_STATUS.md`).
 ## 1. Install
 
 **Prebuilt binaries:** download the archive for your platform from
-<https://github.com/omer-ulucan/concurv/releases> (Linux x86_64 glibc, macOS
-Apple Silicon and Intel, Windows x86_64), verify it with `sha256sum -c
-SHA256SUMS --ignore-missing`, unpack it, and put `concurv` (`concurv.exe`) on
-your `PATH`. The binaries are not code-signed; on macOS, run
+<https://github.com/omer-ulucan/concurv/releases>, verify it with
+`sha256sum -c SHA256SUMS --ignore-missing`, unpack it, and put `concurv` and
+`concurvd` (`.exe` on Windows) on your `PATH`. v0.1.0-alpha.2 ships Linux
+x86_64 (static, any distribution) and Windows x86_64; v0.1.0-alpha.1 also had
+macOS builds. The binaries are not code-signed; on macOS, run
 `xattr -d com.apple.quarantine concurv` once if Gatekeeper blocks it.
 
-**From source** (Rust 1.89 or newer):
+**From source** (Rust 1.89 or newer; installs `concurv` and `concurvd`):
 
 ```console
-$ cargo install --git https://github.com/omer-ulucan/concurv --tag v0.1.0-alpha.1 concurv-cli
+$ cargo install --git https://github.com/omer-ulucan/concurv --tag v0.1.0-alpha.2 concurv-cli
 ```
 
 Or from a clone:
@@ -25,13 +26,13 @@ Or from a clone:
 ```console
 $ git clone https://github.com/omer-ulucan/concurv.git
 $ cd concurv
-$ cargo install --path crates/concurv-cli    # installs `concurv` into ~/.cargo/bin
+$ cargo install --path crates/concurv-cli    # installs `concurv` and `concurvd` into ~/.cargo/bin
 $ concurv --version
-concurv 0.1.0-alpha.1
+concurv 0.1.0-alpha.2
 ```
 
-Or build without installing: `cargo build --release` puts the binary at
-`target/release/concurv` (`concurv.exe` on Windows).
+Or build without installing: `cargo build --release` puts the binaries at
+`target/release/concurv` and `target/release/concurvd` (`.exe` on Windows).
 
 **Where not to put repositories:** do not create repositories inside
 cloud-synced folders (OneDrive, Dropbox, iCloud Drive) or on network
